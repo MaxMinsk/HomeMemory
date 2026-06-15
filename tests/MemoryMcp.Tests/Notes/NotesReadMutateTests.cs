@@ -224,6 +224,53 @@ public class NotesReadMutateTests
         repo.Upsert("memory-mcp", "backlog_item", key, null,
             $$"""{ "key": "{{key}}", "status": "ready", "sprint": "{{sprint}}" }""", null, key, "tester").Id;
 
+    [Fact]
+    public void Links_returns_both_directions_and_unlink_removes()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        var a = Seed(repo, "MEMP-200", "ready");
+        var b = Seed(repo, "MEMP-201", "ready");
+        repo.Link(a, b, "depends_on");
+
+        var fromA = Assert.Single(repo.Links(a));
+        Assert.Equal("out", fromA.Direction);
+        Assert.Equal("depends_on", fromA.Rel);
+        Assert.Equal(b, fromA.NoteId);
+        Assert.Equal("in", Assert.Single(repo.Links(b)).Direction);
+
+        Assert.Equal(1, repo.Unlink(a, b, "depends_on"));
+        Assert.Empty(repo.Links(a));
+        Assert.Equal(0, repo.Unlink(a, b, "depends_on")); // already gone
+    }
+
+    [Fact]
+    public void Restore_reactivates_archived_note()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        var id = Seed(repo, "MEMP-200", "ready");
+
+        Assert.True(repo.Archive(id));
+        Assert.Equal("archived", repo.Get(id)!.Status);
+        Assert.True(repo.Restore(id));
+        Assert.Equal("active", repo.Get(id)!.Status);
+        Assert.False(repo.Restore(id)); // already active -> no-op
+    }
+
+    [Fact]
+    public void Events_returns_history()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        var id = Seed(repo, "MEMP-200", "ready");
+        repo.Archive(id);
+
+        var events = repo.Events(id);
+        Assert.Contains(events, e => e.Op == "create");
+        Assert.Contains(events, e => e.Op == "archive");
+    }
+
     private static (NotesRepository Repo, SqliteConnectionFactory Factory) NewRepo(TempDatabase temp)
     {
         var factory = new SqliteConnectionFactory(temp.FilePath);

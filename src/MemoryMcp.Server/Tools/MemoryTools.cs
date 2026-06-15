@@ -166,6 +166,49 @@ public sealed class MemoryTools
     public ConfirmationResult NotesCancel([Description("Confirmation token")] string token)
         => Translate(() => _confirmations.Cancel(token, null));
 
+    /// <summary>Restores an archived/superseded note to active.</summary>
+    [McpServerTool(Name = "notes_restore", Idempotent = true)]
+    [Description("Restore an archived or superseded note back to active. Returns true if a note was restored.")]
+    public bool NotesRestore([Description("Note id")] string id)
+        => Translate(() =>
+        {
+            AuthorizeNote(id);
+            return _notes.Restore(id);
+        });
+
+    /// <summary>Lists a note's links in both directions (each resolved to the note at the other end).</summary>
+    [McpServerTool(Name = "notes_links", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("List a note's links (both directions): each entry has direction (out/in), rel, and the other note's id/title/type.")]
+    public IReadOnlyList<LinkView> NotesLinks([Description("Note id")] string id)
+    {
+        var note = _notes.Get(id);
+        return note is not null && Guard().IsAllowed(note.Domain) ? _notes.Links(id) : Array.Empty<LinkView>();
+    }
+
+    /// <summary>Removes a directed link from one note to another.</summary>
+    [McpServerTool(Name = "notes_unlink", Destructive = true, Idempotent = true, UseStructuredContent = true)]
+    [Description("Remove a directed link (rel) from one note to another. Returns the number of links removed (0 if none matched).")]
+    public int NotesUnlink(
+        [Description("Source note id")] string fromId,
+        [Description("Target note id")] string toId,
+        [Description("Relationship verb")] string rel)
+        => Translate(() =>
+        {
+            AuthorizeNote(fromId);
+            return _notes.Unlink(fromId, toId, rel);
+        });
+
+    /// <summary>Returns a note's change history (newest first).</summary>
+    [McpServerTool(Name = "notes_history", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("Get a note's append-only history (create/update/archive/restore/link/...), newest first.")]
+    public IReadOnlyList<NoteEvent> NotesHistory(
+        [Description("Note id")] string id,
+        [Description("Max events (default 50)")] int limit = 50)
+    {
+        var note = _notes.Get(id);
+        return note is not null && Guard().IsAllowed(note.Domain) ? _notes.Events(id, limit) : Array.Empty<NoteEvent>();
+    }
+
     /// <summary>Lists registered note types as type@version.</summary>
     [McpServerTool(Name = "schema_list_types", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
     [Description("List registered note types as type@version strings.")]
@@ -173,11 +216,13 @@ public sealed class MemoryTools
         _schemas.All.Select(definition => $"{definition.Type}@{definition.Version}")
             .OrderBy(value => value, StringComparer.Ordinal).ToArray();
 
-    /// <summary>Returns the JSON Schema for a type (latest version), or null.</summary>
+    /// <summary>Returns the JSON Schema for a type at a specific version, or the latest.</summary>
     [McpServerTool(Name = "schema_get", ReadOnly = true, OpenWorld = false)]
-    [Description("Get the JSON Schema document for a type (latest version), or null if unknown.")]
-    public string? SchemaGet([Description("Note type, e.g. backlog_item")] string type) =>
-        _schemas.GetLatest(type)?.Json;
+    [Description("Get the JSON Schema document for a type. Omit version for the latest; pass a version to fetch that exact one. Null if unknown.")]
+    public string? SchemaGet(
+        [Description("Note type, e.g. backlog_item")] string type,
+        [Description("Specific schema version (optional; default latest)")] int? version = null) =>
+        (version.HasValue ? _schemas.Get(type, version.Value) : _schemas.GetLatest(type))?.Json;
 
     /// <summary>Adds or updates an agent-authored note type's JSON Schema.</summary>
     [McpServerTool(Name = "schema_upsert", Destructive = false, Idempotent = true, UseStructuredContent = true)]

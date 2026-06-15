@@ -52,6 +52,58 @@ public sealed class NotesReader
         return reader.Read() ? NoteRowMapper.Map(reader) : null;
     }
 
+    /// <summary>Returns the note's links in both directions (each resolved to the note at the other end).</summary>
+    /// <param name="id">The note id.</param>
+    public IReadOnlyList<LinkView> Links(string id)
+    {
+        using var connection = _connectionFactory.Create();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT 'out' AS dir, l.rel, l.to_id AS other, n.title, n.type FROM note_links l JOIN notes n ON n.id = l.to_id " +
+            "WHERE l.from_id = $id AND n.deleted = 0 " +
+            "UNION ALL " +
+            "SELECT 'in' AS dir, l.rel, l.from_id AS other, n.title, n.type FROM note_links l JOIN notes n ON n.id = l.from_id " +
+            "WHERE l.to_id = $id AND n.deleted = 0 " +
+            "ORDER BY dir, rel;";
+        command.Parameters.AddWithValue("$id", id);
+
+        var links = new List<LinkView>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            links.Add(new LinkView(reader.GetString(0), reader.GetString(1), reader.GetString(2),
+                reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetString(4)));
+        }
+
+        return links;
+    }
+
+    /// <summary>Returns a note's history (newest first) from the append-only event log.</summary>
+    /// <param name="id">The note id.</param>
+    /// <param name="limit">Maximum number of events (clamped to [1, 500]).</param>
+    public IReadOnlyList<NoteEvent> Events(string id, int limit = 50)
+    {
+        using var connection = _connectionFactory.Create();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT op, actor, ts, diff_json FROM note_events WHERE note_id = $id ORDER BY ts DESC, event_id DESC LIMIT $limit;";
+        command.Parameters.AddWithValue("$id", id);
+        command.Parameters.AddWithValue("$limit", Math.Clamp(limit, 1, 500));
+
+        var events = new List<NoteEvent>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            events.Add(new NoteEvent(
+                reader.GetString(0),
+                reader.IsDBNull(1) ? null : reader.GetString(1),
+                reader.GetString(2),
+                reader.IsDBNull(3) ? null : reader.GetString(3)));
+        }
+
+        return events;
+    }
+
     /// <summary>Lists full notes for a domain/type (active, non-deleted), newest first.</summary>
     /// <param name="domain">Domain filter.</param>
     /// <param name="type">Type filter.</param>

@@ -205,6 +205,66 @@ public sealed class NotesWriter
         return true;
     }
 
+    /// <summary>Restores an archived/superseded note to active. Returns false if no such note exists.</summary>
+    /// <param name="id">The note id.</param>
+    public bool Restore(string id)
+    {
+        var nowUtc = NowUtc();
+        using var connection = _connectionFactory.Create();
+        using var transaction = connection.BeginTransaction();
+
+        int affected;
+        using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = "UPDATE notes SET status = 'active', updated_utc = $now WHERE id = $id AND deleted = 0 AND status IN ('archived', 'superseded');";
+            command.Parameters.AddWithValue("$now", nowUtc);
+            command.Parameters.AddWithValue("$id", id);
+            affected = command.ExecuteNonQuery();
+        }
+
+        if (affected == 0)
+        {
+            return false;
+        }
+
+        NoteAudit.Append(connection, transaction, id, "restore", null, nowUtc, new JsonObject { ["op"] = "restore" }.ToJsonString());
+        transaction.Commit();
+        return true;
+    }
+
+    /// <summary>Removes a directed link and audits it. Returns the number of link rows deleted (0 if none matched).</summary>
+    /// <param name="fromId">Source note id.</param>
+    /// <param name="toId">Target note id.</param>
+    /// <param name="rel">Relationship verb.</param>
+    public int Unlink(string fromId, string toId, string rel)
+    {
+        var nowUtc = NowUtc();
+        using var connection = _connectionFactory.Create();
+        using var transaction = connection.BeginTransaction();
+
+        int affected;
+        using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = "DELETE FROM note_links WHERE from_id = $f AND to_id = $t AND rel = $r;";
+            command.Parameters.AddWithValue("$f", fromId);
+            command.Parameters.AddWithValue("$t", toId);
+            command.Parameters.AddWithValue("$r", rel);
+            affected = command.ExecuteNonQuery();
+        }
+
+        if (affected == 0)
+        {
+            return 0;
+        }
+
+        var diff = new JsonObject { ["op"] = "unlink", ["to"] = toId, ["rel"] = rel }.ToJsonString();
+        NoteAudit.Append(connection, transaction, fromId, "unlink", null, nowUtc, diff);
+        transaction.Commit();
+        return affected;
+    }
+
     private string NowUtc() => _timeProvider.GetUtcNow().UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
 
     private static ExistingNote? FindByDedup(SqliteConnection connection, SqliteTransaction transaction, string domain, string type, string dedupKey)

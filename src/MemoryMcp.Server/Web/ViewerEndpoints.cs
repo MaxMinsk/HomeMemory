@@ -39,7 +39,7 @@ internal static class ViewerEndpoints
             var note = notes.Get(id);
             return note is null
                 ? Results.NotFound()
-                : Results.Json(new { note, attachments = artifacts.List(note.Domain, id) });
+                : Results.Json(new { note, attachments = artifacts.List(note.Domain, id), links = notes.Links(id) });
         });
 
         // Serve an artifact's bytes to the browser (rendered HTML renders inline, md/text shows as text).
