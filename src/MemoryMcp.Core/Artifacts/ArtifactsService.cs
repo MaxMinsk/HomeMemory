@@ -43,16 +43,7 @@ public sealed class ArtifactsService
 
         // Idempotent per (domain, note_id, filename): re-attaching the same named file to the same note
         // replaces the prior row instead of piling up duplicates (MEMP-059). Unnamed/unattached puts append.
-        if (noteId is not null && !string.IsNullOrEmpty(filename))
-        {
-            using var supersede = connection.CreateCommand();
-            supersede.Transaction = transaction;
-            supersede.CommandText = "DELETE FROM attachments WHERE domain = $d AND note_id = $n AND filename = $f;";
-            supersede.Parameters.AddWithValue("$d", domain);
-            supersede.Parameters.AddWithValue("$n", noteId);
-            supersede.Parameters.AddWithValue("$f", filename);
-            supersede.ExecuteNonQuery();
-        }
+        var replacedShas = SupersedePriorAttachment(connection, transaction, domain, noteId, filename);
 
         using (var command = connection.CreateCommand())
         {
@@ -73,6 +64,16 @@ public sealed class ArtifactsService
         }
 
         transaction.Commit();
+
+        // GC blobs orphaned by the replace (the new content keeps its own blob).
+        foreach (var sha in replacedShas)
+        {
+            if (!string.Equals(sha, blob.Sha256, StringComparison.Ordinal))
+            {
+                GcBlobIfOrphan(sha);
+            }
+        }
+
         return new Artifact(id, domain, blob.Sha256, UriScheme + blob.Sha256, noteId, filename, contentType, blob.SizeBytes, nowUtc);
     }
 
@@ -112,17 +113,55 @@ public sealed class ArtifactsService
             delete.ExecuteNonQuery();
         }
 
-        using (var refs = connection.CreateCommand())
+        GcBlobIfOrphan(sha);
+        return true;
+    }
+
+    // Removes prior rows for (domain, note_id, filename) and returns their distinct blob hashes
+    // (so the caller can GC any that the new content orphaned). No-op for unnamed/unattached puts.
+    private static List<string> SupersedePriorAttachment(SqliteConnection connection, SqliteTransaction transaction, string domain, string? noteId, string? filename)
+    {
+        var replacedShas = new List<string>();
+        if (noteId is null || string.IsNullOrEmpty(filename))
         {
-            refs.CommandText = "SELECT EXISTS (SELECT 1 FROM attachments WHERE sha256 = $sha);";
-            refs.Parameters.AddWithValue("$sha", sha);
-            if (Convert.ToInt64(refs.ExecuteScalar()) == 0)
+            return replacedShas;
+        }
+
+        using (var select = connection.CreateCommand())
+        {
+            select.Transaction = transaction;
+            select.CommandText = "SELECT DISTINCT sha256 FROM attachments WHERE domain = $d AND note_id = $n AND filename = $f;";
+            select.Parameters.AddWithValue("$d", domain);
+            select.Parameters.AddWithValue("$n", noteId);
+            select.Parameters.AddWithValue("$f", filename);
+            using var reader = select.ExecuteReader();
+            while (reader.Read())
             {
-                _blobs.Delete(sha); // orphaned blob — GC it
+                replacedShas.Add(reader.GetString(0));
             }
         }
 
-        return true;
+        using var supersede = connection.CreateCommand();
+        supersede.Transaction = transaction;
+        supersede.CommandText = "DELETE FROM attachments WHERE domain = $d AND note_id = $n AND filename = $f;";
+        supersede.Parameters.AddWithValue("$d", domain);
+        supersede.Parameters.AddWithValue("$n", noteId);
+        supersede.Parameters.AddWithValue("$f", filename);
+        supersede.ExecuteNonQuery();
+        return replacedShas;
+    }
+
+    // Deletes a blob's bytes if no attachment references its hash any more.
+    private void GcBlobIfOrphan(string sha256)
+    {
+        using var connection = _connectionFactory.Create();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT EXISTS (SELECT 1 FROM attachments WHERE sha256 = $sha);";
+        command.Parameters.AddWithValue("$sha", sha256);
+        if (Convert.ToInt64(command.ExecuteScalar()) == 0)
+        {
+            _blobs.Delete(sha256);
+        }
     }
 
     /// <summary>Lists artifacts in a domain (newest first), optionally only those attached to <paramref name="noteId"/>.</summary>

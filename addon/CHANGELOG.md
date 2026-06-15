@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.11.0
+
+- **Fix (orphan blob on replace)**: re-attaching a same-named file to a note (`artifacts_put` replace,
+  MEMP-085) now garbage-collects the superseded blob's bytes when nothing else references them — previously
+  only `artifacts_delete` GC'd, so a replace left the old blob on disk forever. Regression test covers
+  put v1 → replace v2 → delete v2 returning blob storage to baseline.
+
 ## 0.10.0
 
 - **`artifacts_url`**: returns a temporary signed URL (default ~1 day, no bearer in it) to open or validate

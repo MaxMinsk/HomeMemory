@@ -97,6 +97,25 @@ public class ArtifactsServiceTests
         Assert.True(blobs.Exists(b.Sha256));         // still referenced by b
     }
 
+    [Fact]
+    public void Replace_then_delete_leaves_no_orphan_blob()
+    {
+        using var temp = new TempDatabase();
+        using var dir = new TempDir();
+        var blobs = new BlobStore(dir.Path, 0);
+        var service = new ArtifactsService(blobs, FactoryFor(temp));
+
+        var v1 = service.Put("kitchen", Encoding.UTF8.GetBytes("version one"), "r.md", "text/markdown", "n1", "t");
+        var v2 = service.Put("kitchen", Encoding.UTF8.GetBytes("version two, different"), "r.md", "text/markdown", "n1", "t");
+
+        Assert.False(blobs.Exists(v1.Sha256)); // the replaced blob is GC'd (no orphan)
+        Assert.True(blobs.Exists(v2.Sha256));
+
+        service.Delete(v2.Id);
+        Assert.False(blobs.Exists(v2.Sha256)); // back to baseline
+        Assert.Equal(0, blobs.TotalBytes());
+    }
+
     private static SqliteConnectionFactory FactoryFor(TempDatabase temp)
     {
         var factory = new SqliteConnectionFactory(temp.FilePath);
