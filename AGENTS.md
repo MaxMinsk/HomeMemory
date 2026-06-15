@@ -4,7 +4,7 @@ Instructions for agents (and humans) working in this repository. Short version: 
 
 ## What this is
 
-**Memory MCP** is a thin, reliable data-plane MCP server for personal memory, notes and skills, shared by multiple agents (a Home Assistant agent, Claude Code, a work agent, a future web UI) over the MCP protocol. The server only **stores, validates, searches and returns**. All intelligence (what to write, how to phrase it) lives in the agents and skills, not in the server.
+**Memory MCP** is a thin, reliable MCP server for personal memory, notes and skills, shared by multiple agents (a Home Assistant agent, Claude Code, a work agent, a future web UI) over the MCP protocol. It **stores, validates, searches and returns** notes, and it **hosts the schemas and skills** that define how each note type is written — so every agent maintains a given type (recipes, backlog items, …) the same way. The server never runs an LLM itself: the reasoning (what to write, how to phrase it) happens in the agents, guided by the schemas and skills they fetch from the server.
 
 Internal planning docs (design overview, master plan, M0 detail, backlog) live in `implementation_plan/`, and working notes/references in `Notes~/`. **Both directories are gitignored and written in Russian** — they are not part of the public repo.
 
@@ -25,6 +25,7 @@ Internal planning docs (design overview, master plan, M0 detail, backlog) live i
 
 - **Domain = namespace/tag, type = schema.** Never a table or database per section.
 - **Layered schema:** a relational envelope + `payload_json` validated by a JSON Schema from a registry. No schema-less blobs.
+- **Conventions live in the server, not only in the agents.** Schemas (the hard contract, enforced on write) and skills (the soft craft — naming, units, when to split, how to render) are first-class server-hosted objects, served to agents on demand, so every agent writes a given note type the same way. The server hosts these conventions but never runs an LLM itself; the reasoning happens agent-side, guided by them.
 - **Source of truth is the structured note; human-readable views (markdown/HTML) are derived render artifacts**, produced on create per the record type's skill. A recipe note is strict and structured; its informal human form is a rendered attachment. The same pattern dogfoods the backlog: structured `backlog_item` notes regenerate the flat backlog file.
 - **Soft-delete + append-only `note_events` only.** No hard delete in the tool surface (admin-only, outside MCP).
 - **Auth with domain scoping is mandatory**, not "later". Bearer token + an allowed-domains list per token.
