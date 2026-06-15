@@ -8,6 +8,7 @@ using MemoryMcp.Core.Schemas;
 using MemoryMcp.Core.Security;
 using MemoryMcp.Core.Skills;
 using MemoryMcp.Core.Storage;
+using MemoryMcp.Server.Logging;
 using MemoryMcp.Server.Security;
 using MemoryMcp.Server.Tools;
 using Microsoft.AspNetCore.Builder;
@@ -34,6 +35,7 @@ if (args.Length > 0 && args[0] == "push-backlog")
 if (transport == "http")
 {
     var builder = WebApplication.CreateBuilder(args);
+    SuppressExpectedErrorLogs(builder.Services);
     RegisterServices(builder.Services, dbPath);
     builder.Services.AddHttpContextAccessor();
     builder.Services.AddSingleton<IScopeAccessor, HttpScopeAccessor>();
@@ -71,6 +73,7 @@ else
     // stdio carries the protocol on stdout, so all logs must go to stderr.
     builder.Logging.ClearProviders();
     builder.Logging.AddConsole(options => options.LogToStandardErrorThreshold = LogLevel.Trace);
+    SuppressExpectedErrorLogs(builder.Services);
 
     RegisterServices(builder.Services, dbPath);
     builder.Services.AddSingleton<IScopeAccessor, TrustedScopeAccessor>(); // local stdio is trusted
@@ -80,6 +83,35 @@ else
     var app = builder.Build();
     Bootstrap(app.Services);
     await app.RunAsync();
+}
+
+// Wrap every registered logger provider so expected, model-visible errors (McpException) are not
+// logged as server faults. Applied after providers are registered, before the host is built.
+static void SuppressExpectedErrorLogs(IServiceCollection services)
+{
+    for (var i = 0; i < services.Count; i++)
+    {
+        var descriptor = services[i];
+        if (descriptor.ServiceType != typeof(ILoggerProvider))
+        {
+            continue;
+        }
+
+        if (descriptor.ImplementationFactory is { } factory)
+        {
+            services[i] = ServiceDescriptor.Singleton<ILoggerProvider>(
+                provider => new ExpectedErrorFilteringLoggerProvider((ILoggerProvider)factory(provider)));
+        }
+        else if (descriptor.ImplementationInstance is ILoggerProvider instance)
+        {
+            services[i] = ServiceDescriptor.Singleton<ILoggerProvider>(new ExpectedErrorFilteringLoggerProvider(instance));
+        }
+        else if (descriptor.ImplementationType is { } type)
+        {
+            services[i] = ServiceDescriptor.Singleton<ILoggerProvider>(
+                provider => new ExpectedErrorFilteringLoggerProvider((ILoggerProvider)ActivatorUtilities.CreateInstance(provider, type)));
+        }
+    }
 }
 
 static void RegisterServices(IServiceCollection services, string dbPath)
