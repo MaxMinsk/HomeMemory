@@ -1,0 +1,43 @@
+{
+  "$id": "recipe@1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["format"],
+  "additionalProperties": false,
+  "properties": {
+    "format": { "enum": ["kazan", "grill", "saj", "oven", "stove", "other"], "description": "Cooking format/method." },
+    "occasion": { "type": "string", "description": "When/why to cook it." },
+    "servings": { "type": "string", "description": "Portions, e.g. '5-7'." },
+    "ingredients": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "amount": { "type": "string", "description": "Free text incl. ranges, e.g. '2-3' or 'about 2'." },
+          "unit": {
+            "enum": ["tsp", "tbsp", "cup", "g", "kg", "ml", "l", "pcs", "head", "clove", "pinch", "to_taste"],
+            "description": "Controlled unit token; the value text itself may be in any language."
+          }
+        }
+      }
+    },
+    "equipment": { "type": "array", "items": { "type": "string" } },
+    "preparation": { "type": "array", "items": { "type": "string" }, "description": "Prep steps, one per item." },
+    "cooking": { "type": "array", "items": { "type": "string" }, "description": "Cooking steps, one per item." },
+    "control_points": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "heat": { "type": "string" },
+        "time": { "type": "string" },
+        "watch": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "serving": { "type": "array", "items": { "type": "string" } },
+    "result": { "type": "string", "description": "Outcome of the last run." },
+    "next_iterations": { "type": "array", "items": { "type": "string" }, "description": "What to change next time." }
+  }
+}

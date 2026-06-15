@@ -101,4 +101,38 @@ public class SchemaRegistryAndValidatorTests
 
         Assert.False(result.IsValid);
     }
+
+    [Fact]
+    public void Valid_recipe_passes()
+    {
+        var validator = new SchemaValidator(SchemaRegistry.FromEmbeddedResources());
+
+        var result = validator.Validate("recipe",
+            """
+            { "format": "kazan", "servings": "5-7",
+              "ingredients": [ { "name": "chicken thighs", "amount": "2", "unit": "kg" },
+                               { "name": "salt", "amount": "2.5", "unit": "tsp" } ],
+              "preparation": ["debone thighs"], "cooking": ["sear", "simmer"],
+              "control_points": { "heat": "high then low", "time": "40 min", "watch": ["do not burn garlic"] },
+              "next_iterations": ["less cream"] }
+            """);
+
+        Assert.True(result.IsValid, string.Join("; ", result.Errors));
+    }
+
+    [Theory]
+    [InlineData("""{ "occasion": "dinner" }""")]                                  // missing format
+    [InlineData("""{ "format": "microwave" }""")]                                 // bad format enum
+    [InlineData("""{ "format": "grill", "ingredients": [ { "amount": "2" } ] }""")] // ingredient missing name
+    [InlineData("""{ "format": "grill", "ingredients": [ { "name": "x", "unit": "spoonful" } ] }""")] // bad unit enum
+    [InlineData("""{ "format": "grill", "extra": true }""")]                       // additionalProperties
+    public void Invalid_recipe_is_rejected(string payload)
+    {
+        var validator = new SchemaValidator(SchemaRegistry.FromEmbeddedResources());
+
+        var result = validator.Validate("recipe", payload);
+
+        Assert.False(result.IsValid);
+        Assert.NotEmpty(result.Errors);
+    }
 }
