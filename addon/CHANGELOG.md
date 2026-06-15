@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.0
+
+- **Artifacts / files**: content-addressed blob store + `attachments` and the `artifacts_put` /
+  `artifacts_get` / `artifacts_list` tools. Bytes never pass through the model context — `artifacts_put`
+  takes inline text (agent-generated docs) or a server-side file under the ingest root; reads return
+  metadata + a `blob://` URI. Byte quota; thumbnails are a planned follow-up.
+- **Agent-authored schemas**: new `schema_upsert` tool registers or updates a note type's JSON Schema
+  at runtime, so new types no longer need a release. Two-tier and safe: built-in types are read-only,
+  a version already used by notes can't change (bump the version), and schema `pattern`s are bounded
+  against ReDoS.
+- **Recipes**: `recipe@1` structured type (the source of truth) plus a `recipe-authoring` skill; the
+  human-readable markdown/HTML are derived artifacts, regenerated on every edit.
+- **Stats**: `status` now reports note counts by type, attachment count and blob bytes; the add-on also
+  logs this snapshot at startup.
+- **Multi-project**: `backlog_item` and `sprint` gain an optional `project` field.
+
 ## 0.3.0
 
 - **Server-hosted skills**: new `skill_upsert` / `skill_list` / `skill_get` tools and a `skill@1` type.
