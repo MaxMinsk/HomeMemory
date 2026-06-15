@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using MemoryMcp.Core.Backlog;
 using MemoryMcp.Core.Diagnostics;
 using MemoryMcp.Core.Notes;
 using MemoryMcp.Core.Schemas;
@@ -15,6 +16,12 @@ using Microsoft.Extensions.Logging;
 
 var transport = (Environment.GetEnvironmentVariable("MEMORY_TRANSPORT") ?? "stdio").ToLowerInvariant();
 var dbPath = Environment.GetEnvironmentVariable("MEMORY_DB_PATH") ?? "memory.sqlite";
+
+if (args.Length > 0 && (args[0] == "import-backlog" || args[0] == "export-backlog"))
+{
+    RunBacklogCli(args, dbPath);
+    return;
+}
 
 if (transport == "http")
 {
@@ -79,6 +86,28 @@ static void Bootstrap(IServiceProvider services)
     var factory = services.GetRequiredService<ISqliteConnectionFactory>();
     new Migrator(factory, SchemaMigrations.All).Migrate();
     services.GetRequiredService<SchemaRegistry>().SyncToDatabase(factory);
+}
+
+static void RunBacklogCli(string[] args, string dbPath)
+{
+    var factory = new SqliteConnectionFactory(dbPath);
+    new Migrator(factory, SchemaMigrations.All).Migrate();
+    var registry = SchemaRegistry.FromEmbeddedResources();
+    registry.SyncToDatabase(factory);
+    var repository = new NotesRepository(factory, registry);
+
+    if (args[0] == "import-backlog")
+    {
+        var path = args.Length > 1 ? args[1] : throw new ArgumentException("Usage: import-backlog <file>");
+        var count = BacklogImporter.Import(repository, File.ReadAllText(path));
+        Console.WriteLine($"Imported {count} backlog items into '{dbPath}'.");
+    }
+    else
+    {
+        var path = args.Length > 1 ? args[1] : throw new ArgumentException("Usage: export-backlog <file>");
+        File.WriteAllText(path, BacklogExporter.Export(repository));
+        Console.WriteLine($"Exported backlog to '{path}'.");
+    }
 }
 
 static bool HasValidBearer(HttpContext context, string expected)

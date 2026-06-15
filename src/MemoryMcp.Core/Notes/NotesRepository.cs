@@ -123,27 +123,51 @@ public sealed class NotesRepository
         command.Parameters.AddWithValue("$id", id);
 
         using var reader = command.ExecuteReader();
-        if (!reader.Read())
+        return reader.Read() ? ReadNote(reader) : null;
+    }
+
+    /// <summary>Lists full notes for a domain/type (active, non-deleted), newest first.</summary>
+    /// <param name="domain">Domain filter.</param>
+    /// <param name="type">Type filter.</param>
+    /// <param name="limit">Maximum number of notes.</param>
+    public IReadOnlyList<Note> List(string domain, string type, int limit = 1000)
+    {
+        using var connection = _connectionFactory.Create();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT id, domain, type, title, body, payload_json, tags_json, dedup_key, status, " +
+            "created_utc, updated_utc, source_agent, schema_ver, deleted " +
+            "FROM notes WHERE domain = $d AND type = $t AND deleted = 0 AND status = 'active' " +
+            "ORDER BY updated_utc DESC LIMIT $limit;";
+        command.Parameters.AddWithValue("$d", domain);
+        command.Parameters.AddWithValue("$t", type);
+        command.Parameters.AddWithValue("$limit", limit);
+
+        var notes = new List<Note>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
         {
-            return null;
+            notes.Add(ReadNote(reader));
         }
 
-        return new Note(
-            reader.GetString(0),
-            reader.GetString(1),
-            reader.GetString(2),
-            reader.IsDBNull(3) ? null : reader.GetString(3),
-            reader.IsDBNull(4) ? null : reader.GetString(4),
-            reader.IsDBNull(5) ? null : reader.GetString(5),
-            reader.IsDBNull(6) ? null : reader.GetString(6),
-            reader.IsDBNull(7) ? null : reader.GetString(7),
-            reader.GetString(8),
-            reader.GetString(9),
-            reader.GetString(10),
-            reader.IsDBNull(11) ? null : reader.GetString(11),
-            reader.GetInt32(12),
-            reader.GetInt64(13) != 0);
+        return notes;
     }
+
+    private static Note ReadNote(SqliteDataReader reader) => new(
+        reader.GetString(0),
+        reader.GetString(1),
+        reader.GetString(2),
+        reader.IsDBNull(3) ? null : reader.GetString(3),
+        reader.IsDBNull(4) ? null : reader.GetString(4),
+        reader.IsDBNull(5) ? null : reader.GetString(5),
+        reader.IsDBNull(6) ? null : reader.GetString(6),
+        reader.IsDBNull(7) ? null : reader.GetString(7),
+        reader.GetString(8),
+        reader.GetString(9),
+        reader.GetString(10),
+        reader.IsDBNull(11) ? null : reader.GetString(11),
+        reader.GetInt32(12),
+        reader.GetInt64(13) != 0);
 
     /// <summary>
     /// Searches notes by an optional full-text <paramref name="query"/> plus structured filters.
