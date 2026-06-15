@@ -11,7 +11,7 @@ public class BacklogTests
 {
     private const string Sample = @"# Backlog
 
-## Текущий фокус
+## Current focus
 Just prose, no items here.
 
 ## Done
@@ -27,7 +27,7 @@ Body line one.
 ### MEMP-004: A next task
 Next body.
 
-### Из референс-анализа
+### From reference analysis
 - MEMP-010: idea from analysis.
 
 ## Later
