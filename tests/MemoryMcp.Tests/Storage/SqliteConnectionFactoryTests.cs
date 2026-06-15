@@ -7,15 +7,16 @@ namespace MemoryMcp.Tests.Storage;
 public class SqliteConnectionFactoryTests
 {
     [Fact]
-    public void Create_enables_wal_busy_timeout_and_foreign_keys()
+    public void Create_applies_durable_concurrency_friendly_pragmas()
     {
         using var temp = new TempDatabase();
         var factory = new SqliteConnectionFactory(temp.FilePath);
         using var connection = factory.Create();
 
         Assert.Equal("wal", ReadString(connection, "PRAGMA journal_mode;"), ignoreCase: true);
-        Assert.Equal(1L, ReadLong(connection, "PRAGMA foreign_keys;"));
+        Assert.Equal(1L, ReadLong(connection, "PRAGMA foreign_keys;"));   // via "Foreign Keys=True" keyword
         Assert.Equal(5000L, ReadLong(connection, "PRAGMA busy_timeout;"));
+        Assert.Equal(1L, ReadLong(connection, "PRAGMA synchronous;"));    // 1 = NORMAL
     }
 
     [Fact]

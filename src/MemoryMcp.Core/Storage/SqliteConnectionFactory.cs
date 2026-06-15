@@ -43,6 +43,8 @@ public sealed class SqliteConnectionFactory : ISqliteConnectionFactory
         {
             DataSource = databasePath,
             Mode = SqliteOpenMode.ReadWriteCreate,
+            Pooling = true,            // default, stated explicitly: closed connections return handles to the pool
+            ForeignKeys = true,        // emits "PRAGMA foreign_keys=ON" after every open (incl. pooled reuse)
         }.ToString();
     }
 
@@ -58,12 +60,14 @@ public sealed class SqliteConnectionFactory : ISqliteConnectionFactory
     private static void ApplyPragmas(SqliteConnection connection)
     {
         using var command = connection.CreateCommand();
-        // journal_mode=WAL persists in the database header; busy_timeout and foreign_keys
-        // are per-connection settings re-applied on every open (including pooled reuse).
+        // journal_mode=WAL persists in the database header; busy_timeout and synchronous are
+        // per-connection and re-applied on every open. foreign_keys is handled by the
+        // "Foreign Keys=True" connection-string keyword (see the builder above), so it is not
+        // repeated here. synchronous=NORMAL is the safe, fast pairing under WAL.
         command.CommandText =
             "PRAGMA journal_mode=WAL;" +
             "PRAGMA busy_timeout=5000;" +
-            "PRAGMA foreign_keys=ON;";
+            "PRAGMA synchronous=NORMAL;";
         command.ExecuteNonQuery();
     }
 }
