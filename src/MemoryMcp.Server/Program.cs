@@ -29,7 +29,7 @@ if (transport == "http")
     RegisterServices(builder.Services, dbPath);
     builder.Services.AddHttpContextAccessor();
     builder.Services.AddSingleton<IScopeAccessor, HttpScopeAccessor>();
-    builder.Services.AddMcpServer().WithHttpTransport().WithTools<MemoryTools>();
+    builder.Services.AddMcpServer().WithHttpTransport(options => options.Stateless = true).WithTools<MemoryTools>();
 
     var app = builder.Build();
     Bootstrap(app.Services);
