@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using MemoryMcp.Core.Artifacts;
 using MemoryMcp.Core.Backlog;
 using MemoryMcp.Core.Confirmation;
 using MemoryMcp.Core.Diagnostics;
@@ -41,7 +42,7 @@ if (transport == "http")
     builder.Services.AddHttpContextAccessor();
     builder.Services.AddSingleton<IScopeAccessor, HttpScopeAccessor>();
     builder.Services.AddMcpServer().WithHttpTransport(options => options.Stateless = true)
-        .WithTools<MemoryTools>().WithTools<SkillTools>();
+        .WithTools<MemoryTools>().WithTools<SkillTools>().WithTools<ArtifactTools>();
 
     var app = builder.Build();
     Bootstrap(app.Services);
@@ -79,7 +80,7 @@ else
     RegisterServices(builder.Services, dbPath);
     builder.Services.AddSingleton<IScopeAccessor, TrustedScopeAccessor>(); // local stdio is trusted
     builder.Services.AddMcpServer().WithStdioServerTransport()
-        .WithTools<MemoryTools>().WithTools<SkillTools>();
+        .WithTools<MemoryTools>().WithTools<SkillTools>().WithTools<ArtifactTools>();
 
     var app = builder.Build();
     Bootstrap(app.Services);
@@ -115,6 +116,17 @@ static void SuppressExpectedErrorLogs(IServiceCollection services)
     }
 }
 
+// Blob store lives next to the database (e.g. /data/blobs) unless overridden; default 1 GiB quota.
+static BlobStore BuildBlobStore(string dbPath)
+{
+    var root = Environment.GetEnvironmentVariable("MEMORY_BLOB_ROOT")
+        ?? Path.Combine(Path.GetDirectoryName(Path.GetFullPath(dbPath)) ?? ".", "blobs");
+    var quota = long.TryParse(Environment.GetEnvironmentVariable("MEMORY_BLOB_QUOTA_BYTES"), out var bytes) && bytes > 0
+        ? bytes
+        : 1L * 1024 * 1024 * 1024;
+    return new BlobStore(root, quota);
+}
+
 static void RegisterServices(IServiceCollection services, string dbPath)
 {
     services.AddSingleton(TimeProvider.System);
@@ -123,6 +135,9 @@ static void RegisterServices(IServiceCollection services, string dbPath)
     services.AddSingleton<NotesRepository>();
     services.AddSingleton<SkillsService>();
     services.AddSingleton<ConfirmationService>();
+    services.AddSingleton(BuildBlobStore(dbPath));
+    services.AddSingleton<ArtifactsService>();
+    services.AddSingleton(new ArtifactIngestOptions(Environment.GetEnvironmentVariable("MEMORY_INGEST_ROOT")));
     services.AddSingleton<DiagnosticsService>();
 }
 

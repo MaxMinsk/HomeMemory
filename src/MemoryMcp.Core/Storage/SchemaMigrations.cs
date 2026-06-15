@@ -14,5 +14,6 @@ public static class SchemaMigrations
         new Migration0001Init(),
         new Migration0002Fts(),
         new Migration0003PendingActions(),
+        new Migration0004Attachments(),
     };
 }

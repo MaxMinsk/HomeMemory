@@ -38,10 +38,24 @@ public class StdioRoundTripTests
         Assert.Contains(tools, tool => tool.Name == "skill_upsert");
         Assert.Contains(tools, tool => tool.Name == "skill_get");
         Assert.Contains(tools, tool => tool.Name == "notes_confirm");
+        Assert.Contains(tools, tool => tool.Name == "artifacts_put");
+        Assert.Contains(tools, tool => tool.Name == "artifacts_get");
 
         await AssertNotesRoundTrip(client, cts.Token);
         await AssertSkillRoundTrip(client, cts.Token);
+        await AssertArtifactRoundTrip(client, cts.Token);
         await AssertValidationErrorCarriesSkillHint(client, cts.Token);
+    }
+
+    private static async Task AssertArtifactRoundTrip(McpClient client, CancellationToken ct)
+    {
+        // Inline content path (agent-generated text) — must not require bytes through the model context.
+        var put = await client.CallToolAsync("artifacts_put", new Dictionary<string, object?>
+        {
+            ["domain"] = "memory-mcp", ["content"] = "# rendered demo", ["filename"] = "demo.md", ["contentType"] = "text/markdown",
+        }, cancellationToken: ct);
+        Assert.True(put.IsError is not true, "artifacts_put reported an error");
+        Assert.Contains("blob://", Text(put));
     }
 
     private static async Task AssertNotesRoundTrip(McpClient client, CancellationToken ct)

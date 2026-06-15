@@ -1,0 +1,60 @@
+using System.Text;
+using MemoryMcp.Core.Artifacts;
+using MemoryMcp.Core.Storage;
+using MemoryMcp.Tests.Storage;
+using Xunit;
+
+namespace MemoryMcp.Tests.Artifacts;
+
+public class ArtifactsServiceTests
+{
+    [Fact]
+    public void Put_then_get_round_trips_metadata_and_uri()
+    {
+        using var temp = new TempDatabase();
+        using var dir = new TempDir();
+        var service = NewService(temp, dir);
+
+        var put = service.Put("kitchen", Encoding.UTF8.GetBytes("# Borscht"), "borscht.md", "text/markdown", "note-1", "tester");
+        var got = service.Get(put.Id);
+
+        Assert.NotNull(got);
+        Assert.Equal(put.Sha256, got!.Sha256);
+        Assert.Equal("blob://" + put.Sha256, got.Uri);
+        Assert.Equal("kitchen", got.Domain);
+        Assert.Equal("note-1", got.NoteId);
+        Assert.Equal("borscht.md", got.Filename);
+        Assert.Equal("text/markdown", got.ContentType);
+        Assert.Equal(9, got.SizeBytes);
+    }
+
+    [Fact]
+    public void List_filters_by_domain_and_note()
+    {
+        using var temp = new TempDatabase();
+        using var dir = new TempDir();
+        var service = NewService(temp, dir);
+        service.Put("kitchen", Encoding.UTF8.GetBytes("a"), null, null, "note-1", "t");
+        service.Put("kitchen", Encoding.UTF8.GetBytes("b"), null, null, "note-2", "t");
+        service.Put("work", Encoding.UTF8.GetBytes("c"), null, null, "note-9", "t");
+
+        Assert.Equal(2, service.List("kitchen").Count);
+        Assert.Single(service.List("kitchen", "note-1"));
+        Assert.Single(service.List("work"));
+    }
+
+    [Fact]
+    public void Get_missing_returns_null()
+    {
+        using var temp = new TempDatabase();
+        using var dir = new TempDir();
+        Assert.Null(NewService(temp, dir).Get("nope"));
+    }
+
+    private static ArtifactsService NewService(TempDatabase temp, TempDir dir)
+    {
+        var factory = new SqliteConnectionFactory(temp.FilePath);
+        new Migrator(factory, SchemaMigrations.All).Migrate();
+        return new ArtifactsService(new BlobStore(dir.Path, 0), factory);
+    }
+}
