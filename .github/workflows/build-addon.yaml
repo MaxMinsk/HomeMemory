@@ -5,24 +5,18 @@ on:
     branches:
       - main
     paths:
+      # Publish only on a release commit (add-on version bump in addon/config.yaml) or workflow change,
+      # not on every src push — releases happen at sprint end. Code is validated by ci.yaml on every push.
       - ".github/workflows/build-addon.yaml"
       - "addon/**"
-      - "global.json"
-      - "Directory.Build.props"
-      - "Directory.Packages.props"
-      - "MemoryMcp.sln"
-      - "src/**"
   push:
     branches:
       - main
     paths:
+      # Publish only on a release commit (add-on version bump in addon/config.yaml) or workflow change,
+      # not on every src push — releases happen at sprint end. Code is validated by ci.yaml on every push.
       - ".github/workflows/build-addon.yaml"
       - "addon/**"
-      - "global.json"
-      - "Directory.Build.props"
-      - "Directory.Packages.props"
-      - "MemoryMcp.sln"
-      - "src/**"
   workflow_dispatch:
 
 permissions:
