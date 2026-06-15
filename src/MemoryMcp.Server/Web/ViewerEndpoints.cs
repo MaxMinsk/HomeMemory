@@ -34,12 +34,18 @@ internal static class ViewerEndpoints
             return Results.Json(page);
         });
 
-        app.MapGet("/api/notes/{id}", (string id, NotesRepository notes, ArtifactsService artifacts) =>
+        app.MapGet("/api/notes/{id}", (string id, NotesRepository notes, ArtifactsService artifacts, ArtifactUrlSigner signer) =>
         {
             var note = notes.Get(id);
-            return note is null
-                ? Results.NotFound()
-                : Results.Json(new { note, attachments = artifacts.List(note.Domain, id), links = notes.Links(id) });
+            if (note is null)
+            {
+                return Results.NotFound();
+            }
+
+            // Each attachment carries a short-lived signed URL; the bearer never goes into the link.
+            var attachments = artifacts.List(note.Domain, id)
+                .Select(a => new { a.Id, a.Filename, a.ContentType, a.SizeBytes, a.Sha256, url = signer.BuildPath(a.Id) });
+            return Results.Json(new { note, attachments, links = notes.Links(id) });
         });
 
         // Serve an artifact's bytes to the browser (rendered HTML renders inline, md/text shows as text).

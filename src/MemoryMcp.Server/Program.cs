@@ -77,10 +77,24 @@ if (transport == "http")
             return;
         }
 
-        // /artifacts links are opened by the browser, so also accept the token via ?t= there.
-        var artifactToken = context.Request.Path.StartsWithSegments("/artifacts")
-            && string.Equals(context.Request.Query["t"], token, StringComparison.Ordinal);
-        if (!string.IsNullOrEmpty(token) && !artifactToken && !HasValidBearer(context, token))
+        // /artifacts links are opened by the browser via a short-lived signed URL (no bearer in the URL).
+        if (context.Request.Path.StartsWithSegments("/artifacts", out var rest))
+        {
+            var signer = context.RequestServices.GetRequiredService<ArtifactUrlSigner>();
+            var artifactId = rest.Value?.Trim('/') ?? string.Empty;
+            var ok = (!string.IsNullOrEmpty(token) && HasValidBearer(context, token))
+                || signer.Verify(artifactId, context.Request.Query["exp"], context.Request.Query["sig"]);
+            if (!ok)
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return;
+            }
+
+            await next();
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(token) && !HasValidBearer(context, token))
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
             return;
@@ -167,6 +181,8 @@ static void RegisterServices(IServiceCollection services, string dbPath)
     services.AddSingleton(BuildBlobStore(dbPath));
     services.AddSingleton<ArtifactsService>();
     services.AddSingleton(new ArtifactIngestOptions(Environment.GetEnvironmentVariable("MEMORY_INGEST_ROOT")));
+    services.AddSingleton(provider => new ArtifactUrlSigner(
+        Environment.GetEnvironmentVariable("MEMORY_BEARER_TOKEN"), provider.GetRequiredService<TimeProvider>()));
     services.AddSingleton<DiagnosticsService>();
 }
 
