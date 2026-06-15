@@ -27,6 +27,17 @@ AppContext.SetData("REGEX_DEFAULT_MATCH_TIMEOUT", TimeSpan.FromSeconds(2));
 var transport = (Environment.GetEnvironmentVariable("MEMORY_TRANSPORT") ?? "stdio").ToLowerInvariant();
 var dbPath = Environment.GetEnvironmentVariable("MEMORY_DB_PATH") ?? "memory.sqlite";
 
+// Forced, cross-domain authoring guidance returned in `initialize` so every agent sees it on connect.
+const string ServerInstructions =
+    "Shared structured memory used by several agents. Model: domain = a project/workspace namespace " +
+    "(lowercase slug, e.g. memory-mcp/kitchen/home); type = a schema-validated note kind; tags = " +
+    "cross-cutting facets (loc:, cuisine:, have/want). Set a stable dedupKey for idempotent, editable " +
+    "upserts; put structure in payload, free prose in body, facets in tags. Bytes go through artifacts, " +
+    "never the model context. Relate notes with notes_link (active-voice lower_snake_case rel). " +
+    "To start: call status (notesByType/notesByDomain), schema_list_types + schema_get(type) before " +
+    "writing a typed note, and skill_list(domain)/skill_get for conventions. " +
+    "READ FIRST: skill_get(domain=\"memory-mcp\", key=\"memory-authoring\") — the core authoring guide.";
+
 if (args.Length > 0 && (args[0] == "import-backlog" || args[0] == "export-backlog"))
 {
     RunBacklogCli(args, dbPath);
@@ -46,7 +57,8 @@ if (transport == "http")
     RegisterServices(builder.Services, dbPath);
     builder.Services.AddHttpContextAccessor();
     builder.Services.AddSingleton<IScopeAccessor, HttpScopeAccessor>();
-    builder.Services.AddMcpServer().WithHttpTransport(options => options.Stateless = true)
+    builder.Services.AddMcpServer(options => options.ServerInstructions = ServerInstructions)
+        .WithHttpTransport(options => options.Stateless = true)
         .WithTools<MemoryTools>().WithTools<SkillTools>().WithTools<ArtifactTools>();
 
     var app = builder.Build();
@@ -95,7 +107,8 @@ else
 
     RegisterServices(builder.Services, dbPath);
     builder.Services.AddSingleton<IScopeAccessor, TrustedScopeAccessor>(); // local stdio is trusted
-    builder.Services.AddMcpServer().WithStdioServerTransport()
+    builder.Services.AddMcpServer(options => options.ServerInstructions = ServerInstructions)
+        .WithStdioServerTransport()
         .WithTools<MemoryTools>().WithTools<SkillTools>().WithTools<ArtifactTools>();
 
     var app = builder.Build();

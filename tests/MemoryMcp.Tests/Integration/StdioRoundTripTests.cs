@@ -31,6 +31,9 @@ public class StdioRoundTripTests
 
         await using var client = await McpClient.CreateAsync(transport, cancellationToken: cts.Token);
 
+        // The server forces cross-domain authoring guidance via initialize instructions.
+        Assert.Contains("memory-authoring", client.ServerInstructions ?? string.Empty, StringComparison.Ordinal);
+
         var tools = await client.ListToolsAsync(cancellationToken: cts.Token);
         Assert.Contains(tools, tool => tool.Name == "notes_upsert");
         Assert.Contains(tools, tool => tool.Name == "notes_search");
