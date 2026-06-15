@@ -13,6 +13,7 @@ using MemoryMcp.Core.Storage;
 using MemoryMcp.Server.Logging;
 using MemoryMcp.Server.Security;
 using MemoryMcp.Server.Tools;
+using MemoryMcp.Server.Web;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
@@ -57,6 +58,13 @@ if (transport == "http")
 
     app.Use(async (context, next) =>
     {
+        // The static viewer page loads without a token; its /api calls carry the bearer like /mcp.
+        if (context.Request.Path.StartsWithSegments("/ui") || context.Request.Path == "/")
+        {
+            await next();
+            return;
+        }
+
         if (!string.IsNullOrEmpty(token) && !HasValidBearer(context, token))
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
@@ -70,6 +78,7 @@ if (transport == "http")
     });
 
     app.MapMcp("/mcp");
+    app.MapViewer();
     await app.RunAsync();
 }
 else

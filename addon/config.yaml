@@ -10,10 +10,11 @@ startup: services
 boot: auto
 init: false
 image: ghcr.io/maxminsk/homememory
+webui: "http://[HOST]:[PORT:8099]/ui"
 ports:
   "8099/tcp": 8099
 ports_description:
-  "8099/tcp": MCP streamable-HTTP endpoint (bearer-protected)
+  "8099/tcp": MCP endpoint (/mcp) + read-only viewer (/ui), bearer-protected
 options:
   db_path: "/data/memory.sqlite"
   bearer_token: ""

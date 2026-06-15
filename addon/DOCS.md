@@ -17,6 +17,13 @@ Stores notes as a relational envelope plus a typed JSON payload, with full-text 
 
 Advanced (environment variables, optional): `MEMORY_BLOB_ROOT` (blob store dir, default `/data/blobs`), `MEMORY_BLOB_QUOTA_BYTES` (default 1 GiB), `MEMORY_INGEST_ROOT` (directory that `artifacts_put`'s `sourcePath` files must live under; unset disables file ingestion).
 
+## Viewer (read-only)
+
+A minimal web viewer is served at **`/ui`** (also the add-on's "Open Web UI" button). Open it, paste
+the bearer token once (kept in the browser), then browse: filter notes by type/domain/tag or full-text,
+and open a note to see its structured payload, body and attachments. It is read-only and backed by a
+small JSON API (`/api/stats`, `/api/search`, `/api/notes/{id}`) that requires the same bearer as `/mcp`.
+
 ## Stats
 
 On startup the add-on logs a one-line snapshot of what's stored, e.g.:

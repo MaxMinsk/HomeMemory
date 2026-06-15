@@ -17,4 +17,9 @@
     <ProjectReference Include="..\MemoryMcp.Core\MemoryMcp.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The read-only viewer SPA is embedded so it ships inside the single-file binary. -->
+    <EmbeddedResource Include="Web\index.html" />
+  </ItemGroup>
+
 </Project>
