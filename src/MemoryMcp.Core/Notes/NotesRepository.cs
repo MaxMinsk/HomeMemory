@@ -70,6 +70,13 @@ public sealed class NotesRepository
     public NoteView? GetView(string id, bool includeBody = true, int? bodyMaxChars = null)
         => _reader.GetView(id, includeBody, bodyMaxChars);
 
+    /// <inheritdoc cref="NotesReader.ReadBody"/>
+    public NoteReadSlice? ReadBody(string id, int offset = 0, int limitChars = NotesReader.DefaultReadChars)
+        => _reader.ReadBody(id, offset, limitChars);
+
+    /// <inheritdoc cref="NotesReader.Outline"/>
+    public NoteOutline? Outline(string id) => _reader.Outline(id);
+
     /// <inheritdoc cref="NotesReader.GetByDedupKey"/>
     public Note? GetByDedupKey(string domain, string type, string dedupKey) => _reader.GetByDedupKey(domain, type, dedupKey);
 

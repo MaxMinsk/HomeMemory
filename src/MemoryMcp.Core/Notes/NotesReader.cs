@@ -13,6 +13,12 @@ public sealed class NotesReader
     /// <summary>Default page size when the caller does not specify one.</summary>
     public const int DefaultLimit = 20;
 
+    /// <summary>Default number of body characters a single <see cref="ReadBody"/> returns.</summary>
+    public const int DefaultReadChars = 4000;
+
+    /// <summary>Largest body slice a single <see cref="ReadBody"/> may return.</summary>
+    public const int MaxReadChars = 20000;
+
     private readonly ISqliteConnectionFactory _connectionFactory;
 
     /// <summary>Creates a reader over the given database.</summary>
@@ -75,6 +81,40 @@ public sealed class NotesReader
         }
 
         return (attachments, links);
+    }
+
+    /// <summary>
+    /// Reads a window of a note's body: from <paramref name="offset"/> for up to <paramref name="limitChars"/>
+    /// characters, with the partial-read contract (total/returned/truncated/nextOffset/revision). Returns
+    /// <c>null</c> only when the note does not exist; an empty body yields an empty slice.
+    /// </summary>
+    /// <param name="id">The note id.</param>
+    /// <param name="offset">Start character offset (clamped to [0, totalChars]).</param>
+    /// <param name="limitChars">Max characters to return (clamped to [1, <see cref="MaxReadChars"/>]).</param>
+    public NoteReadSlice? ReadBody(string id, int offset = 0, int limitChars = DefaultReadChars)
+    {
+        var note = Get(id);
+        if (note is null)
+        {
+            return null;
+        }
+
+        var body = note.Body ?? string.Empty;
+        var total = body.Length;
+        var start = Math.Clamp(offset, 0, total);
+        var take = Math.Clamp(limitChars, 1, MaxReadChars);
+        var end = Math.Min(start + take, total);
+        var content = body.Substring(start, end - start);
+        var truncated = end < total;
+        return new NoteReadSlice(id, content, start, content.Length, total, truncated, truncated ? end : null, note.UpdatedUtc);
+    }
+
+    /// <summary>Returns the Markdown heading map of a note's body (for section reads), or <c>null</c> if missing.</summary>
+    /// <param name="id">The note id.</param>
+    public NoteOutline? Outline(string id)
+    {
+        var note = Get(id);
+        return note is null ? null : new NoteOutline(id, note.Body?.Length ?? 0, note.UpdatedUtc, MarkdownOutline.Parse(note.Body));
     }
 
     /// <summary>Returns the active note for (domain, type, dedupKey), or <c>null</c>. Key-addressed lookup (e.g. skills).</summary>

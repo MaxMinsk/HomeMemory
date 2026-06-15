@@ -66,6 +66,27 @@ public sealed class MemoryTools
         return view is not null && Guard().IsAllowed(view.Domain) ? view : null;
     }
 
+    /// <summary>Reads a windowed slice of a note's body, if it is in scope.</summary>
+    [McpServerTool(Name = "notes_read", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("Read a slice of a note's body: returns content from `offset` for up to `limitChars` chars (default 4000, max 20000), plus totalChars/returnedChars/truncated and a nextOffset cursor + the revision (updatedUtc). Page a large body by following nextOffset; for a section, get its offset from notes_outline. Cheaper than notes_get for big notes.")]
+    public NoteReadSlice? NotesRead(
+        [Description("Note id")] string id,
+        [Description("Start character offset (default 0)")] int offset = 0,
+        [Description("Max characters to return (default 4000, clamped to 20000)")] int limitChars = NotesReader.DefaultReadChars)
+    {
+        var note = _notes.Get(id);
+        return note is not null && Guard().IsAllowed(note.Domain) ? _notes.ReadBody(id, offset, limitChars) : null;
+    }
+
+    /// <summary>Returns the Markdown heading map of a note's body (for section reads), if it is in scope.</summary>
+    [McpServerTool(Name = "notes_outline", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("Get a note's Markdown heading map: each heading's level, text and character offset, plus totalChars. To read one section, call notes_read(offset = that heading's offset, limitChars = next heading's offset minus it).")]
+    public NoteOutline? NotesOutline([Description("Note id")] string id)
+    {
+        var note = _notes.Get(id);
+        return note is not null && Guard().IsAllowed(note.Domain) ? _notes.Outline(id) : null;
+    }
+
     /// <summary>Creates or updates a note, validating the payload against the type schema.</summary>
     [McpServerTool(Name = "notes_upsert", Destructive = false, Idempotent = true, UseStructuredContent = true)]
     [Description("Create or update a note by (domain, type, dedup_key). Validates payload against the type schema.")]
