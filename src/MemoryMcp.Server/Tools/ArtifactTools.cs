@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Text;
 using MemoryMcp.Core.Artifacts;
+using MemoryMcp.Core.Confirmation;
 using MemoryMcp.Core.Security;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
@@ -24,14 +25,16 @@ public sealed class ArtifactTools
     private readonly ArtifactsService _artifacts;
     private readonly IScopeAccessor _scope;
     private readonly ArtifactUrlSigner _signer;
+    private readonly ConfirmationService _confirmations;
     private readonly string? _ingestRoot;
 
-    /// <summary>Creates the artifact tools over the service, scope accessor, URL signer and ingest options.</summary>
-    public ArtifactTools(ArtifactsService artifacts, IScopeAccessor scope, ArtifactUrlSigner signer, ArtifactIngestOptions options)
+    /// <summary>Creates the artifact tools over the service, scope accessor, URL signer, confirmations and ingest options.</summary>
+    public ArtifactTools(ArtifactsService artifacts, IScopeAccessor scope, ArtifactUrlSigner signer, ConfirmationService confirmations, ArtifactIngestOptions options)
     {
         _artifacts = artifacts;
         _scope = scope;
         _signer = signer;
+        _confirmations = confirmations;
         _ingestRoot = options.IngestRoot;
     }
 
@@ -75,20 +78,15 @@ public sealed class ArtifactTools
             : null;
     }
 
-    /// <summary>Deletes an artifact by id (and GCs its blob if unreferenced), if in scope.</summary>
-    [McpServerTool(Name = "artifacts_delete", Destructive = true, Idempotent = true, UseStructuredContent = true)]
-    [Description("Delete an artifact (attachment) by id. Also removes its blob if nothing else references it. Returns true if it existed.")]
-    public bool ArtifactsDelete([Description("Artifact id")] string id)
+    /// <summary>Requests an artifact delete; returns a pending confirmation token (apply via notes_confirm).</summary>
+    [McpServerTool(Name = "artifacts_delete", Destructive = false, UseStructuredContent = true)]
+    [Description("Request to delete an artifact (attachment) by id. Does NOT delete immediately — returns a confirmation token; call notes_confirm to apply it (or notes_cancel to drop it). On confirm the blob is GC'd if nothing else references it.")]
+    public PendingAction ArtifactsDelete([Description("Artifact id")] string id)
         => Translate(() =>
         {
-            var artifact = _artifacts.Get(id);
-            if (artifact is null)
-            {
-                return false;
-            }
-
+            var artifact = _artifacts.Get(id) ?? throw new ArtifactException($"Artifact '{id}' not found.");
             Guard().Authorize(artifact.Domain);
-            return _artifacts.Delete(id);
+            return _confirmations.Request("artifact_delete", id, null, $"delete artifact {id} ({artifact.Filename})", null);
         });
 
     /// <summary>Lists artifacts in a domain (optionally for one note), if in scope.</summary>
@@ -150,6 +148,10 @@ public sealed class ArtifactTools
             return action();
         }
         catch (ArtifactException exception)
+        {
+            throw new McpException(exception.Message);
+        }
+        catch (ConfirmationException exception)
         {
             throw new McpException(exception.Message);
         }

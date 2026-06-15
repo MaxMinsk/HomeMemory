@@ -1,4 +1,5 @@
 using System.Globalization;
+using MemoryMcp.Core.Artifacts;
 using MemoryMcp.Core.Notes;
 using MemoryMcp.Core.Storage;
 using Microsoft.Data.Sqlite;
@@ -16,17 +17,19 @@ public sealed class ConfirmationService
 {
     /// <summary>Destructive actions that can be confirmed.</summary>
     public static readonly IReadOnlySet<string> SupportedActions =
-        new HashSet<string>(StringComparer.Ordinal) { "archive", "supersede" };
+        new HashSet<string>(StringComparer.Ordinal) { "archive", "supersede", "artifact_delete" };
 
     private readonly ISqliteConnectionFactory _connectionFactory;
     private readonly NotesRepository _notes;
+    private readonly ArtifactsService? _artifacts;
     private readonly TimeProvider _clock;
 
-    /// <summary>Creates the service over the database, note repository and clock.</summary>
-    public ConfirmationService(ISqliteConnectionFactory connectionFactory, NotesRepository notes, TimeProvider? timeProvider = null)
+    /// <summary>Creates the service over the database, note repository, artifact service and clock.</summary>
+    public ConfirmationService(ISqliteConnectionFactory connectionFactory, NotesRepository notes, ArtifactsService? artifacts = null, TimeProvider? timeProvider = null)
     {
         _connectionFactory = connectionFactory;
         _notes = notes;
+        _artifacts = artifacts;
         _clock = timeProvider ?? TimeProvider.System;
     }
 
@@ -48,7 +51,14 @@ public sealed class ConfirmationService
             throw new ConfirmationException("supersede requires the replacement note id (secondId).");
         }
 
-        if (_notes.Get(targetId) is null)
+        if (string.Equals(action, "artifact_delete", StringComparison.Ordinal))
+        {
+            if (_artifacts?.Get(targetId) is null)
+            {
+                throw new ConfirmationException($"Target artifact '{targetId}' does not exist.");
+            }
+        }
+        else if (_notes.Get(targetId) is null)
         {
             throw new ConfirmationException($"Target note '{targetId}' does not exist.");
         }
@@ -86,6 +96,7 @@ public sealed class ConfirmationService
         {
             "archive" => _notes.Archive(row.TargetId),
             "supersede" => _notes.Supersede(row.TargetId, row.SecondId!),
+            "artifact_delete" => (_artifacts ?? throw new ConfirmationException("Artifact service unavailable.")).Delete(row.TargetId),
             _ => throw new ConfirmationException($"Unknown action '{row.Action}'."),
         };
 

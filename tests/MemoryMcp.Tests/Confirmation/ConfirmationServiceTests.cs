@@ -1,3 +1,5 @@
+using System.Text;
+using MemoryMcp.Core.Artifacts;
 using MemoryMcp.Core.Confirmation;
 using MemoryMcp.Core.Notes;
 using MemoryMcp.Core.Schemas;
@@ -92,6 +94,40 @@ public class ConfirmationServiceTests
         using var temp = new TempDatabase();
         var (confirm, _) = NewServices(temp);
         Assert.Throws<ConfirmationException>(() => confirm.Request("archive", "ghost", null, null, "t"));
+    }
+
+    [Fact]
+    public void Request_then_confirm_deletes_the_artifact_and_gcs_blob()
+    {
+        using var temp = new TempDatabase();
+        using var dir = new TempDir();
+        var factory = new SqliteConnectionFactory(temp.FilePath);
+        new Migrator(factory, SchemaMigrations.All).Migrate();
+        var notes = new NotesRepository(factory, SchemaRegistry.FromEmbeddedResources());
+        var blobs = new BlobStore(dir.Path, 0);
+        var artifacts = new ArtifactsService(blobs, factory);
+        var confirm = new ConfirmationService(factory, notes, artifacts);
+        var a = artifacts.Put("kitchen", Encoding.UTF8.GetBytes("bytes"), "f.txt", "text/plain", null, "me");
+
+        var pending = confirm.Request("artifact_delete", a.Id, null, null, "t");
+        Assert.NotNull(artifacts.Get(a.Id));   // not deleted yet — two-phase
+
+        Assert.True(confirm.Confirm(pending.Token, "t").Executed);
+        Assert.Null(artifacts.Get(a.Id));      // gone
+        Assert.False(blobs.Exists(a.Sha256));  // blob GC'd
+    }
+
+    [Fact]
+    public void Request_artifact_delete_rejects_missing_artifact()
+    {
+        using var temp = new TempDatabase();
+        using var dir = new TempDir();
+        var factory = new SqliteConnectionFactory(temp.FilePath);
+        new Migrator(factory, SchemaMigrations.All).Migrate();
+        var notes = new NotesRepository(factory, SchemaRegistry.FromEmbeddedResources());
+        var confirm = new ConfirmationService(factory, notes, new ArtifactsService(new BlobStore(dir.Path, 0), factory));
+
+        Assert.Throws<ConfirmationException>(() => confirm.Request("artifact_delete", "ghost", null, null, "t"));
     }
 
     private static (ConfirmationService Confirm, NotesRepository Notes) NewServices(TempDatabase temp)

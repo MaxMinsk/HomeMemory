@@ -194,7 +194,7 @@ public sealed class MemoryTools
 
     /// <summary>Confirms and executes a previously requested destructive action (exactly once).</summary>
     [McpServerTool(Name = "notes_confirm", Destructive = true, UseStructuredContent = true)]
-    [Description("Confirm and execute a destructive action requested earlier (archive/supersede) by its token. A token executes at most once.")]
+    [Description("Confirm and execute a destructive action requested earlier (archive / supersede / artifact delete) by its token. A token executes at most once.")]
     public ConfirmationResult NotesConfirm([Description("Confirmation token from notes_archive/notes_supersede")] string token)
         => Translate(() => _confirmations.Confirm(token, null));
 
