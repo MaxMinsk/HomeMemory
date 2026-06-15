@@ -2,27 +2,31 @@ using System.ComponentModel;
 using MemoryMcp.Core.Diagnostics;
 using MemoryMcp.Core.Notes;
 using MemoryMcp.Core.Schemas;
+using MemoryMcp.Core.Security;
 using ModelContextProtocol.Server;
 
 namespace MemoryMcp.Server.Tools;
 
-/// <summary>The Memory MCP tool surface. Each method is a model-callable tool over the note store.</summary>
+/// <summary>The Memory MCP tool surface. Each method is a model-callable tool over the note store,
+/// authorized against the caller's domain scope.</summary>
 [McpServerToolType]
 public sealed class MemoryTools
 {
     private readonly NotesRepository _notes;
     private readonly SchemaRegistry _schemas;
     private readonly DiagnosticsService _diagnostics;
+    private readonly IScopeAccessor _scope;
 
-    /// <summary>Creates the tool set over the note repository, schema registry and diagnostics.</summary>
-    public MemoryTools(NotesRepository notes, SchemaRegistry schemas, DiagnosticsService diagnostics)
+    /// <summary>Creates the tool set over the repository, registry, diagnostics and scope accessor.</summary>
+    public MemoryTools(NotesRepository notes, SchemaRegistry schemas, DiagnosticsService diagnostics, IScopeAccessor scope)
     {
         _notes = notes;
         _schemas = schemas;
         _diagnostics = diagnostics;
+        _scope = scope;
     }
 
-    /// <summary>Searches notes by optional full-text query plus structured filters.</summary>
+    /// <summary>Searches notes by optional full-text query plus structured filters (scope-restricted).</summary>
     [McpServerTool(Name = "notes_search")]
     [Description("Search notes by an optional full-text query plus filters. Returns snippets and BM25 scores, never the full body.")]
     public IReadOnlyList<SearchResult> NotesSearch(
@@ -32,12 +36,24 @@ public sealed class MemoryTools
         [Description("Tags; every supplied tag must be present")] string[]? tags = null,
         [Description("Envelope status filter; defaults to active")] string status = "active",
         [Description("Maximum number of results")] int limit = 10)
-        => _notes.Search(query, domain, type, tags, status, limit);
+    {
+        var restriction = Guard().RestrictionForSearch(domain);
+        return _notes.Search(query, domain, type, tags, status, limit, restriction);
+    }
 
-    /// <summary>Gets a full note (envelope + payload) by id.</summary>
+    /// <summary>Gets a full note (envelope + payload) by id, if it is in scope.</summary>
     [McpServerTool(Name = "notes_get")]
     [Description("Get a full note (envelope + payload) by id.")]
-    public Note? NotesGet([Description("Note id")] string id) => _notes.Get(id);
+    public Note? NotesGet([Description("Note id")] string id)
+    {
+        var note = _notes.Get(id);
+        if (note is null || !Guard().IsAllowed(note.Domain))
+        {
+            return null;
+        }
+
+        return note;
+    }
 
     /// <summary>Creates or updates a note, validating the payload against the type schema.</summary>
     [McpServerTool(Name = "notes_upsert")]
@@ -51,7 +67,10 @@ public sealed class MemoryTools
         [Description("Tags as a JSON array string")] string? tags = null,
         [Description("Stable upsert key (e.g. MEMP-001)")] string? dedupKey = null,
         [Description("Who is writing (provenance)")] string? sourceAgent = null)
-        => _notes.Upsert(domain, type, title, body, payload, tags, dedupKey, sourceAgent ?? "mcp");
+    {
+        Guard().Authorize(domain);
+        return _notes.Upsert(domain, type, title, body, payload, tags, dedupKey, sourceAgent ?? "mcp");
+    }
 
     /// <summary>Appends a schema-less free-text journal note (capture-first).</summary>
     [McpServerTool(Name = "notes_append_journal")]
@@ -60,9 +79,12 @@ public sealed class MemoryTools
         [Description("Namespace, e.g. kitchen")] string domain,
         [Description("Raw free-text content")] string text,
         [Description("Who is writing (provenance)")] string? sourceAgent = null)
-        => _notes.AppendJournal(domain, text, sourceAgent ?? "mcp");
+    {
+        Guard().Authorize(domain);
+        return _notes.AppendJournal(domain, text, sourceAgent ?? "mcp");
+    }
 
-    /// <summary>Creates a directed link from one note to another.</summary>
+    /// <summary>Creates a directed link from one note to another (both must be in scope).</summary>
     [McpServerTool(Name = "notes_link")]
     [Description("Create a directed link (rel) from one note to another, e.g. depends_on, derived_from.")]
     public string NotesLink(
@@ -70,6 +92,8 @@ public sealed class MemoryTools
         [Description("Target note id")] string toId,
         [Description("Relationship verb")] string rel)
     {
+        AuthorizeNote(fromId);
+        AuthorizeNote(toId);
         _notes.Link(fromId, toId, rel);
         return "ok";
     }
@@ -77,7 +101,11 @@ public sealed class MemoryTools
     /// <summary>Soft-archives a note (no hard delete).</summary>
     [McpServerTool(Name = "notes_archive")]
     [Description("Soft-archive a note (status -> archived). No hard delete. Returns true if archived.")]
-    public bool NotesArchive([Description("Note id")] string id) => _notes.Archive(id);
+    public bool NotesArchive([Description("Note id")] string id)
+    {
+        AuthorizeNote(id);
+        return _notes.Archive(id);
+    }
 
     /// <summary>Marks the old note superseded by the new one and links them.</summary>
     [McpServerTool(Name = "notes_supersede")]
@@ -85,7 +113,11 @@ public sealed class MemoryTools
     public bool NotesSupersede(
         [Description("Note being replaced")] string oldId,
         [Description("Replacement note")] string newId)
-        => _notes.Supersede(oldId, newId);
+    {
+        AuthorizeNote(oldId);
+        AuthorizeNote(newId);
+        return _notes.Supersede(oldId, newId);
+    }
 
     /// <summary>Lists registered note types as type@version.</summary>
     [McpServerTool(Name = "schema_list_types")]
@@ -104,4 +136,15 @@ public sealed class MemoryTools
     [McpServerTool(Name = "status")]
     [Description("Server and database diagnostics: schema version, registered schemas, note count, search backend.")]
     public StatusReport Status() => _diagnostics.Snapshot();
+
+    private ScopeGuard Guard() => new(_scope.Current);
+
+    private void AuthorizeNote(string id)
+    {
+        var note = _notes.Get(id);
+        if (note is not null)
+        {
+            Guard().Authorize(note.Domain);
+        }
+    }
 }

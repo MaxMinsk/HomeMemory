@@ -1,9 +1,14 @@
+using System.Security.Cryptography;
+using System.Text;
 using MemoryMcp.Core.Diagnostics;
 using MemoryMcp.Core.Notes;
 using MemoryMcp.Core.Schemas;
+using MemoryMcp.Core.Security;
 using MemoryMcp.Core.Storage;
+using MemoryMcp.Server.Security;
 using MemoryMcp.Server.Tools;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -15,10 +20,31 @@ if (transport == "http")
 {
     var builder = WebApplication.CreateBuilder(args);
     RegisterServices(builder.Services, dbPath);
+    builder.Services.AddHttpContextAccessor();
+    builder.Services.AddSingleton<IScopeAccessor, HttpScopeAccessor>();
     builder.Services.AddMcpServer().WithHttpTransport().WithTools<MemoryTools>();
 
     var app = builder.Build();
     Bootstrap(app.Services);
+
+    var token = Environment.GetEnvironmentVariable("MEMORY_BEARER_TOKEN");
+    var allowedDomains = (Environment.GetEnvironmentVariable("MEMORY_ALLOWED_DOMAINS") ?? string.Empty)
+        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    app.Use(async (context, next) =>
+    {
+        if (!string.IsNullOrEmpty(token) && !HasValidBearer(context, token))
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return;
+        }
+
+        context.Items[HttpScopeAccessor.ScopeKey] = allowedDomains.Length == 0
+            ? RequestScope.Unrestricted
+            : RequestScope.ForDomains(allowedDomains);
+        await next();
+    });
+
     app.MapMcp();
     await app.RunAsync();
 }
@@ -31,6 +57,7 @@ else
     builder.Logging.AddConsole(options => options.LogToStandardErrorThreshold = LogLevel.Trace);
 
     RegisterServices(builder.Services, dbPath);
+    builder.Services.AddSingleton<IScopeAccessor, TrustedScopeAccessor>(); // local stdio is trusted
     builder.Services.AddMcpServer().WithStdioServerTransport().WithTools<MemoryTools>();
 
     var app = builder.Build();
@@ -52,4 +79,17 @@ static void Bootstrap(IServiceProvider services)
     var factory = services.GetRequiredService<ISqliteConnectionFactory>();
     new Migrator(factory, SchemaMigrations.All).Migrate();
     services.GetRequiredService<SchemaRegistry>().SyncToDatabase(factory);
+}
+
+static bool HasValidBearer(HttpContext context, string expected)
+{
+    var header = context.Request.Headers.Authorization.ToString();
+    if (!header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+    {
+        return false;
+    }
+
+    var presented = Encoding.UTF8.GetBytes(header["Bearer ".Length..].Trim());
+    var configured = Encoding.UTF8.GetBytes(expected);
+    return CryptographicOperations.FixedTimeEquals(presented, configured);
 }

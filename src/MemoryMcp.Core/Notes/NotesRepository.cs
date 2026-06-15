@@ -155,9 +155,11 @@ public sealed class NotesRepository
     /// <param name="tags">Optional tags; every supplied tag must be present.</param>
     /// <param name="status">Envelope status filter; defaults to <c>active</c>.</param>
     /// <param name="limit">Maximum number of results.</param>
+    /// <param name="restrictToDomains">When non-null, restricts results to these domains (auth scope); empty yields no results.</param>
     public IReadOnlyList<SearchResult> Search(
         string? query = null, string? domain = null, string? type = null,
-        IReadOnlyCollection<string>? tags = null, string status = "active", int limit = 10)
+        IReadOnlyCollection<string>? tags = null, string status = "active", int limit = 10,
+        IReadOnlyCollection<string>? restrictToDomains = null)
     {
         using var connection = _connectionFactory.Create();
         using var command = connection.CreateCommand();
@@ -184,6 +186,27 @@ public sealed class NotesRepository
                 var parameter = $"$tag{index++}";
                 filters.Add($"EXISTS (SELECT 1 FROM json_each(n.tags_json) WHERE json_each.value = {parameter})");
                 command.Parameters.AddWithValue(parameter, tag);
+            }
+        }
+
+        if (restrictToDomains is not null)
+        {
+            if (restrictToDomains.Count == 0)
+            {
+                filters.Add("0"); // scope allows nothing -> no results
+            }
+            else
+            {
+                var placeholders = new List<string>();
+                var index = 0;
+                foreach (var allowed in restrictToDomains)
+                {
+                    var parameter = $"$rd{index++}";
+                    placeholders.Add(parameter);
+                    command.Parameters.AddWithValue(parameter, allowed);
+                }
+
+                filters.Add($"n.domain IN ({string.Join(", ", placeholders)})");
             }
         }
 
