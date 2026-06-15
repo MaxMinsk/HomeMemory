@@ -43,6 +43,17 @@ public class NoteFilterTests
     }
 
     [Fact]
+    public void Compiles_is_null_and_is_not_null()
+    {
+        var nul = NoteFilter.Compile("payload.sprint is null");
+        Assert.Contains("json_extract(n.payload_json, '$.sprint') IS NULL", nul.Sql);
+        Assert.Empty(nul.Parameters);
+
+        var notNul = NoteFilter.Compile("payload.sprint is not null");
+        Assert.Contains("IS NOT NULL", notNul.Sql);
+    }
+
+    [Fact]
     public void Values_are_parameterized_not_inlined()
     {
         var compiled = NoteFilter.Compile("payload.note == \"x'; DROP TABLE notes;--\"");

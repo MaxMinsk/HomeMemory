@@ -191,6 +191,18 @@ public class NotesReadMutateTests
     }
 
     [Fact]
+    public void Search_filter_is_null_finds_items_without_a_sprint()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        SeedSprint(repo, "MEMP-700", "S1");
+        Seed(repo, "MEMP-800", "later");   // no sprint in payload
+
+        Assert.Equal(1, repo.Search(type: "backlog_item", filter: "payload.sprint is null").Total);
+        Assert.Equal(1, repo.Search(type: "backlog_item", filter: "payload.sprint is not null").Total);
+    }
+
+    [Fact]
     public void Search_includePayload_returns_status_and_payload_only_when_requested()
     {
         using var temp = new TempDatabase();

@@ -42,7 +42,7 @@ public static class NoteFilter
         return new CompiledFilter(sql, parser.Parameters);
     }
 
-    private enum Kind { LParen, RParen, Comma, Eq, NotEq, And, Or, In, Ident, Str, Num, End }
+    private enum Kind { LParen, RParen, Comma, Eq, NotEq, And, Or, In, Is, Not, Null, Ident, Str, Num, End }
 
     private readonly record struct Token(Kind Kind, string Text);
 
@@ -100,6 +100,9 @@ public static class NoteFilter
             "and" => Kind.And,
             "or" => Kind.Or,
             "in" => Kind.In,
+            "is" => Kind.Is,
+            "not" => Kind.Not,
+            "null" => Kind.Null,
             _ => Kind.Ident,
         };
         tokens.Add(new Token(kind, word));
@@ -205,8 +208,18 @@ public static class NoteFilter
 
                     Expect(Kind.RParen);
                     return $"{column} IN ({string.Join(", ", placeholders)})";
+                case Kind.Is:
+                    if (Peek().Kind == Kind.Not)
+                    {
+                        Next();
+                        Expect(Kind.Null);
+                        return $"{column} IS NOT NULL";
+                    }
+
+                    Expect(Kind.Null);
+                    return $"{column} IS NULL";
                 default:
-                    throw new FilterException($"Invalid filter: expected an operator (== != in), got '{op.Text}'.");
+                    throw new FilterException($"Invalid filter: expected an operator (== != in, is null), got '{op.Text}'.");
             }
         }
 
