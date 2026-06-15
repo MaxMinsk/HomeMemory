@@ -29,11 +29,12 @@ public sealed class DiagnosticsService
         using var connection = _connectionFactory.Create();
 
         var schemaVersion = Convert.ToInt32(Scalar(connection, "PRAGMA user_version;"));
-        var noteCount = Convert.ToInt64(Scalar(connection, "SELECT count(*) FROM notes WHERE deleted = 0;"));
+        // Default-visible counts mirror the default search (active only); archived/superseded are split out in notesByStatus.
+        var noteCount = Convert.ToInt64(Scalar(connection, "SELECT count(*) FROM notes WHERE deleted = 0 AND status = 'active';"));
         var attachmentCount = Convert.ToInt64(Scalar(connection, "SELECT count(*) FROM attachments;"));
-        var notesByType = CountBy(connection, "type");
-        var notesByDomain = CountBy(connection, "domain");
-        var notesByStatus = CountBy(connection, "status");
+        var notesByType = CountBy(connection, "type", activeOnly: true);
+        var notesByDomain = CountBy(connection, "domain", activeOnly: true);
+        var notesByStatus = CountBy(connection, "status", activeOnly: false);
         var pending = Convert.ToInt64(Scalar(connection, "SELECT count(*) FROM pending_actions WHERE status = 'pending';"));
 
         var schemas = _registry.All
@@ -45,11 +46,12 @@ public sealed class DiagnosticsService
             attachmentCount, _blobs?.TotalBytes() ?? 0, pending, "fts5-bm25 (lexical; no vectors)");
     }
 
-    // column is a fixed identifier ("type"/"domain"), never user input — safe to interpolate.
-    private static IReadOnlyDictionary<string, long> CountBy(SqliteConnection connection, string column)
+    // column is a fixed identifier ("type"/"domain"/"status"), never user input — safe to interpolate.
+    private static IReadOnlyDictionary<string, long> CountBy(SqliteConnection connection, string column, bool activeOnly)
     {
+        var statusFilter = activeOnly ? " AND status = 'active'" : string.Empty;
         using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT {column}, count(*) FROM notes WHERE deleted = 0 GROUP BY {column} ORDER BY {column};";
+        command.CommandText = $"SELECT {column}, count(*) FROM notes WHERE deleted = 0{statusFilter} GROUP BY {column} ORDER BY {column};";
         var counts = new Dictionary<string, long>(StringComparer.Ordinal);
         using var reader = command.ExecuteReader();
         while (reader.Read())
