@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json.Nodes;
+using MemoryMcp.Core.Naming;
 using MemoryMcp.Core.Schemas;
 using MemoryMcp.Core.Storage;
 using Microsoft.Data.Sqlite;
@@ -47,6 +48,10 @@ public sealed class NotesWriter
         string domain, string type, string? title, string? body,
         string? payloadJson, string? tagsJson, string? dedupKey, string? sourceAgent)
     {
+        domain = Identifiers.Normalize(domain);
+        type = Identifiers.Normalize(type);
+        tagsJson = Identifiers.NormalizeTags(tagsJson);
+
         var validation = _validator.Validate(type, payloadJson ?? "{}");
         if (!validation.IsValid)
         {
@@ -97,6 +102,7 @@ public sealed class NotesWriter
     /// <returns>The new note id.</returns>
     public string AppendJournal(string domain, string text, string? sourceAgent = null)
     {
+        domain = Identifiers.Normalize(domain);
         var nowUtc = NowUtc();
         var id = Guid.NewGuid().ToString("N");
 

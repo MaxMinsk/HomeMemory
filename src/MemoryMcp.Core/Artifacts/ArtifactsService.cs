@@ -1,4 +1,5 @@
 using System.Globalization;
+using MemoryMcp.Core.Naming;
 using MemoryMcp.Core.Storage;
 using Microsoft.Data.Sqlite;
 
@@ -34,6 +35,7 @@ public sealed class ArtifactsService
             throw new ArtifactException("A domain is required.");
         }
 
+        domain = Identifiers.Normalize(domain);
         var blob = _blobs.Put(content);
         var id = Guid.NewGuid().ToString("N");
         var nowUtc = NowUtc();
@@ -173,7 +175,7 @@ public sealed class ArtifactsService
             $"SELECT {Columns} FROM attachments WHERE domain = $d " +
             (noteId is null ? string.Empty : "AND note_id = $n ") +
             "ORDER BY created_utc DESC LIMIT $limit;";
-        command.Parameters.AddWithValue("$d", domain);
+        command.Parameters.AddWithValue("$d", Identifiers.Normalize(domain));
         if (noteId is not null)
         {
             command.Parameters.AddWithValue("$n", noteId);

@@ -1,3 +1,5 @@
+using MemoryMcp.Core.Naming;
+
 namespace MemoryMcp.Core.Security;
 
 /// <summary>Enforces a <see cref="RequestScope"/>: authorizes domain access and computes search restrictions.</summary>
@@ -9,8 +11,8 @@ public sealed class ScopeGuard
     /// <param name="scope">The active request scope.</param>
     public ScopeGuard(RequestScope scope) => _scope = scope ?? throw new ArgumentNullException(nameof(scope));
 
-    /// <summary>True if the caller may access <paramref name="domain"/>.</summary>
-    public bool IsAllowed(string domain) => _scope.IsUnrestricted || _scope.AllowedDomains.Contains(domain);
+    /// <summary>True if the caller may access <paramref name="domain"/> (case-insensitive).</summary>
+    public bool IsAllowed(string domain) => _scope.IsUnrestricted || _scope.AllowedDomains.Contains(Identifiers.Normalize(domain));
 
     /// <summary>Throws <see cref="ScopeForbiddenException"/> if <paramref name="domain"/> is out of scope.</summary>
     public void Authorize(string domain)

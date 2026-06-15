@@ -1,3 +1,4 @@
+using MemoryMcp.Core.Naming;
 using MemoryMcp.Core.Query;
 using MemoryMcp.Core.Storage;
 using Microsoft.Data.Sqlite;
@@ -177,8 +178,8 @@ public sealed class NotesReader
         command.CommandText =
             $"SELECT {NoteRowMapper.Columns} FROM notes " +
             "WHERE domain = $d AND type = $t AND dedup_key = $k AND deleted = 0 AND status = 'active' LIMIT 1;";
-        command.Parameters.AddWithValue("$d", domain);
-        command.Parameters.AddWithValue("$t", type);
+        command.Parameters.AddWithValue("$d", Identifiers.Normalize(domain));
+        command.Parameters.AddWithValue("$t", Identifiers.Normalize(type));
         command.Parameters.AddWithValue("$k", dedupKey);
 
         using var reader = command.ExecuteReader();
@@ -294,8 +295,8 @@ public sealed class NotesReader
             $"SELECT {NoteRowMapper.Columns} FROM notes " +
             "WHERE domain = $d AND type = $t AND deleted = 0 AND status = 'active' " +
             "ORDER BY updated_utc DESC LIMIT $limit;";
-        command.Parameters.AddWithValue("$d", domain);
-        command.Parameters.AddWithValue("$t", type);
+        command.Parameters.AddWithValue("$d", Identifiers.Normalize(domain));
+        command.Parameters.AddWithValue("$t", Identifiers.Normalize(type));
         command.Parameters.AddWithValue("$limit", limit);
 
         var notes = new List<Note>();
@@ -330,6 +331,9 @@ public sealed class NotesReader
         int limit = DefaultLimit, int offset = 0, IReadOnlyCollection<string>? restrictToDomains = null,
         string? filter = null, bool includePayload = false)
     {
+        domain = Identifiers.NormalizeOptional(domain);
+        type = Identifiers.NormalizeOptional(type);
+        tags = tags?.Select(Identifiers.Normalize).ToList();
         limit = Math.Clamp(limit, 1, MaxLimit);
         offset = Math.Max(0, offset);
         var tokens = string.IsNullOrWhiteSpace(query) ? new List<string>() : SnippetBuilder.Tokenize(query!);

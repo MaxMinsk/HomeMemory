@@ -1,3 +1,5 @@
+using MemoryMcp.Core.Naming;
+
 namespace MemoryMcp.Core.Security;
 
 /// <summary>The domain access scope for a single request (derived from the caller's token).</summary>
@@ -21,5 +23,5 @@ public sealed class RequestScope
     /// <summary>Creates a restricted scope limited to <paramref name="domains"/>.</summary>
     /// <param name="domains">The domains the caller may access.</param>
     public static RequestScope ForDomains(IEnumerable<string> domains) =>
-        new(false, new HashSet<string>(domains, StringComparer.Ordinal));
+        new(false, new HashSet<string>(domains.Select(Identifiers.Normalize), StringComparer.Ordinal));
 }
