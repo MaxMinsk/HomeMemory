@@ -54,13 +54,16 @@ public sealed class MemoryTools
         [Description("When true, each hit also includes its envelope status and payload JSON (still no body), so you can render a board without a get per row.")] bool includePayload = false)
         => Translate(() => _notes.Search(query, domain, type, tags, status, limit, offset, Guard().RestrictionForSearch(domain), filter, includePayload));
 
-    /// <summary>Gets a full note (envelope + payload) by id, if it is in scope.</summary>
+    /// <summary>Gets a note (envelope + payload + size metadata) by id, if it is in scope.</summary>
     [McpServerTool(Name = "notes_get", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
-    [Description("Get a full note (envelope + payload) by id.")]
-    public Note? NotesGet([Description("Note id")] string id)
+    [Description("Get a note (envelope + payload) by id, plus size metadata (bodyChars, attachmentCount, linkCount). By default the full body is returned. For a large note, pass includeBody=false to peek (no body) or bodyMaxChars to cap it — check `truncated`/`bodyChars` and use notes_read/notes_outline to read the rest.")]
+    public NoteView? NotesGet(
+        [Description("Note id")] string id,
+        [Description("Include the body text (default true). Pass false to peek: envelope + payload + counts, no body.")] bool includeBody = true,
+        [Description("Cap the returned body to this many characters (optional; default = full body). Sets truncated=true when it cuts.")] int? bodyMaxChars = null)
     {
-        var note = _notes.Get(id);
-        return note is not null && Guard().IsAllowed(note.Domain) ? note : null;
+        var view = _notes.GetView(id, includeBody, bodyMaxChars);
+        return view is not null && Guard().IsAllowed(view.Domain) ? view : null;
     }
 
     /// <summary>Creates or updates a note, validating the payload against the type schema.</summary>

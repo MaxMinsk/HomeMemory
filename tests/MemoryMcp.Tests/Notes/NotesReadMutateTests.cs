@@ -37,6 +37,67 @@ public class NotesReadMutateTests
     }
 
     [Fact]
+    public void GetView_returns_full_body_and_size_metadata_by_default()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        var id = Seed(repo, "MEMP-200", "ready", body: "Hello world");
+
+        var view = repo.GetView(id);
+
+        Assert.NotNull(view);
+        Assert.Equal("Hello world", view!.Body);   // full body by default
+        Assert.Equal(11, view.BodyChars);
+        Assert.False(view.Truncated);
+        Assert.Equal(0, view.AttachmentCount);
+        Assert.Equal(0, view.LinkCount);
+    }
+
+    [Fact]
+    public void GetView_includeBody_false_omits_body_but_reports_size()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        var id = Seed(repo, "MEMP-200", "ready", body: "Hello world");
+
+        var view = repo.GetView(id, includeBody: false);
+
+        Assert.Null(view!.Body);            // peek: no body
+        Assert.Equal(11, view.BodyChars);   // but the size is still known
+        Assert.True(view.Truncated);
+    }
+
+    [Fact]
+    public void GetView_bodyMaxChars_caps_body_and_flags_truncation()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        var id = Seed(repo, "MEMP-200", "ready", body: "Hello world");
+
+        var view = repo.GetView(id, bodyMaxChars: 5);
+
+        Assert.Equal("Hello", view!.Body);
+        Assert.Equal(11, view.BodyChars);
+        Assert.True(view.Truncated);
+
+        // A cap at or above the length does not truncate.
+        Assert.False(repo.GetView(id, bodyMaxChars: 11)!.Truncated);
+    }
+
+    [Fact]
+    public void GetView_counts_links_in_both_directions()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        var a = Seed(repo, "MEMP-200", "ready");
+        var b = Seed(repo, "MEMP-201", "ready");
+        repo.Link(a, b, "depends_on");
+
+        Assert.Equal(1, repo.GetView(a)!.LinkCount);
+        Assert.Equal(1, repo.GetView(b)!.LinkCount);
+    }
+
+    [Fact]
     public void Search_by_text_returns_snippet_without_body()
     {
         using var temp = new TempDatabase();

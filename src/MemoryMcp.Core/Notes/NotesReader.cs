@@ -33,6 +33,50 @@ public sealed class NotesReader
         return reader.Read() ? NoteRowMapper.Map(reader) : null;
     }
 
+    /// <summary>
+    /// Returns a note plus cheap size metadata, applying body windowing so a caller need not pull a huge
+    /// body to inspect a note. <paramref name="includeBody"/>=false omits the body; <paramref name="bodyMaxChars"/>
+    /// (when set) caps it; either way <see cref="NoteView.BodyChars"/> reports the true length.
+    /// </summary>
+    /// <param name="id">The note id.</param>
+    /// <param name="includeBody">When false, the body is omitted (peek).</param>
+    /// <param name="bodyMaxChars">When set (>=0), caps the returned body to this many characters; null = full body.</param>
+    public NoteView? GetView(string id, bool includeBody = true, int? bodyMaxChars = null)
+    {
+        var note = Get(id);
+        if (note is null)
+        {
+            return null;
+        }
+
+        var (attachments, links) = Counts(id);
+        return NoteView.From(note, includeBody, bodyMaxChars, attachments, links);
+    }
+
+    // Counts the artifacts attached to a note and the links touching it (both directions).
+    private (int Attachments, int Links) Counts(string id)
+    {
+        using var connection = _connectionFactory.Create();
+
+        int attachments;
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT count(*) FROM attachments WHERE note_id = $id;";
+            command.Parameters.AddWithValue("$id", id);
+            attachments = Convert.ToInt32(command.ExecuteScalar());
+        }
+
+        int links;
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT count(*) FROM note_links WHERE from_id = $id OR to_id = $id;";
+            command.Parameters.AddWithValue("$id", id);
+            links = Convert.ToInt32(command.ExecuteScalar());
+        }
+
+        return (attachments, links);
+    }
+
     /// <summary>Returns the active note for (domain, type, dedupKey), or <c>null</c>. Key-addressed lookup (e.g. skills).</summary>
     /// <param name="domain">Domain filter.</param>
     /// <param name="type">Type filter.</param>
