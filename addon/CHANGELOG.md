@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.12.0
+
+Sprint 5 — large-note ergonomics + hygiene (context-efficient reads, from the Codex architecture note).
+
+- **Peek / window a note** (MEMP-086): `notes_get` gains `includeBody=false` (peek: envelope + payload +
+  counts, no body) and `bodyMaxChars` (cap the body), and now reports `bodyChars`, `truncated`,
+  `attachmentCount`, `linkCount`. Defaults are unchanged (full body) — no silent truncation.
+- **Partial body reads** (MEMP-087): `notes_read(id, offset, limitChars)` returns a slice with
+  totalChars/returnedChars/truncated and a `nextOffset` cursor + the revision; `notes_outline(id)` maps
+  Markdown headings to offsets so a section read is `notes_read(headingOffset, nextHeadingOffset - it)`.
+- **Compact history** (MEMP-088): `notes_history` no longer dumps the full before/after per event (huge for
+  big notes) — each entry is eventId/op/actor/ts/changedFields/diffBytes; fetch one event's full diff with
+  `notes_history_event(id, eventId)`.
+- **In-note search** (MEMP-089): `notes_find(id, query, contextChars, limit)` — ripgrep within a single
+  note's body: match offsets + context windows, so you locate and read only the relevant parts.
+- **Case-insensitive identifiers** (MEMP-064): domain/type are normalized to lowercase (tags too, de-duped)
+  on write, on read filters, and in scope auth — `Home` and `home` are one domain; no case-variant
+  duplicates; a token scoped to `home` admits a `Home` request.
+- **Ops visibility** (MEMP-074): `status` now reports `serverVersion` (so agents can confirm which build
+  prod runs) and `blobQuotaBytes` alongside `blobBytes`.
+
 ## 0.11.0
 
 - **Fix (orphan blob on replace)**: re-attaching a same-named file to a note (`artifacts_put` replace,
