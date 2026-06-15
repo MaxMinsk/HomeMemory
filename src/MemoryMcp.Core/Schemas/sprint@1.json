@@ -6,6 +6,7 @@
   "additionalProperties": false,
   "properties": {
     "key": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+    "project": { "type": "string", "description": "Project slug this sprint belongs to, e.g. memory-mcp." },
     "goal": { "type": "string" },
     "status": { "enum": ["planned", "active", "done"] },
     "version_target": { "type": "string" },

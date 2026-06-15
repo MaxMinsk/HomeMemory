@@ -6,6 +6,7 @@
   "additionalProperties": false,
   "properties": {
     "key": { "type": "string", "pattern": "^[A-Z]+-[0-9]{3,}$" },
+    "project": { "type": "string", "description": "Project slug this ticket belongs to, e.g. memory-mcp. Mirrors the key prefix; lets one query a project's backlog across domains." },
     "status": { "enum": ["ready", "next", "later", "in_progress", "done", "blocked"] },
     "sprint": { "type": "string", "description": "Sprint key this ticket belongs to (e.g. S1); unset = general backlog, not in any sprint." },
     "assignee": { "type": "string", "description": "Who should act on this, e.g. 'me', 'agent', or a name. Personal-backlog views filter on it (hide agent-owned tasks)." },

@@ -41,7 +41,7 @@ public class SchemaRegistryAndValidatorTests
         var validator = new SchemaValidator(SchemaRegistry.FromEmbeddedResources());
 
         var result = validator.Validate("backlog_item",
-            """{ "key": "MEMP-007", "status": "next", "priority": "high", "assignee": "agent", "sprint": "S1" }""");
+            """{ "key": "MEMP-007", "status": "next", "priority": "high", "assignee": "agent", "sprint": "S1", "project": "memory-mcp" }""");
 
         Assert.True(result.IsValid, string.Join("; ", result.Errors));
     }
@@ -87,7 +87,7 @@ public class SchemaRegistryAndValidatorTests
         var validator = new SchemaValidator(SchemaRegistry.FromEmbeddedResources());
 
         var result = validator.Validate("sprint",
-            """{ "key": "S1", "goal": "Close M0 + sprint infra", "status": "active", "version_target": "0.2.0" }""");
+            """{ "key": "S1", "goal": "Close M0 + sprint infra", "status": "active", "version_target": "0.2.0", "project": "memory-mcp" }""");
 
         Assert.True(result.IsValid, string.Join("; ", result.Errors));
     }
