@@ -41,7 +41,7 @@ public class SchemaRegistryAndValidatorTests
         var validator = new SchemaValidator(SchemaRegistry.FromEmbeddedResources());
 
         var result = validator.Validate("backlog_item",
-            """{ "key": "MEMP-007", "status": "next", "priority": "high", "assignee": "agent" }""");
+            """{ "key": "MEMP-007", "status": "next", "priority": "high", "assignee": "agent", "sprint": "S1" }""");
 
         Assert.True(result.IsValid, string.Join("; ", result.Errors));
     }
@@ -68,6 +68,36 @@ public class SchemaRegistryAndValidatorTests
         var validator = new SchemaValidator(SchemaRegistry.FromEmbeddedResources());
 
         var result = validator.Validate("does_not_exist", "{}");
+
+        Assert.False(result.IsValid);
+    }
+
+    [Fact]
+    public void Registry_loads_sprint_schema()
+    {
+        var definition = SchemaRegistry.FromEmbeddedResources().GetLatest("sprint");
+
+        Assert.NotNull(definition);
+        Assert.Equal(1, definition!.Version);
+    }
+
+    [Fact]
+    public void Valid_sprint_passes()
+    {
+        var validator = new SchemaValidator(SchemaRegistry.FromEmbeddedResources());
+
+        var result = validator.Validate("sprint",
+            """{ "key": "S1", "goal": "Close M0 + sprint infra", "status": "active", "version_target": "0.2.0" }""");
+
+        Assert.True(result.IsValid, string.Join("; ", result.Errors));
+    }
+
+    [Fact]
+    public void Invalid_sprint_status_is_rejected()
+    {
+        var validator = new SchemaValidator(SchemaRegistry.FromEmbeddedResources());
+
+        var result = validator.Validate("sprint", """{ "key": "S1", "status": "bogus" }""");
 
         Assert.False(result.IsValid);
     }

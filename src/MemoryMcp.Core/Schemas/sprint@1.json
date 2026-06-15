@@ -1,0 +1,15 @@
+{
+  "$id": "sprint@1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["key", "status"],
+  "additionalProperties": false,
+  "properties": {
+    "key": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+    "goal": { "type": "string" },
+    "status": { "enum": ["planned", "active", "done"] },
+    "version_target": { "type": "string" },
+    "started_utc": { "type": "string" },
+    "completed_utc": { "type": "string" }
+  }
+}
