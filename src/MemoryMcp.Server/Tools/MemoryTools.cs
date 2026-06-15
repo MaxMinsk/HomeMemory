@@ -236,8 +236,23 @@ public sealed class MemoryTools
 
     /// <summary>Returns server/database diagnostics.</summary>
     [McpServerTool(Name = "status", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
-    [Description("Server and database diagnostics: schema version, registered schemas, note count, search backend.")]
+    [Description("Server and database diagnostics: schema version, registered schemas, note counts by type/domain/status, attachments, blob bytes, pending confirmations.")]
     public StatusReport Status() => _diagnostics.Snapshot();
+
+    /// <summary>Lists domains (namespaces) with their note counts.</summary>
+    [McpServerTool(Name = "domains_list", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("List domains (namespaces/workspaces) with note counts — to discover what workspaces exist.")]
+    public IReadOnlyDictionary<string, long> DomainsList() => _diagnostics.Snapshot().NotesByDomain;
+
+    /// <summary>Lists tags (facets) with their counts, most-used first.</summary>
+    [McpServerTool(Name = "tags_list", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("List tags (cross-cutting facets) with counts, most-used first — to discover the tag taxonomy.")]
+    public IReadOnlyDictionary<string, long> TagsList() => _notes.TagCounts();
+
+    /// <summary>Lists unresolved destructive-action confirmations.</summary>
+    [McpServerTool(Name = "pending_actions_list", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("List unresolved destructive-action confirmations (so their tokens aren't lost). Resolve via notes_confirm / notes_cancel.")]
+    public IReadOnlyList<PendingAction> PendingActionsList() => _confirmations.ListPending();
 
     private ScopeGuard Guard() => new(_scope.Current);
 

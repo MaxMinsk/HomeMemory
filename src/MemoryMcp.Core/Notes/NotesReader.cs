@@ -52,6 +52,25 @@ public sealed class NotesReader
         return reader.Read() ? NoteRowMapper.Map(reader) : null;
     }
 
+    /// <summary>Returns distinct tags across live notes with their counts (facet discovery), most-used first.</summary>
+    public IReadOnlyDictionary<string, long> TagCounts()
+    {
+        using var connection = _connectionFactory.Create();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT json_each.value AS tag, count(*) AS n FROM notes, json_each(notes.tags_json) " +
+            "WHERE notes.deleted = 0 AND notes.tags_json IS NOT NULL GROUP BY tag ORDER BY n DESC, tag;";
+
+        var counts = new Dictionary<string, long>(StringComparer.Ordinal);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            counts[reader.GetString(0)] = reader.GetInt64(1);
+        }
+
+        return counts;
+    }
+
     /// <summary>Returns the note's links in both directions (each resolved to the note at the other end).</summary>
     /// <param name="id">The note id.</param>
     public IReadOnlyList<LinkView> Links(string id)
@@ -186,8 +205,8 @@ public sealed class NotesReader
         var where = ApplyFilters(command, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter);
         command.Parameters.AddWithValue("$limit", limit);
         command.Parameters.AddWithValue("$offset", offset);
-        // status + payload_json are always selected (cheap); they reach the caller only when includePayload is set.
-        const string columns = "n.id, n.title, n.type, n.domain, n.body, {0} AS score, n.status, n.payload_json";
+        // envelope extras are always selected (cheap); they reach the caller only when includePayload is set.
+        const string columns = "n.id, n.title, n.type, n.domain, n.body, {0} AS score, n.status, n.payload_json, n.tags_json, n.dedup_key, n.updated_utc";
         command.CommandText = useFts
             ? $"SELECT {string.Format(System.Globalization.CultureInfo.InvariantCulture, columns, "bm25(notes_fts)")} " +
               $"FROM notes_fts JOIN notes n ON n.rowid = notes_fts.rowid WHERE {where} " +
@@ -209,7 +228,10 @@ public sealed class NotesReader
                 reader.GetString(3),
                 reader.GetDouble(5),
                 includePayload ? reader.GetString(6) : null,
-                includePayload && !reader.IsDBNull(7) ? reader.GetString(7) : null));
+                includePayload && !reader.IsDBNull(7) ? reader.GetString(7) : null,
+                includePayload && !reader.IsDBNull(8) ? reader.GetString(8) : null,
+                includePayload && !reader.IsDBNull(9) ? reader.GetString(9) : null,
+                includePayload ? reader.GetString(10) : null));
         }
 
         return results;
@@ -225,9 +247,11 @@ public sealed class NotesReader
 
         if (useFts)
         {
-            // Quote each token as an FTS5 phrase so arbitrary input can't break MATCH syntax.
+            // Quote each token as an FTS5 phrase (so arbitrary input can't break MATCH syntax) and make it
+            // a prefix match, so longer word forms are found (e.g. "plumb" matches "plumbing"; in Russian a
+            // short stem matches its inflected forms).
             filters.Add("notes_fts MATCH $q");
-            command.Parameters.AddWithValue("$q", string.Join(' ', tokens.Select(token => $"\"{token}\"")));
+            command.Parameters.AddWithValue("$q", string.Join(' ', tokens.Select(token => $"\"{token}\"*")));
         }
 
         filters.Add("n.deleted = 0");

@@ -33,14 +33,16 @@ public sealed class DiagnosticsService
         var attachmentCount = Convert.ToInt64(Scalar(connection, "SELECT count(*) FROM attachments;"));
         var notesByType = CountBy(connection, "type");
         var notesByDomain = CountBy(connection, "domain");
+        var notesByStatus = CountBy(connection, "status");
+        var pending = Convert.ToInt64(Scalar(connection, "SELECT count(*) FROM pending_actions WHERE status = 'pending';"));
 
         var schemas = _registry.All
             .Select(definition => $"{definition.Type}@{definition.Version}")
             .OrderBy(value => value, StringComparer.Ordinal)
             .ToList();
 
-        return new StatusReport(schemaVersion, schemas, noteCount, notesByType, notesByDomain, attachmentCount,
-            _blobs?.TotalBytes() ?? 0, "fts5-bm25 (lexical; no vectors)");
+        return new StatusReport(schemaVersion, schemas, noteCount, notesByType, notesByDomain, notesByStatus,
+            attachmentCount, _blobs?.TotalBytes() ?? 0, pending, "fts5-bm25 (lexical; no vectors)");
     }
 
     // column is a fixed identifier ("type"/"domain"), never user input — safe to interpolate.

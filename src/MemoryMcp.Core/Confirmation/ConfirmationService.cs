@@ -95,6 +95,29 @@ public sealed class ConfirmationService
         return new ConfirmationResult(token, row.Action, executed, detail);
     }
 
+    /// <summary>Lists unresolved pending actions (newest first) so confirmation tokens aren't lost.</summary>
+    public IReadOnlyList<PendingAction> ListPending()
+    {
+        using var connection = _connectionFactory.Create();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT token, action, target_id, second_id, summary, status, created_utc " +
+            "FROM pending_actions WHERE status = 'pending' ORDER BY created_utc DESC;";
+
+        var rows = new List<PendingAction>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            rows.Add(new PendingAction(
+                reader.GetString(0), reader.GetString(1), reader.GetString(2),
+                reader.IsDBNull(3) ? null : reader.GetString(3),
+                reader.IsDBNull(4) ? null : reader.GetString(4),
+                reader.GetString(5), reader.GetString(6)));
+        }
+
+        return rows;
+    }
+
     /// <summary>Cancels a pending action so it can never execute.</summary>
     public ConfirmationResult Cancel(string token, string? resolvedBy)
     {

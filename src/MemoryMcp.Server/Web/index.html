@@ -86,10 +86,12 @@ async function search() {
     const page = await api('/api/search?' + p.toString());
     const list = $('#list');
     if (!page.items.length) { list.innerHTML = '<div class="empty">No matches.</div>'; return; }
-    list.innerHTML = page.items.map(it =>
-      `<div class="item" onclick="open_('${it.id}')"><div class="t">${esc(it.title)||'<i>untitled</i>'}</div>` +
-      `<div class="m"><span class="badge">${esc(it.type)}</span><span class="badge">${esc(it.domain)}</span>${esc(it.status||'')}</div></div>`
-    ).join('');
+    list.innerHTML = page.items.map(it => {
+      let tags = []; try { tags = it.tagsJson ? JSON.parse(it.tagsJson) : []; } catch {}
+      return `<div class="item" onclick="open_('${it.id}')"><div class="t">${esc(it.title)||'<i>untitled</i>'}</div>` +
+        `<div class="m"><span class="badge">${esc(it.type)}</span><span class="badge">${esc(it.domain)}</span>${esc(it.status||'')}</div>` +
+        (tags.length ? `<div>${tags.map(t=>`<span class="tag">${esc(t)}</span>`).join('')}</div>` : '') + `</div>`;
+    }).join('');
     $('#stats').dataset.total = page.total;
   } catch(e){ $('#list').innerHTML = '<div class="empty">'+esc(e.message)+'</div>'; }
 }
