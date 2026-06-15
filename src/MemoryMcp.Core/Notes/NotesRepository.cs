@@ -31,8 +31,8 @@ public sealed class NotesRepository
         => _writer.Upsert(domain, type, title, body, payloadJson, tagsJson, dedupKey, sourceAgent);
 
     /// <inheritdoc cref="NotesWriter.AppendJournal"/>
-    public string AppendJournal(string domain, string text, string? sourceAgent = null)
-        => _writer.AppendJournal(domain, text, sourceAgent);
+    public string AppendJournal(string domain, string text, string? title = null, string? tagsJson = null, string? sourceAgent = null)
+        => _writer.AppendJournal(domain, text, title, tagsJson, sourceAgent);
 
     /// <inheritdoc cref="NotesWriter.Link"/>
     public void Link(string fromId, string toId, string rel) => _writer.Link(fromId, toId, rel);

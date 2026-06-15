@@ -139,15 +139,17 @@ public sealed class MemoryTools
 
     /// <summary>Appends a schema-less free-text journal note (capture-first).</summary>
     [McpServerTool(Name = "notes_append_journal", Destructive = false)]
-    [Description("Append a schema-less free-text journal note. Capture-first; structure it later.")]
+    [Description("Append a schema-less free-text journal note (capture-first; structure it later). A title is derived from the first line if you omit one, a stable dedupKey is assigned, and the note is tagged 'unstructured' so it can be found for later structuring.")]
     public string NotesAppendJournal(
         [Description("Namespace, e.g. kitchen")] string domain,
         [Description("Raw free-text content")] string text,
+        [Description("Optional title (default: derived from the first line)")] string? title = null,
+        [Description("Optional tags as a JSON array string ('unstructured' is always added)")] string? tags = null,
         [Description("Who is writing (provenance)")] string? sourceAgent = null)
         => Translate(() =>
         {
             Guard().Authorize(domain);
-            return _notes.AppendJournal(domain, text, sourceAgent ?? "mcp");
+            return _notes.AppendJournal(domain, text, title, tags, sourceAgent ?? "mcp");
         });
 
     /// <summary>Creates a directed link from one note to another (both must be in scope).</summary>

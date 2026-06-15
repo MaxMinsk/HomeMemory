@@ -93,26 +93,68 @@ public sealed class NotesWriter
     }
 
     /// <summary>
-    /// Appends a schema-less free-text journal note (type <c>journal</c>, no payload, no dedup) and audits it.
-    /// This is the capture-first path for raw human notes; structuring happens later, agent-side.
+    /// Appends a schema-less free-text journal note (type <c>journal</c>) and audits it. Capture-first for
+    /// raw human notes; structuring happens later. A title is derived from the first line when not given,
+    /// a stable dedupKey is assigned (so it is findable/editable), and the note is tagged
+    /// <c>unstructured</c> so it can be located for later structuring.
     /// </summary>
     /// <param name="domain">Namespace, e.g. <c>kitchen</c>.</param>
     /// <param name="text">The raw free-text content (stored as the body).</param>
+    /// <param name="title">Optional title; when null/blank it is derived from the first line of the text.</param>
+    /// <param name="tagsJson">Optional tags (JSON array string); <c>unstructured</c> is always added.</param>
     /// <param name="sourceAgent">Provenance: who is writing.</param>
     /// <returns>The new note id.</returns>
-    public string AppendJournal(string domain, string text, string? sourceAgent = null)
+    public string AppendJournal(string domain, string text, string? title = null, string? tagsJson = null, string? sourceAgent = null)
     {
         domain = Identifiers.Normalize(domain);
         var nowUtc = NowUtc();
         var id = Guid.NewGuid().ToString("N");
+        var resolvedTitle = string.IsNullOrWhiteSpace(title) ? DeriveTitle(text) : title.Trim();
+        var tags = MergeUnstructuredTag(tagsJson);
+        var dedupKey = "journal-" + id[..8];
 
         using var connection = _connectionFactory.Create();
         using var transaction = connection.BeginTransaction();
-        Insert(connection, transaction, id, domain, "journal", null, text, null, null, null, sourceAgent, 0, nowUtc);
+        Insert(connection, transaction, id, domain, "journal", resolvedTitle, text, null, tags, dedupKey, sourceAgent, 0, nowUtc);
         NoteAudit.Append(connection, transaction, id, "create", sourceAgent, nowUtc,
             new JsonObject { ["op"] = "create", ["type"] = "journal" }.ToJsonString());
         transaction.Commit();
         return id;
+    }
+
+    // First non-empty line (sans leading Markdown #), trimmed to a reasonable title length.
+    private static string DeriveTitle(string text)
+    {
+        var firstLine = (text ?? string.Empty).Split('\n')
+            .Select(line => line.Trim()).FirstOrDefault(line => line.Length > 0) ?? string.Empty;
+        firstLine = firstLine.TrimStart('#', ' ').Trim();
+        if (firstLine.Length == 0)
+        {
+            return "journal";
+        }
+
+        return firstLine.Length <= 80 ? firstLine : firstLine[..79] + "...";
+    }
+
+    // Normalizes the supplied tags and guarantees the 'unstructured' marker is present.
+    private static string MergeUnstructuredTag(string? tagsJson)
+    {
+        JsonArray array;
+        try
+        {
+            array = JsonNode.Parse(Identifiers.NormalizeTags(tagsJson) ?? "[]") as JsonArray ?? new JsonArray();
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            array = new JsonArray();
+        }
+
+        if (!array.Any(node => node is JsonValue value && value.TryGetValue<string>(out var tag) && tag == "unstructured"))
+        {
+            array.Add("unstructured");
+        }
+
+        return array.ToJsonString();
     }
 
     /// <summary>Creates a directed link <paramref name="rel"/> from one note to another and audits it.</summary>

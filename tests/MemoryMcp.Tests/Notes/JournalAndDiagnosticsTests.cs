@@ -19,7 +19,7 @@ public class JournalAndDiagnosticsTests
         new Migrator(factory, SchemaMigrations.All).Migrate();
         var repo = new NotesRepository(factory, SchemaRegistry.FromEmbeddedResources());
 
-        var id = repo.AppendJournal("kitchen", "bought mackerel, try smoking it", "me");
+        var id = repo.AppendJournal("kitchen", "bought mackerel, try smoking it", sourceAgent: "me");
 
         var note = repo.Get(id);
         Assert.NotNull(note);
@@ -27,7 +27,27 @@ public class JournalAndDiagnosticsTests
         Assert.Equal("bought mackerel, try smoking it", note.Body);
         Assert.Null(note.PayloadJson);
         Assert.Equal(0, note.SchemaVer);
+        Assert.Equal("bought mackerel, try smoking it", note.Title);   // derived from the first line
+        Assert.Equal("me", note.SourceAgent);
+        Assert.NotNull(note.DedupKey);                                 // findable/editable
+        Assert.Contains("unstructured", note.TagsJson!);               // marked for later structuring
         Assert.Single(repo.Search(query: "mackerel", domain: "kitchen").Items);
+    }
+
+    [Fact]
+    public void AppendJournal_honors_given_title_and_tags_and_always_adds_unstructured()
+    {
+        using var temp = new TempDatabase();
+        var factory = new SqliteConnectionFactory(temp.FilePath);
+        new Migrator(factory, SchemaMigrations.All).Migrate();
+        var repo = new NotesRepository(factory, SchemaRegistry.FromEmbeddedResources());
+
+        var id = repo.AppendJournal("kitchen", "line one\nline two", title: "Smoking plan", tagsJson: """["loc:summer-kitchen"]""", sourceAgent: "me");
+
+        var note = repo.Get(id)!;
+        Assert.Equal("Smoking plan", note.Title);
+        Assert.Contains("loc:summer-kitchen", note.TagsJson!);
+        Assert.Contains("unstructured", note.TagsJson!);
     }
 
     [Fact]
