@@ -166,6 +166,24 @@ public sealed class MemoryTools
     public ConfirmationResult NotesCancel([Description("Confirmation token")] string token)
         => Translate(() => _confirmations.Cancel(token, null));
 
+    /// <summary>Partially updates a note by id (merge), with optional optimistic-concurrency check.</summary>
+    [McpServerTool(Name = "notes_patch", Destructive = false, UseStructuredContent = true)]
+    [Description("Update a note by id WITHOUT replacing it: only the fields you pass change, and a `payload` is shallow-merged into the existing one (its keys win). Pass `expectedUpdatedUtc` (the revision from notes_get/upsert) to fail safely if another agent changed it meanwhile. Returns the updated note.")]
+    public Note NotesPatch(
+        [Description("Note id")] string id,
+        [Description("New title (optional)")] string? title = null,
+        [Description("New body (optional)")] string? body = null,
+        [Description("Payload keys to merge as JSON (optional)")] string? payload = null,
+        [Description("Tags as a JSON array string, replaces tags (optional)")] string? tags = null,
+        [Description("Expected current updated_utc for optimistic concurrency (optional)")] string? expectedUpdatedUtc = null,
+        [Description("Who is writing (provenance)")] string? sourceAgent = null)
+        => Translate(() =>
+        {
+            AuthorizeNote(id);
+            return _notes.Patch(id, title, body, payload, tags, expectedUpdatedUtc, sourceAgent ?? "mcp")
+                ?? throw new McpException($"Note '{id}' not found.");
+        });
+
     /// <summary>Restores an archived/superseded note to active.</summary>
     [McpServerTool(Name = "notes_restore", Idempotent = true)]
     [Description("Restore an archived or superseded note back to active. Returns true if a note was restored.")]
@@ -290,6 +308,10 @@ public sealed class MemoryTools
             throw new McpException(exception.Message);
         }
         catch (SchemaAuthoringException exception)
+        {
+            throw new McpException(exception.Message);
+        }
+        catch (ConcurrencyException exception)
         {
             throw new McpException(exception.Message);
         }

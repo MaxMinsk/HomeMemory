@@ -84,7 +84,7 @@ public sealed class NotesWriter
         NoteAudit.Append(connection, transaction, id, op, sourceAgent, nowUtc, NoteAudit.BuildDiff(op, before, after));
 
         transaction.Commit();
-        return new UpsertResult(id, created);
+        return new UpsertResult(id, created, nowUtc);
     }
 
     /// <summary>
@@ -203,6 +203,121 @@ public sealed class NotesWriter
         NoteAudit.Append(connection, transaction, oldId, "supersede", null, nowUtc, new JsonObject { ["op"] = "supersede", ["by"] = newId }.ToJsonString());
         transaction.Commit();
         return true;
+    }
+
+    /// <summary>
+    /// Partially updates a note by id (merge semantics): only the supplied envelope fields change, and a
+    /// supplied <paramref name="payloadJson"/> is shallow-merged into the existing payload (its keys win).
+    /// If <paramref name="expectedUpdatedUtc"/> is given and no longer matches, throws
+    /// <see cref="ConcurrencyException"/> (optimistic concurrency). Returns the updated note, or null if
+    /// no active note has that id. The merged payload is validated; an invalid result throws and writes nothing.
+    /// </summary>
+    public Note? Patch(string id, string? title, string? body, string? payloadJson, string? tagsJson,
+        string? expectedUpdatedUtc, string? sourceAgent)
+    {
+        var nowUtc = NowUtc();
+        using var connection = _connectionFactory.Create();
+        using var transaction = connection.BeginTransaction();
+
+        var current = ReadForPatch(connection, transaction, id);
+        if (current is null)
+        {
+            return null;
+        }
+
+        if (expectedUpdatedUtc is not null && !string.Equals(expectedUpdatedUtc, current.UpdatedUtc, StringComparison.Ordinal))
+        {
+            throw new ConcurrencyException(
+                $"Stale update: this note changed since you read it (current revision {current.UpdatedUtc}). Re-read and retry.");
+        }
+
+        var newTitle = title ?? current.Title;
+        var newBody = body ?? current.Body;
+        var newTags = tagsJson ?? current.Tags;
+        var newPayload = MergePayload(current.Payload, payloadJson);
+
+        if (_registry.GetLatest(current.Type) is not null)
+        {
+            var validation = _validator.Validate(current.Type, newPayload ?? "{}");
+            if (!validation.IsValid)
+            {
+                throw new NoteValidationException(validation.Errors);
+            }
+        }
+
+        var before = NoteAudit.Snapshot(current.Title, current.Body, current.Payload, current.Tags, current.Status, current.SchemaVer);
+        using (var update = connection.CreateCommand())
+        {
+            update.Transaction = transaction;
+            update.CommandText =
+                "UPDATE notes SET title = $t, body = $b, payload_json = $p, tags_json = $g, updated_utc = $now, source_agent = $by WHERE id = $id;";
+            update.Parameters.AddWithValue("$t", (object?)newTitle ?? DBNull.Value);
+            update.Parameters.AddWithValue("$b", (object?)newBody ?? DBNull.Value);
+            update.Parameters.AddWithValue("$p", (object?)newPayload ?? DBNull.Value);
+            update.Parameters.AddWithValue("$g", (object?)newTags ?? DBNull.Value);
+            update.Parameters.AddWithValue("$now", nowUtc);
+            update.Parameters.AddWithValue("$by", (object?)sourceAgent ?? DBNull.Value);
+            update.Parameters.AddWithValue("$id", id);
+            update.ExecuteNonQuery();
+        }
+
+        var after = NoteAudit.Snapshot(newTitle, newBody, newPayload, newTags, current.Status, current.SchemaVer);
+        NoteAudit.Append(connection, transaction, id, "patch", sourceAgent, nowUtc, NoteAudit.BuildDiff("patch", before, after));
+        transaction.Commit();
+
+        return new Note(id, current.Domain, current.Type, newTitle, newBody, newPayload, newTags,
+            current.DedupKey, current.Status, current.CreatedUtc, nowUtc, sourceAgent, current.SchemaVer, false);
+    }
+
+    private static PatchSource? ReadForPatch(SqliteConnection connection, SqliteTransaction transaction, string id)
+    {
+        using var select = connection.CreateCommand();
+        select.Transaction = transaction;
+        select.CommandText =
+            "SELECT domain, type, title, body, payload_json, tags_json, dedup_key, status, created_utc, updated_utc, schema_ver " +
+            "FROM notes WHERE id = $id AND deleted = 0 LIMIT 1;";
+        select.Parameters.AddWithValue("$id", id);
+        using var reader = select.ExecuteReader();
+        if (!reader.Read())
+        {
+            return null;
+        }
+
+        return new PatchSource(
+            reader.GetString(0), reader.GetString(1),
+            reader.IsDBNull(2) ? null : reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3),
+            reader.IsDBNull(4) ? null : reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetString(5),
+            reader.IsDBNull(6) ? null : reader.GetString(6), reader.GetString(7),
+            reader.GetString(8), reader.GetString(9), reader.GetInt32(10));
+    }
+
+    private sealed record PatchSource(string Domain, string Type, string? Title, string? Body, string? Payload,
+        string? Tags, string? DedupKey, string Status, string CreatedUtc, string UpdatedUtc, int SchemaVer);
+
+    // Shallow-merges a JSON patch object into the current payload (patch keys win). Null patch -> unchanged.
+    private static string? MergePayload(string? current, string? patch)
+    {
+        if (patch is null)
+        {
+            return current;
+        }
+
+        if (string.IsNullOrWhiteSpace(current))
+        {
+            return patch;
+        }
+
+        if (JsonNode.Parse(current) is not JsonObject baseObject || JsonNode.Parse(patch) is not JsonObject patchObject)
+        {
+            return patch; // non-object payloads: replace rather than merge
+        }
+
+        foreach (var pair in patchObject)
+        {
+            baseObject[pair.Key] = pair.Value?.DeepClone();
+        }
+
+        return baseObject.ToJsonString();
     }
 
     /// <summary>Restores an archived/superseded note to active. Returns false if no such note exists.</summary>

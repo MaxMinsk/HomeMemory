@@ -43,6 +43,11 @@ public sealed class NotesRepository
     /// <inheritdoc cref="NotesWriter.Supersede"/>
     public bool Supersede(string oldId, string newId) => _writer.Supersede(oldId, newId);
 
+    /// <inheritdoc cref="NotesWriter.Patch"/>
+    public Note? Patch(string id, string? title, string? body, string? payloadJson, string? tagsJson,
+        string? expectedUpdatedUtc, string? sourceAgent)
+        => _writer.Patch(id, title, body, payloadJson, tagsJson, expectedUpdatedUtc, sourceAgent);
+
     /// <inheritdoc cref="NotesWriter.Restore"/>
     public bool Restore(string id) => _writer.Restore(id);
 

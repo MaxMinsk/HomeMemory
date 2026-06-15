@@ -1,3 +1,4 @@
+using System.Text.Json;
 using MemoryMcp.Core.Notes;
 using MemoryMcp.Core.Schemas;
 using MemoryMcp.Core.Storage;
@@ -242,6 +243,55 @@ public class NotesReadMutateTests
         Assert.Equal(1, repo.Unlink(a, b, "depends_on"));
         Assert.Empty(repo.Links(a));
         Assert.Equal(0, repo.Unlink(a, b, "depends_on")); // already gone
+    }
+
+    [Fact]
+    public void Patch_merges_payload_keeps_other_fields_and_bumps_revision()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        var id = Seed(repo, "MEMP-200", "ready", body: "Body");
+        var rev = repo.Get(id)!.UpdatedUtc;
+
+        var patched = repo.Patch(id, "New title", null, """{ "status": "done" }""", null, rev, "me");
+
+        Assert.NotNull(patched);
+        Assert.Equal("New title", patched!.Title);
+        Assert.Equal("Body", patched.Body);                         // untouched
+        using var doc = JsonDocument.Parse(patched.PayloadJson!);
+        Assert.Equal("done", doc.RootElement.GetProperty("status").GetString());   // overwritten
+        Assert.Equal("MEMP-200", doc.RootElement.GetProperty("key").GetString());  // merged, kept
+        Assert.NotEqual(rev, patched.UpdatedUtc);                   // revision bumped
+    }
+
+    [Fact]
+    public void Patch_conflicts_on_stale_revision()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        var id = Seed(repo, "MEMP-200", "ready");
+
+        Assert.Throws<ConcurrencyException>(() =>
+            repo.Patch(id, "x", null, null, null, "1999-01-01T00:00:00.0000000Z", "me"));
+    }
+
+    [Fact]
+    public void Patch_missing_returns_null()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        Assert.Null(repo.Patch("nope", "x", null, null, null, null, "me"));
+    }
+
+    [Fact]
+    public void Patch_rejects_invalid_merged_payload()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        var id = Seed(repo, "MEMP-200", "ready");
+
+        Assert.Throws<NoteValidationException>(() =>
+            repo.Patch(id, null, null, """{ "status": "bogus" }""", null, null, "me"));
     }
 
     [Fact]
