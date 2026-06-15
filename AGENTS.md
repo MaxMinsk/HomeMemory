@@ -34,6 +34,20 @@ Internal planning docs (design overview, master plan, M0 detail, backlog) live i
 - **The LLM never executes arbitrary code** — it only selects a vetted script; the default is agent-side execution.
 - **FTS5 first.** Vectors are an optional, pluggable phase-2 layer, and only real embeddings, honestly named.
 
+## Code quality & conventions
+
+Detailed, source-cited best-practices for the stack live in `references/` (local, gitignored): `dotnet-style.md`, `sqlite-data-access.md`, `mcp-sdk.md`, `testing.md`. The actionable rules:
+
+- **Analyzers on:** `EnableNETAnalyzers`, `AnalysisLevel=latest-recommended`, `EnforceCodeStyleInBuild`, plus a repo `.editorconfig`. CI builds with `-warnaserror` — **keep `main` zero-warning**. Muted rules carry a rationale comment in `.editorconfig`.
+- **One public type per file**, file name == type name. **Folder-per-feature** (group by domain concept, not `Models/`/`Services/`). Namespace == folder path; file-scoped namespaces; `using`s outside the namespace.
+- **No god classes (SRP):** a file under ~200 lines; 300 is a smell, 400 means split now. One reason to change. If you can't name a class without "and"/"Manager"/"Helper", it does too much. Split data access into reader / writer / search + pure `static` leaves (row mapper, SQL/query text, snippet builder); inject collaborators via primary constructors.
+- **Modern C#:** records for data; `required`/primary constructors to cut ceremony; collection expressions; pattern matching / switch expressions; raw string literals for SQL. Don't force expression bodies onto multi-statement logic.
+- **Nullable** honored — no unexplained `!`; model absence as `?` or `Try…`.
+- **Async:** I/O is async-all-the-way with the `Async` suffix; never `.Result`/`.Wait()`; `CancellationToken` is the last parameter and is flowed down. **Exception: SQLite has no async I/O** — DB access uses the synchronous ADO APIs by design (see `references/sqlite-data-access.md`); use WAL, not async, for concurrency.
+- **SQLite:** per-call connection from the factory (`using`); always parameterize (`$`); one row-mapper per record; transactions for multi-step writes; **never edit a shipped migration** (add the next `user_version` step); sanitize FTS5 `MATCH` input even when parameterized.
+- **MCP tools:** keep the surface small; rich `[Description]` on tools and parameters; set behavioral hints (`ReadOnly`/`Destructive`/`Idempotent`); throw `McpException` for model-visible errors (plain exceptions are collapsed to a generic message); return 401/403 from middleware, never from a tool.
+- **Tests:** `Method_Scenario_Expectation` naming; per-test isolation (temp DB); deterministic clock via `TimeProvider`; keep integration tests tagged and separable from units.
+
 ## Backlog conventions
 
 Task key prefix: **MEMP-NNN** (three or more digits, monotonic, never reused). The backlog currently lives in `implementation_plan/backlog.md` (gitignored, Russian) and migrates into memory itself (`domain=memory-mcp`, `type=backlog_item`) after M0, then is driven via MCP tools.

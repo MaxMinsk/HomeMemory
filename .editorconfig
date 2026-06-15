@@ -1,0 +1,56 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+
+[*.{cs,csx}]
+indent_size = 4
+max_line_length = 120
+
+# --- Usings ---
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = false
+
+# --- Modern C# ---
+csharp_style_namespace_declarations = file_scoped:warning            # IDE0161
+csharp_using_directive_placement = outside_namespace:warning         # IDE0065
+csharp_prefer_simple_using_statement = true:suggestion              # IDE0063
+csharp_style_prefer_primary_constructors = true:suggestion          # IDE0290
+dotnet_style_prefer_collection_expression = when_types_loosely_match:suggestion
+csharp_style_prefer_pattern_matching = true:suggestion
+csharp_style_prefer_switch_expression = true:suggestion             # IDE0066
+
+# var: explicit type unless apparent
+csharp_style_var_for_built_in_types = false:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_var_elsewhere = false:suggestion
+
+# Expression bodies: one-liners only
+csharp_style_expression_bodied_methods = when_on_single_line:suggestion
+csharp_style_expression_bodied_properties = true:suggestion
+
+# Correctness rules worth surfacing
+dotnet_diagnostic.CS8602.severity = warning   # deref of possibly-null
+dotnet_diagnostic.CA2007.severity = none      # ConfigureAwait not needed (no SyncContext)
+dotnet_diagnostic.CA1062.severity = none      # public-arg null checks: noisy with nullable on
+# Muted with rationale (keep signal/noise high for a thin, non-localized server):
+dotnet_diagnostic.CA1305.severity = none      # IFormatProvider: server is invariant-only; timestamps already use InvariantCulture explicitly
+dotnet_diagnostic.CA1861.severity = none      # constant-array-arg caching: micro-opt, almost all in tests
+dotnet_diagnostic.CA1859.severity = none      # concrete-type return perf: micro-opt, not worth the churn here
+
+# Naming: _camelCase private fields
+dotnet_naming_rule.private_fields_underscore.severity = suggestion
+dotnet_naming_rule.private_fields_underscore.symbols = private_fields
+dotnet_naming_rule.private_fields_underscore.style = underscore_prefix
+dotnet_naming_symbols.private_fields.applicable_kinds = field
+dotnet_naming_symbols.private_fields.applicable_accessibilities = private
+dotnet_naming_style.underscore_prefix.required_prefix = _
+dotnet_naming_style.underscore_prefix.capitalization = camel_case
+
+# Test project: relax docs/naming noise
+[tests/**.cs]
+dotnet_diagnostic.CA1707.severity = none      # underscores in test method names are idiomatic

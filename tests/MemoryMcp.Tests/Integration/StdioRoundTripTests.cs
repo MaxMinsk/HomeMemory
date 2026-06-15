@@ -36,7 +36,7 @@ public class StdioRoundTripTests
 
         var upsert = await client.CallToolAsync(
             "notes_upsert",
-            new Dictionary<string, object>
+            new Dictionary<string, object?>
             {
                 ["domain"] = "memory-mcp",
                 ["type"] = "backlog_item",
@@ -49,7 +49,7 @@ public class StdioRoundTripTests
 
         var search = await client.CallToolAsync(
             "notes_search",
-            new Dictionary<string, object> { ["domain"] = "memory-mcp" },
+            new Dictionary<string, object?> { ["domain"] = "memory-mcp" },
             cancellationToken: cts.Token);
         Assert.True(search.IsError is not true, "notes_search reported an error");
 
