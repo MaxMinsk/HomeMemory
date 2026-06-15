@@ -88,6 +88,28 @@ public sealed class NotesRepository
         return new UpsertResult(id, created);
     }
 
+    /// <summary>
+    /// Appends a schema-less free-text journal note (type <c>journal</c>, no payload, no dedup) and audits it.
+    /// This is the capture-first path for raw human notes; structuring happens later, agent-side.
+    /// </summary>
+    /// <param name="domain">Namespace, e.g. <c>kitchen</c>.</param>
+    /// <param name="text">The raw free-text content (stored as the body).</param>
+    /// <param name="sourceAgent">Provenance: who is writing.</param>
+    /// <returns>The new note id.</returns>
+    public string AppendJournal(string domain, string text, string? sourceAgent = null)
+    {
+        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
+        var id = Guid.NewGuid().ToString("N");
+
+        using var connection = _connectionFactory.Create();
+        using var transaction = connection.BeginTransaction();
+        Insert(connection, transaction, id, domain, "journal", null, text, null, null, null, sourceAgent, 0, nowUtc);
+        AppendEvent(connection, transaction, id, "create", sourceAgent, nowUtc,
+            new JsonObject { ["op"] = "create", ["type"] = "journal" }.ToJsonString());
+        transaction.Commit();
+        return id;
+    }
+
     /// <summary>Returns the full note by id, or <c>null</c> if it does not exist.</summary>
     /// <param name="id">The note id.</param>
     public Note? Get(string id)
