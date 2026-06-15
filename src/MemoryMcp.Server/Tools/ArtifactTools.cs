@@ -60,6 +60,22 @@ public sealed class ArtifactTools
         return artifact is not null && Guard().IsAllowed(artifact.Domain) ? artifact : null;
     }
 
+    /// <summary>Deletes an artifact by id (and GCs its blob if unreferenced), if in scope.</summary>
+    [McpServerTool(Name = "artifacts_delete", Destructive = true, Idempotent = true, UseStructuredContent = true)]
+    [Description("Delete an artifact (attachment) by id. Also removes its blob if nothing else references it. Returns true if it existed.")]
+    public bool ArtifactsDelete([Description("Artifact id")] string id)
+        => Translate(() =>
+        {
+            var artifact = _artifacts.Get(id);
+            if (artifact is null)
+            {
+                return false;
+            }
+
+            Guard().Authorize(artifact.Domain);
+            return _artifacts.Delete(id);
+        });
+
     /// <summary>Lists artifacts in a domain (optionally for one note), if in scope.</summary>
     [McpServerTool(Name = "artifacts_list", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
     [Description("List artifacts (metadata + URIs) in a domain, optionally only those attached to a given note.")]

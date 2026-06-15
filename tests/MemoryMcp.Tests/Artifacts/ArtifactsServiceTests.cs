@@ -66,6 +66,44 @@ public class ArtifactsServiceTests
         Assert.Null(NewService(temp, dir).Get("nope"));
     }
 
+    [Fact]
+    public void Delete_removes_attachment_and_gcs_orphan_blob()
+    {
+        using var temp = new TempDatabase();
+        using var dir = new TempDir();
+        var blobs = new BlobStore(dir.Path, 0);
+        var service = new ArtifactsService(blobs, FactoryFor(temp));
+        var a = service.Put("kitchen", Encoding.UTF8.GetBytes("solo"), "a.md", "text/markdown", "n1", "t");
+
+        Assert.True(service.Delete(a.Id));
+        Assert.Null(service.Get(a.Id));
+        Assert.Empty(service.List("kitchen"));
+        Assert.False(blobs.Exists(a.Sha256));        // orphan blob GC'd
+        Assert.False(service.Delete(a.Id));          // already gone -> false
+    }
+
+    [Fact]
+    public void Delete_keeps_blob_still_referenced_by_another_attachment()
+    {
+        using var temp = new TempDatabase();
+        using var dir = new TempDir();
+        var blobs = new BlobStore(dir.Path, 0);
+        var service = new ArtifactsService(blobs, FactoryFor(temp));
+        var same = Encoding.UTF8.GetBytes("shared");
+        var a = service.Put("kitchen", same, "a.md", "text/markdown", "n1", "t");
+        var b = service.Put("kitchen", same, "b.md", "text/markdown", "n2", "t"); // same bytes -> same blob
+
+        service.Delete(a.Id);
+        Assert.True(blobs.Exists(b.Sha256));         // still referenced by b
+    }
+
+    private static SqliteConnectionFactory FactoryFor(TempDatabase temp)
+    {
+        var factory = new SqliteConnectionFactory(temp.FilePath);
+        new Migrator(factory, SchemaMigrations.All).Migrate();
+        return factory;
+    }
+
     private static ArtifactsService NewService(TempDatabase temp, TempDir dir)
     {
         var factory = new SqliteConnectionFactory(temp.FilePath);

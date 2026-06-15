@@ -68,6 +68,19 @@ public sealed class BlobStore
         return File.Exists(path) ? File.ReadAllBytes(path) : null;
     }
 
+    /// <summary>Deletes a blob's bytes if present (caller ensures nothing else references it). Returns true if a file was removed.</summary>
+    public bool Delete(string sha256)
+    {
+        var path = PathFor(sha256);
+        if (!File.Exists(path))
+        {
+            return false;
+        }
+
+        File.Delete(path);
+        return true;
+    }
+
     /// <summary>The on-disk path for a hash (whether or not it exists).</summary>
     public string PathFor(string sha256) => Path.Combine(_root, sha256[..2], sha256[2..4], sha256);
 

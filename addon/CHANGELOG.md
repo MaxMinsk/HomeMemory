@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.0
+
+- **`artifacts_delete`** tool: remove an attachment by id; the underlying blob is garbage-collected if
+  nothing else references it. The clean way to drop unwanted/duplicate artifacts (MEMP-059).
+- **Viewer**: the note detail now labels `domain` / `type` / `status` explicitly and shows tags as
+  distinct chips, so it's clear what is what at a glance (MEMP-063).
+
 ## 0.6.0
 
 - **Fix (MEMP-059)**: `artifacts_put` is now idempotent per `(note, filename)` — re-attaching a

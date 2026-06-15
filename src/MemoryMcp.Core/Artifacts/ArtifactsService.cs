@@ -87,6 +87,44 @@ public sealed class ArtifactsService
         return reader.Read() ? Map(reader) : null;
     }
 
+    /// <summary>Deletes an attachment by id and GCs its blob if no other attachment references it. Returns true if a row was removed.</summary>
+    public bool Delete(string id)
+    {
+        using var connection = _connectionFactory.Create();
+
+        string sha;
+        using (var select = connection.CreateCommand())
+        {
+            select.CommandText = "SELECT sha256 FROM attachments WHERE id = $id LIMIT 1;";
+            select.Parameters.AddWithValue("$id", id);
+            if (select.ExecuteScalar() is not string found)
+            {
+                return false;
+            }
+
+            sha = found;
+        }
+
+        using (var delete = connection.CreateCommand())
+        {
+            delete.CommandText = "DELETE FROM attachments WHERE id = $id;";
+            delete.Parameters.AddWithValue("$id", id);
+            delete.ExecuteNonQuery();
+        }
+
+        using (var refs = connection.CreateCommand())
+        {
+            refs.CommandText = "SELECT EXISTS (SELECT 1 FROM attachments WHERE sha256 = $sha);";
+            refs.Parameters.AddWithValue("$sha", sha);
+            if (Convert.ToInt64(refs.ExecuteScalar()) == 0)
+            {
+                _blobs.Delete(sha); // orphaned blob — GC it
+            }
+        }
+
+        return true;
+    }
+
     /// <summary>Lists artifacts in a domain (newest first), optionally only those attached to <paramref name="noteId"/>.</summary>
     public IReadOnlyList<Artifact> List(string domain, string? noteId = null, int limit = 100)
     {
