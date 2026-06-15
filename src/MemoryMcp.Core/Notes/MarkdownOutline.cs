@@ -8,10 +8,36 @@ internal static class MarkdownOutline
 {
     public static IReadOnlyList<NoteHeading> Parse(string? body)
     {
-        var headings = new List<NoteHeading>();
+        var scanned = Scan(body);
+        var total = body?.Length ?? 0;
+
+        var headings = new List<NoteHeading>(scanned.Count);
+        for (var i = 0; i < scanned.Count; i++)
+        {
+            var (level, text, offset) = scanned[i];
+            var end = total;
+            for (var j = i + 1; j < scanned.Count; j++)
+            {
+                if (scanned[j].Level <= level) // next section at the same or a higher level closes this one
+                {
+                    end = scanned[j].Offset;
+                    break;
+                }
+            }
+
+            headings.Add(new NoteHeading(level, text, offset, end));
+        }
+
+        return headings;
+    }
+
+    // Finds heading lines (level, text, line-start offset), skipping fenced code blocks.
+    private static List<(int Level, string Text, int Offset)> Scan(string? body)
+    {
+        var scanned = new List<(int Level, string Text, int Offset)>();
         if (string.IsNullOrEmpty(body))
         {
-            return headings;
+            return scanned;
         }
 
         var offset = 0;
@@ -28,14 +54,14 @@ internal static class MarkdownOutline
                 var level = HeadingLevel(trimmed);
                 if (level > 0)
                 {
-                    headings.Add(new NoteHeading(level, trimmed[level..].Trim(), offset));
+                    scanned.Add((level, trimmed[level..].Trim(), offset));
                 }
             }
 
             offset += line.Length + 1; // + the '\n' that Split removed
         }
 
-        return headings;
+        return scanned;
     }
 
     // An ATX heading is 1–6 leading '#' followed by a space (or the whole line). Returns 0 if not a heading.

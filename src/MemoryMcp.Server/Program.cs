@@ -36,6 +36,8 @@ const string ServerInstructions =
     "never the model context. Relate notes with notes_link (active-voice lower_snake_case rel). " +
     "To start: call status (notesByType/notesByDomain), schema_list_types + schema_get(type) before " +
     "writing a typed note, and skill_list(domain)/skill_get for conventions. " +
+    "For a large/unknown note, read a slice not the whole body: notes_get(includeBody=false) to peek, then " +
+    "notes_outline/notes_find/notes_read; fetch the full body only when you truly need it. " +
     "READ FIRST: skill_get(domain=\"memory-mcp\", key=\"memory-authoring\") — the core authoring guide.";
 
 if (args.Length > 0 && (args[0] == "import-backlog" || args[0] == "export-backlog"))

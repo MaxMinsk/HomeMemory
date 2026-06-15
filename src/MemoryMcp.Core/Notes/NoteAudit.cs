@@ -98,6 +98,58 @@ internal static class NoteAudit
         return fields;
     }
 
+    /// <summary>
+    /// Projects a stored <c>diff_json</c> to a subset for cheaper reads: <c>full</c> (default), <c>before</c>,
+    /// <c>after</c>, or <c>changed</c> (each changed field → its before/after). Unknown/empty selectors
+    /// return the full diff.
+    /// </summary>
+    public static string ProjectDiff(string? diffJson, string? fields)
+    {
+        if (string.IsNullOrEmpty(diffJson) || string.IsNullOrEmpty(fields) || string.Equals(fields, "full", StringComparison.Ordinal))
+        {
+            return diffJson ?? string.Empty;
+        }
+
+        JsonObject? root;
+        try
+        {
+            root = JsonNode.Parse(diffJson) as JsonObject;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return diffJson;
+        }
+
+        if (root is null)
+        {
+            return diffJson;
+        }
+
+        var before = root["before"] as JsonObject;
+        var after = root["after"] as JsonObject;
+        return fields switch
+        {
+            "before" => (before ?? new JsonObject()).ToJsonString(),
+            "after" => (after ?? new JsonObject()).ToJsonString(),
+            "changed" => BuildChanged(diffJson, before, after).ToJsonString(),
+            _ => diffJson,
+        };
+    }
+
+    private static JsonObject BuildChanged(string diffJson, JsonObject? before, JsonObject? after)
+    {
+        var changed = new JsonObject();
+        foreach (var key in ChangedFields(diffJson))
+        {
+            changed[key] = new JsonObject { ["before"] = Clone(before?[key]), ["after"] = Clone(after?[key]) };
+        }
+
+        return changed;
+    }
+
+    // Detaches a node so it can be re-parented into the projection (avoids "node already has a parent").
+    private static JsonNode? Clone(JsonNode? node) => node is null ? null : JsonNode.Parse(node.ToJsonString());
+
     private static bool JsonEquals(JsonNode? a, JsonNode? b)
     {
         if (a is null || b is null)

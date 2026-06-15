@@ -260,10 +260,15 @@ public sealed class NotesReader
         return events;
     }
 
-    /// <summary>Returns the full detail (including the before/after diff) of one history event, or <c>null</c>.</summary>
+    /// <summary>
+    /// Returns the detail of one history event, or <c>null</c>. <paramref name="fields"/> projects the diff
+    /// (full/before/after/changed) and <paramref name="maxChars"/> caps it, so a huge diff need not be read whole.
+    /// </summary>
     /// <param name="noteId">The note the event belongs to.</param>
     /// <param name="eventId">The event id (from <see cref="Events"/>).</param>
-    public NoteEventDetail? Event(string noteId, string eventId)
+    /// <param name="maxChars">When set (>=0), truncates the diff to this many characters (sets Truncated).</param>
+    /// <param name="fields">Diff projection: full (default) / before / after / changed.</param>
+    public NoteEventDetail? Event(string noteId, string eventId, int? maxChars = null, string? fields = null)
     {
         using var connection = _connectionFactory.Create();
         using var command = connection.CreateCommand();
@@ -273,14 +278,23 @@ public sealed class NotesReader
         command.Parameters.AddWithValue("$e", eventId);
 
         using var reader = command.ExecuteReader();
-        return reader.Read()
-            ? new NoteEventDetail(
-                reader.GetString(0),
-                reader.GetString(1),
-                reader.IsDBNull(2) ? null : reader.GetString(2),
-                reader.GetString(3),
-                reader.IsDBNull(4) ? null : reader.GetString(4))
-            : null;
+        if (!reader.Read())
+        {
+            return null;
+        }
+
+        var rawDiff = reader.IsDBNull(4) ? null : reader.GetString(4);
+        var diff = NoteAudit.ProjectDiff(rawDiff, fields);
+        var diffChars = diff.Length;
+        var truncated = maxChars is int cap && cap >= 0 && diffChars > cap;
+        if (truncated)
+        {
+            diff = diff[..maxChars!.Value];
+        }
+
+        return new NoteEventDetail(
+            reader.GetString(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2),
+            reader.GetString(3), diff, diffChars, truncated);
     }
 
     /// <summary>Lists full notes for a domain/type (active, non-deleted), newest first.</summary>

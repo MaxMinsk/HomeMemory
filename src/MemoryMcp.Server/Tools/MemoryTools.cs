@@ -268,13 +268,15 @@ public sealed class MemoryTools
 
     /// <summary>Returns the full detail (before/after diff) of one history event, if it is in scope.</summary>
     [McpServerTool(Name = "notes_history_event", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
-    [Description("Get the full detail of ONE history event by id (op, actor, ts and the before/after diff JSON). Use after notes_history to inspect a specific change without pulling every event's snapshots.")]
+    [Description("Get ONE history event's detail by id (op, actor, ts + the before/after diff). A diff can be huge — pass maxChars to cap it (returns diffChars + truncated) and/or fields to project it (full/before/after/changed). Use after notes_history.")]
     public NoteEventDetail? NotesHistoryEvent(
         [Description("Note id")] string id,
-        [Description("Event id from notes_history")] string eventId)
+        [Description("Event id from notes_history")] string eventId,
+        [Description("Cap the diff to this many characters (optional; sets truncated)")] int? maxChars = null,
+        [Description("Diff projection: full (default), before, after, or changed")] string? fields = null)
     {
         var note = _notes.Get(id);
-        return note is not null && Guard().IsAllowed(note.Domain) ? _notes.Event(id, eventId) : null;
+        return note is not null && Guard().IsAllowed(note.Domain) ? _notes.Event(id, eventId, maxChars, fields) : null;
     }
 
     /// <summary>Lists registered note types as type@version.</summary>

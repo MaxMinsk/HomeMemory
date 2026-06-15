@@ -442,6 +442,33 @@ public class NotesReadMutateTests
         Assert.Null(repo.Event(id, "no-such-event"));
     }
 
+    [Fact]
+    public void HistoryEvent_caps_and_projects_the_diff()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        var id = Seed(repo, "MEMP-200", "ready", title: "Old", body: "Body");
+        var rev = repo.Get(id)!.UpdatedUtc;
+        repo.Patch(id, "New title", null, null, null, rev, "me");
+        var patch = Assert.Single(repo.Events(id), e => e.Op == "patch");
+
+        var full = repo.Event(id, patch.EventId)!;
+        Assert.False(full.Truncated);
+        Assert.True(full.DiffChars > 0);
+        Assert.Contains("before", full.DiffJson!, StringComparison.Ordinal);
+
+        var capped = repo.Event(id, patch.EventId, maxChars: 10)!;
+        Assert.True(capped.Truncated);
+        Assert.Equal(10, capped.DiffJson!.Length);
+        Assert.Equal(full.DiffChars, capped.DiffChars); // still reports the true size
+
+        var changed = repo.Event(id, patch.EventId, fields: "changed")!;
+        Assert.Contains("title", changed.DiffJson!, StringComparison.Ordinal);
+        Assert.Contains("New title", changed.DiffJson!, StringComparison.Ordinal);
+        Assert.Contains("Old", changed.DiffJson!, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"body\"", changed.DiffJson!, StringComparison.Ordinal); // unchanged field omitted
+    }
+
     private static (NotesRepository Repo, SqliteConnectionFactory Factory) NewRepo(TempDatabase temp)
     {
         var factory = new SqliteConnectionFactory(temp.FilePath);

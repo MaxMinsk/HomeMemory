@@ -82,6 +82,27 @@ public class NotesPartialReadTests
     }
 
     [Fact]
+    public void Outline_endOffset_spans_section_including_subsections()
+    {
+        using var temp = new TempDatabase();
+        var repo = NewRepo(temp);
+        var id = Seed(repo, body: "# A\naaa\n## B\nbbb\n# C\nccc");
+
+        var headings = repo.Outline(id)!.Headings;
+        var a = headings[0]; // # A
+        var b = headings[1]; // ## B (subsection of A)
+        var c = headings[2]; // # C
+
+        Assert.Equal(c.Offset, a.EndOffset);   // A's section runs up to the next level-1 heading (includes B)
+        Assert.Equal(c.Offset, b.EndOffset);   // B ends there too
+        Assert.Equal(headings[2].Offset + "# C\nccc".Length, c.EndOffset); // C runs to end of body
+
+        // Reading A's whole section returns its subsection heading.
+        var section = repo.ReadBody(id, a.Offset, a.EndOffset - a.Offset);
+        Assert.Contains("## B", section!.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Outline_ignores_headings_inside_code_fences()
     {
         using var temp = new TempDatabase();
