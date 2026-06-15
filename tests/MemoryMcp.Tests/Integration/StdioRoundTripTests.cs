@@ -55,6 +55,20 @@ public class StdioRoundTripTests
 
         var text = string.Concat(search.Content.OfType<TextContentBlock>().Select(block => block.Text));
         Assert.Contains("Round-trip demo", text);
+
+        // An invalid payload must surface to the model as a readable error (McpException), not a silent generic failure.
+        var invalid = await client.CallToolAsync(
+            "notes_upsert",
+            new Dictionary<string, object?>
+            {
+                ["domain"] = "memory-mcp",
+                ["type"] = "backlog_item",
+                ["payload"] = "{ \"status\": \"bogus\" }",
+            },
+            cancellationToken: cts.Token);
+        Assert.True(invalid.IsError is true, "invalid payload should surface as a tool error");
+        var error = string.Concat(invalid.Content.OfType<TextContentBlock>().Select(block => block.Text));
+        Assert.Contains("schema validation", error, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string LocateServerDll()
