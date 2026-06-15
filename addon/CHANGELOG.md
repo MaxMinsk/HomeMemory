@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.15.0
+
+Sprint 8 — agent ergonomics & test hardening.
+
+- **Structured tool inputs** (MEMP-072): `notes_upsert`/`notes_patch` `payload`+`tags` and `schema_upsert`
+  `schema` now accept a JSON **object/array directly** — no more double-serializing into a string. The
+  previous JSON-string form still works, so existing callers are unaffected.
+- **Better journal capture** (MEMP-041): `notes_append_journal` derives a title from the first line (or
+  takes one), accepts tags, assigns a stable `dedupKey`, and tags the note `unstructured` so it can be
+  found for later structuring. The viewer no longer renders a literal "null" for notes with no payload.
+- **Test hardening** (MEMP-096): the signed artifact upload endpoint (`PUT /artifacts/upload`) now has an
+  end-to-end HTTP test (upload → serve back → reject tampered signature).
+
 ## 0.14.0
 
 Sprint 7 — read-ergonomics finish, maintenance & viewer (from the Codex 0.12.0 re-review).
