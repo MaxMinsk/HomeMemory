@@ -19,6 +19,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
+// Global regex match timeout: bounds any pattern, including user/agent-authored JSON Schema `pattern`s
+// evaluated by JsonSchema.Net, against ReDoS (MEMP-060).
+AppContext.SetData("REGEX_DEFAULT_MATCH_TIMEOUT", TimeSpan.FromSeconds(2));
+
 var transport = (Environment.GetEnvironmentVariable("MEMORY_TRANSPORT") ?? "stdio").ToLowerInvariant();
 var dbPath = Environment.GetEnvironmentVariable("MEMORY_DB_PATH") ?? "memory.sqlite";
 
@@ -145,7 +149,9 @@ static void Bootstrap(IServiceProvider services)
 {
     var factory = services.GetRequiredService<ISqliteConnectionFactory>();
     new Migrator(factory, SchemaMigrations.All).Migrate();
-    services.GetRequiredService<SchemaRegistry>().SyncToDatabase(factory);
+    var registry = services.GetRequiredService<SchemaRegistry>();
+    registry.SyncToDatabase(factory);     // seed/refresh built-ins
+    registry.LoadFromDatabase(factory);   // pick up agent-authored schemas
 
     // Log a one-line stats snapshot at startup so the add-on log shows what is stored.
     var stats = services.GetRequiredService<DiagnosticsService>().Snapshot();

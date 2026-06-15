@@ -40,6 +40,7 @@ public class StdioRoundTripTests
         Assert.Contains(tools, tool => tool.Name == "notes_confirm");
         Assert.Contains(tools, tool => tool.Name == "artifacts_put");
         Assert.Contains(tools, tool => tool.Name == "artifacts_get");
+        Assert.Contains(tools, tool => tool.Name == "schema_upsert");
 
         await AssertNotesRoundTrip(client, cts.Token);
         await AssertSkillRoundTrip(client, cts.Token);

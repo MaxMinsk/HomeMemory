@@ -6,6 +6,7 @@ using MemoryMcp.Core.Query;
 using MemoryMcp.Core.Schemas;
 using MemoryMcp.Core.Security;
 using MemoryMcp.Core.Skills;
+using MemoryMcp.Core.Storage;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
 
@@ -23,10 +24,11 @@ public sealed class MemoryTools
     private readonly IScopeAccessor _scope;
     private readonly SkillsService _skills;
     private readonly ConfirmationService _confirmations;
+    private readonly ISqliteConnectionFactory _connectionFactory;
 
-    /// <summary>Creates the tool set over the repository, registry, diagnostics, scope accessor, skills and confirmations.</summary>
+    /// <summary>Creates the tool set over the repository, registry, diagnostics, scope accessor, skills, confirmations and database.</summary>
     public MemoryTools(NotesRepository notes, SchemaRegistry schemas, DiagnosticsService diagnostics, IScopeAccessor scope,
-        SkillsService skills, ConfirmationService confirmations)
+        SkillsService skills, ConfirmationService confirmations, ISqliteConnectionFactory connectionFactory)
     {
         _notes = notes;
         _schemas = schemas;
@@ -34,6 +36,7 @@ public sealed class MemoryTools
         _scope = scope;
         _skills = skills;
         _confirmations = confirmations;
+        _connectionFactory = connectionFactory;
     }
 
     /// <summary>Searches notes by optional full-text query plus structured filters (scope-restricted, paginated).</summary>
@@ -176,6 +179,16 @@ public sealed class MemoryTools
     public string? SchemaGet([Description("Note type, e.g. backlog_item")] string type) =>
         _schemas.GetLatest(type)?.Json;
 
+    /// <summary>Adds or updates an agent-authored note type's JSON Schema.</summary>
+    [McpServerTool(Name = "schema_upsert", Destructive = false, Idempotent = true, UseStructuredContent = true)]
+    [Description("Register or update a note type's JSON Schema (draft 2020-12). The document's \"$id\" must be \"type@version\". Built-in types are read-only; a version already used by notes can't change (bump the version). Returns the stored type@version.")]
+    public string SchemaUpsert([Description("A complete JSON Schema document with $id = type@version")] string schema)
+        => Translate(() =>
+        {
+            var definition = _schemas.Upsert(_connectionFactory, schema);
+            return $"{definition.Type}@{definition.Version}";
+        });
+
     /// <summary>Returns server/database diagnostics.</summary>
     [McpServerTool(Name = "status", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
     [Description("Server and database diagnostics: schema version, registered schemas, note count, search backend.")]
@@ -213,6 +226,10 @@ public sealed class MemoryTools
             throw new McpException(exception.Message);
         }
         catch (ConfirmationException exception)
+        {
+            throw new McpException(exception.Message);
+        }
+        catch (SchemaAuthoringException exception)
         {
             throw new McpException(exception.Message);
         }
