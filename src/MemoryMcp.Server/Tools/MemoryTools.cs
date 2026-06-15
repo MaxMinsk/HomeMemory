@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.Json;
 using MemoryMcp.Core.Confirmation;
 using MemoryMcp.Core.Diagnostics;
 using MemoryMcp.Core.Maintenance;
@@ -110,15 +111,15 @@ public sealed class MemoryTools
         [Description("Schema type, e.g. backlog_item")] string type,
         [Description("Human-readable title")] string? title = null,
         [Description("Free-text body")] string? body = null,
-        [Description("Typed payload as JSON")] string? payload = null,
-        [Description("Tags as a JSON array string")] string? tags = null,
+        [Description("Typed payload as a JSON object (a JSON string is also accepted)")] JsonElement? payload = null,
+        [Description("Tags as a JSON array (a JSON array string is also accepted)")] JsonElement? tags = null,
         [Description("Stable upsert key (e.g. MEMP-001)")] string? dedupKey = null,
         [Description("Who is writing (provenance)")] string? sourceAgent = null)
     {
         try
         {
             Guard().Authorize(domain);
-            return _notes.Upsert(domain, type, title, body, payload, tags, dedupKey, sourceAgent ?? "mcp");
+            return _notes.Upsert(domain, type, title, body, JsonArg(payload), JsonArg(tags), dedupKey, sourceAgent ?? "mcp");
         }
         catch (NoteValidationException exception)
         {
@@ -214,14 +215,14 @@ public sealed class MemoryTools
         [Description("Note id")] string id,
         [Description("New title (optional)")] string? title = null,
         [Description("New body (optional)")] string? body = null,
-        [Description("Payload keys to merge as JSON (optional)")] string? payload = null,
-        [Description("Tags as a JSON array string, replaces tags (optional)")] string? tags = null,
+        [Description("Payload keys to merge, as a JSON object (a JSON string is also accepted)")] JsonElement? payload = null,
+        [Description("Tags as a JSON array that replaces tags (a JSON array string is also accepted)")] JsonElement? tags = null,
         [Description("Expected current updated_utc for optimistic concurrency (optional)")] string? expectedUpdatedUtc = null,
         [Description("Who is writing (provenance)")] string? sourceAgent = null)
         => Translate(() =>
         {
             AuthorizeNote(id);
-            return _notes.Patch(id, title, body, payload, tags, expectedUpdatedUtc, sourceAgent ?? "mcp")
+            return _notes.Patch(id, title, body, JsonArg(payload), JsonArg(tags), expectedUpdatedUtc, sourceAgent ?? "mcp")
                 ?? throw new McpException($"Note '{id}' not found.");
         });
 
@@ -299,10 +300,11 @@ public sealed class MemoryTools
     /// <summary>Adds or updates an agent-authored note type's JSON Schema.</summary>
     [McpServerTool(Name = "schema_upsert", Destructive = false, Idempotent = true, UseStructuredContent = true)]
     [Description("Register or update a note type's JSON Schema (draft 2020-12). The document's \"$id\" must be \"type@version\". Built-in types are read-only; a version already used by notes can't change (bump the version). Returns the stored type@version.")]
-    public string SchemaUpsert([Description("A complete JSON Schema document with $id = type@version")] string schema)
+    public string SchemaUpsert([Description("A complete JSON Schema document (a JSON object; a JSON string is also accepted) with $id = type@version")] JsonElement schema)
         => Translate(() =>
         {
-            var definition = _schemas.Upsert(_connectionFactory, schema);
+            var schemaJson = JsonArg(schema) ?? throw new McpException("A schema document is required.");
+            var definition = _schemas.Upsert(_connectionFactory, schemaJson);
             return $"{definition.Type}@{definition.Version}";
         });
 
@@ -333,6 +335,18 @@ public sealed class MemoryTools
     [McpServerTool(Name = "pending_actions_list", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
     [Description("List unresolved destructive-action confirmations (so their tokens aren't lost). Resolve via notes_confirm / notes_cancel.")]
     public IReadOnlyList<PendingAction> PendingActionsList() => _confirmations.ListPending();
+
+    // Accepts a tool argument that may be a structured object/array OR a JSON string, and returns the JSON
+    // text either way (so agents can pass `{...}`/`[...]` directly instead of double-serializing). MEMP-072.
+    private static string? JsonArg(JsonElement? element)
+    {
+        if (element is not JsonElement value || value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+        {
+            return null;
+        }
+
+        return value.ValueKind == JsonValueKind.String ? value.GetString() : value.GetRawText();
+    }
 
     private ScopeGuard Guard() => new(_scope.Current);
 

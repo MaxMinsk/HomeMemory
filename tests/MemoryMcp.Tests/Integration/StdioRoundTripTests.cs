@@ -50,6 +50,7 @@ public class StdioRoundTripTests
         Assert.Contains(tools, tool => tool.Name == "notes_links");
 
         await AssertNotesRoundTrip(client, cts.Token);
+        await AssertStructuredInputs(client, cts.Token);
         await AssertSkillRoundTrip(client, cts.Token);
         await AssertArtifactRoundTrip(client, cts.Token);
         await AssertValidationErrorCarriesSkillHint(client, cts.Token);
@@ -79,6 +80,27 @@ public class StdioRoundTripTests
             new Dictionary<string, object?> { ["domain"] = "memory-mcp" }, cancellationToken: ct);
         Assert.True(search.IsError is not true, "notes_search reported an error");
         Assert.Contains("Round-trip demo", Text(search));
+    }
+
+    private static async Task AssertStructuredInputs(McpClient client, CancellationToken ct)
+    {
+        // MEMP-072: payload as a JSON object and tags as a JSON array (not double-serialized strings).
+        var upsert = await client.CallToolAsync("notes_upsert", new Dictionary<string, object?>
+        {
+            ["domain"] = "memory-mcp", ["type"] = "backlog_item", ["title"] = "Structured demo",
+            ["payload"] = new Dictionary<string, object?> { ["key"] = "MEMP-901", ["status"] = "ready" },
+            ["tags"] = new[] { "from-test", "structured" },
+            ["dedupKey"] = "MEMP-901",
+        }, cancellationToken: ct);
+        Assert.True(upsert.IsError is not true, "structured notes_upsert reported an error: " + Text(upsert));
+
+        var search = await client.CallToolAsync("notes_search", new Dictionary<string, object?>
+        {
+            ["domain"] = "memory-mcp", ["query"] = "901", ["includePayload"] = true,
+        }, cancellationToken: ct);
+        var text = Text(search);
+        Assert.Contains("MEMP-901", text);     // object payload was stored + indexed
+        Assert.Contains("structured", text);   // array tags were stored
     }
 
     private static async Task AssertSkillRoundTrip(McpClient client, CancellationToken ct)
