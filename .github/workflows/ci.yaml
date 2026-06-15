@@ -22,8 +22,11 @@ jobs:
       - name: Build
         run: dotnet build --no-restore --configuration Release -warnaserror
 
-      - name: Test
-        run: dotnet test --no-build --configuration Release --verbosity normal
+      - name: Test (unit, fast)
+        run: dotnet test --no-build --configuration Release --verbosity normal --filter "Category!=Integration"
+
+      - name: Test (integration)
+        run: dotnet test --no-build --configuration Release --verbosity normal --filter "Category=Integration"
 
   # Expanded in MEMP-015: dotnet format --verify-no-changes, vulnerable-package check,
   # and the multi-arch Home Assistant add-on build (GHCR).

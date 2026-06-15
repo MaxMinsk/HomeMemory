@@ -3,6 +3,7 @@ using MemoryMcp.Core.Schemas;
 using MemoryMcp.Core.Storage;
 using MemoryMcp.Tests.Storage;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace MemoryMcp.Tests.Notes;
@@ -81,11 +82,11 @@ public class NotesRepositoryTests
     public void Update_preserves_created_utc_and_bumps_updated_utc()
     {
         using var temp = new TempDatabase();
-        var clock = new FakeClock(new DateTimeOffset(2026, 6, 15, 10, 0, 0, TimeSpan.Zero));
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 6, 15, 10, 0, 0, TimeSpan.Zero));
         var (repo, factory) = NewRepo(temp, clock);
 
         repo.Upsert("memory-mcp", "backlog_item", "A", null, ValidPayload, null, "MEMP-100", "a");
-        clock.Now = clock.Now.AddMinutes(5);
+        clock.Advance(TimeSpan.FromMinutes(5));
         repo.Upsert("memory-mcp", "backlog_item", "B", null,
             """{ "key": "MEMP-100", "status": "next" }""", null, "MEMP-100", "a");
 
@@ -109,14 +110,5 @@ public class NotesRepositoryTests
         using var command = connection.CreateCommand();
         command.CommandText = sql;
         return command.ExecuteScalar();
-    }
-
-    private sealed class FakeClock : TimeProvider
-    {
-        public FakeClock(DateTimeOffset now) => Now = now;
-
-        public DateTimeOffset Now { get; set; }
-
-        public override DateTimeOffset GetUtcNow() => Now;
     }
 }

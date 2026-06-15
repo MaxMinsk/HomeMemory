@@ -11,6 +11,7 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
   </ItemGroup>
 
   <ItemGroup>
@@ -19,6 +20,15 @@
     <ProjectReference Include="..\..\src\MemoryMcp.Server\MemoryMcp.Server.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
+  </ItemGroup>
+
+  <!-- Embed the server build-output path at compile time so the integration test locates the dll
+       robustly (no directory-count walk). MEMORY_SERVER_DLL env var overrides this at run time. -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>ServerDll</_Parameter1>
+      <_Parameter2>$(MSBuildThisFileDirectory)..\..\src\MemoryMcp.Server\bin\$(Configuration)\$(TargetFramework)\MemoryMcp.Server.dll</_Parameter2>
+    </AssemblyAttribute>
   </ItemGroup>
 
 </Project>

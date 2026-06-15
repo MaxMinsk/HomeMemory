@@ -1,3 +1,4 @@
+using System.Reflection;
 using MemoryMcp.Tests.Storage;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
@@ -8,6 +9,7 @@ namespace MemoryMcp.Tests.Integration;
 public class StdioRoundTripTests
 {
     [Fact]
+    [Trait("Category", "Integration")]
     public async Task Stdio_client_lists_and_calls_tools_end_to_end()
     {
         using var temp = new TempDatabase();
@@ -73,14 +75,17 @@ public class StdioRoundTripTests
 
     private static string LocateServerDll()
     {
-        // .../tests/MemoryMcp.Tests/bin/<cfg>/net8.0  ->  repo root, then into the server's build output.
-        var net = Path.GetDirectoryName(typeof(StdioRoundTripTests).Assembly.Location)!;
-        var configDir = Path.GetDirectoryName(net)!;            // .../bin/<cfg>
-        var configuration = Path.GetFileName(configDir);        // Release / Debug
-        var bin = Path.GetDirectoryName(configDir)!;            // .../bin
-        var projectDir = Path.GetDirectoryName(bin)!;           // .../tests/MemoryMcp.Tests
-        var testsDir = Path.GetDirectoryName(projectDir)!;      // .../tests
-        var repo = Path.GetDirectoryName(testsDir)!;            // repo root
-        return Path.Combine(repo, "src", "MemoryMcp.Server", "bin", configuration, "net8.0", "MemoryMcp.Server.dll");
+        // Run-time override (CI flexibility), else the path embedded at build time (see the test .csproj).
+        var fromEnv = Environment.GetEnvironmentVariable("MEMORY_SERVER_DLL");
+        if (!string.IsNullOrWhiteSpace(fromEnv))
+        {
+            return fromEnv;
+        }
+
+        var embedded = typeof(StdioRoundTripTests).Assembly
+            .GetCustomAttributes<AssemblyMetadataAttribute>()
+            .FirstOrDefault(attribute => attribute.Key == "ServerDll")?.Value;
+        return embedded is not null ? Path.GetFullPath(embedded) : throw new InvalidOperationException(
+            "Server dll path not embedded; set MEMORY_SERVER_DLL or rebuild the test project.");
     }
 }
