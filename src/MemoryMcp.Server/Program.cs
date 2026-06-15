@@ -105,13 +105,13 @@ static void RunBacklogCli(string[] args, string dbPath)
 
     if (args[0] == "import-backlog")
     {
-        var path = args.Length > 1 ? args[1] : throw new ArgumentException("Usage: import-backlog <file>");
+        var path = args.Length > 1 ? args[1] : throw new InvalidOperationException("Usage: import-backlog <file>");
         var count = BacklogImporter.Import(repository, File.ReadAllText(path));
         Console.WriteLine($"Imported {count} backlog items into '{dbPath}'.");
     }
     else
     {
-        var path = args.Length > 1 ? args[1] : throw new ArgumentException("Usage: export-backlog <file>");
+        var path = args.Length > 1 ? args[1] : throw new InvalidOperationException("Usage: export-backlog <file>");
         File.WriteAllText(path, BacklogExporter.Export(repository));
         Console.WriteLine($"Exported backlog to '{path}'.");
     }
@@ -121,7 +121,7 @@ static async Task RunPushBacklog(string[] args)
 {
     if (args.Length < 4)
     {
-        throw new ArgumentException("Usage: push-backlog <file> <url> <token> [domain]");
+        throw new InvalidOperationException("Usage: push-backlog <file> <url> <token> [domain]");
     }
 
     var file = args[1];

@@ -11,7 +11,7 @@ namespace MemoryMcp.Core.Backlog;
 /// </summary>
 public static class BacklogImporter
 {
-    private static readonly Regex KeyRegex = new(@"[A-Z]+-\d{3,}", RegexOptions.Compiled);
+    private static readonly Regex KeyRegex = new(@"[A-Z]+-\d{3,}", RegexOptions.Compiled, TimeSpan.FromSeconds(1));
 
     /// <summary>Parses markdown into backlog items (section heading drives the status).</summary>
     /// <param name="markdown">The backlog markdown text.</param>

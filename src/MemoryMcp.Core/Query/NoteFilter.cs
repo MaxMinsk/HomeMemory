@@ -30,7 +30,7 @@ public static class NoteFilter
         "source_agent", "schema_ver", "created_utc", "updated_utc", "deleted",
     };
 
-    private static readonly Regex PayloadKey = new("^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled);
+    private static readonly Regex PayloadKey = new("^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled, TimeSpan.FromSeconds(1));
 
     /// <summary>Compiles a filter expression into parameterized SQL. Throws <see cref="FilterException"/> on errors.</summary>
     /// <param name="expression">The filter expression.</param>
@@ -72,35 +72,38 @@ public static class NoteFilter
                     continue;
             }
 
-            if (char.IsDigit(c))
-            {
-                var start = i;
-                while (i < input.Length && (char.IsDigit(input[i]) || input[i] == '.')) i++;
-                tokens.Add(new Token(Kind.Num, input[start..i]));
-                continue;
-            }
-
-            if (char.IsLetter(c) || c == '_')
-            {
-                var start = i;
-                while (i < input.Length && (char.IsLetterOrDigit(input[i]) || input[i] == '_' || input[i] == '.')) i++;
-                var word = input[start..i];
-                var kind = word.ToLowerInvariant() switch
-                {
-                    "and" => Kind.And,
-                    "or" => Kind.Or,
-                    "in" => Kind.In,
-                    _ => Kind.Ident,
-                };
-                tokens.Add(new Token(kind, word));
-                continue;
-            }
+            if (char.IsDigit(c)) { i = ReadNumber(input, i, tokens); continue; }
+            if (char.IsLetter(c) || c == '_') { i = ReadWord(input, i, tokens); continue; }
 
             throw new FilterException($"Invalid filter: unexpected character '{c}'.");
         }
 
         tokens.Add(new Token(Kind.End, string.Empty));
         return tokens;
+    }
+
+    private static int ReadNumber(string input, int start, List<Token> tokens)
+    {
+        var i = start;
+        while (i < input.Length && (char.IsDigit(input[i]) || input[i] == '.')) i++;
+        tokens.Add(new Token(Kind.Num, input[start..i]));
+        return i;
+    }
+
+    private static int ReadWord(string input, int start, List<Token> tokens)
+    {
+        var i = start;
+        while (i < input.Length && (char.IsLetterOrDigit(input[i]) || input[i] == '_' || input[i] == '.')) i++;
+        var word = input[start..i];
+        var kind = word.ToLowerInvariant() switch
+        {
+            "and" => Kind.And,
+            "or" => Kind.Or,
+            "in" => Kind.In,
+            _ => Kind.Ident,
+        };
+        tokens.Add(new Token(kind, word));
+        return i;
     }
 
     private static int ReadString(string input, int i, List<Token> tokens)

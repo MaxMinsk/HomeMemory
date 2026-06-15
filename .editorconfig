@@ -42,6 +42,17 @@ dotnet_diagnostic.CA1305.severity = none      # IFormatProvider: server is invar
 dotnet_diagnostic.CA1861.severity = none      # constant-array-arg caching: micro-opt, almost all in tests
 dotnet_diagnostic.CA1859.severity = none      # concrete-type return perf: micro-opt, not worth the churn here
 
+# --- Meziantou.Analyzer (MEMP-044) ---
+# We keep the high-value rules active (MA0009 ReDoS, MA0051 method length, etc.) and mute the
+# stylistic/culture rules that duplicate CA mutes above — this is a single-process, non-localized
+# server whose string handling is intentionally ordinal/invariant.
+dotnet_diagnostic.MA0002.severity = none      # IEqualityComparer<string>: default string equality is ordinal, which is what we want
+dotnet_diagnostic.MA0004.severity = none      # ConfigureAwait: no SynchronizationContext (mirrors CA2007)
+dotnet_diagnostic.MA0006.severity = none      # string.Equals over ==: `==` is idiomatic for value equality
+dotnet_diagnostic.MA0011.severity = none      # IFormatProvider: invariant-only server (mirrors CA1305)
+dotnet_diagnostic.MA0074.severity = none      # StringComparison on Contains/StartsWith: ordinal is the intended default
+dotnet_diagnostic.MA0048.severity = none      # file name == type name: we co-locate small records/DTOs and interface+impl by design
+
 # Naming: _camelCase private fields
 dotnet_naming_rule.private_fields_underscore.severity = suggestion
 dotnet_naming_rule.private_fields_underscore.symbols = private_fields

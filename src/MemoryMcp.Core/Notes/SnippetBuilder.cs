@@ -6,9 +6,12 @@ namespace MemoryMcp.Core.Notes;
 /// (contentless FTS5 can't produce snippets, so we derive them from stored text).</summary>
 internal static class SnippetBuilder
 {
+    // Timeout guards against pathological input (ReDoS); the pattern itself is linear, the timeout is belt-and-braces.
+    private static readonly Regex WordPattern = new(@"\w+", RegexOptions.Compiled, TimeSpan.FromSeconds(1));
+
     /// <summary>Splits raw user text into word tokens (used to build a safe FTS5 phrase query and to locate snippets).</summary>
     public static List<string> Tokenize(string raw) =>
-        Regex.Matches(raw, @"\w+").Select(match => match.Value).ToList();
+        WordPattern.Matches(raw).Select(match => match.Value).ToList();
 
     /// <summary>Builds a short excerpt around the first matching token (bracketed), or a head excerpt if none match.</summary>
     public static string? Build(string? title, string? body, IReadOnlyList<string> tokens)

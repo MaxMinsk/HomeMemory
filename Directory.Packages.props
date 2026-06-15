@@ -19,4 +19,9 @@
     <PackageVersion Include="xunit.runner.visualstudio" Version="2.8.2" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Analyzers applied to every project (GlobalPackageReference => PrivateAssets=all). -->
+    <GlobalPackageReference Include="Meziantou.Analyzer" Version="3.0.104" />
+  </ItemGroup>
+
 </Project>

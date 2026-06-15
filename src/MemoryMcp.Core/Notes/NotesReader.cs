@@ -170,47 +170,68 @@ public sealed class NotesReader
             command.Parameters.AddWithValue("$type", type);
         }
 
-        if (tags is not null)
-        {
-            var index = 0;
-            foreach (var tag in tags)
-            {
-                var parameter = $"$tag{index++}";
-                filters.Add($"EXISTS (SELECT 1 FROM json_each(n.tags_json) WHERE json_each.value = {parameter})");
-                command.Parameters.AddWithValue(parameter, tag);
-            }
-        }
-
-        if (restrictToDomains is not null)
-        {
-            if (restrictToDomains.Count == 0)
-            {
-                filters.Add("0"); // scope allows nothing -> no results
-            }
-            else
-            {
-                var placeholders = new List<string>();
-                var index = 0;
-                foreach (var allowed in restrictToDomains)
-                {
-                    var parameter = $"$rd{index++}";
-                    placeholders.Add(parameter);
-                    command.Parameters.AddWithValue(parameter, allowed);
-                }
-
-                filters.Add($"n.domain IN ({string.Join(", ", placeholders)})");
-            }
-        }
-
-        if (compiledFilter is not null)
-        {
-            filters.Add(compiledFilter.Sql);
-            foreach (var parameter in compiledFilter.Parameters)
-            {
-                command.Parameters.AddWithValue(parameter.Name, parameter.Value);
-            }
-        }
+        AppendTagFilters(command, filters, tags);
+        AppendDomainRestriction(command, filters, restrictToDomains);
+        AppendCompiledFilter(command, filters, compiledFilter);
 
         return string.Join(" AND ", filters);
+    }
+
+    // Each supplied tag must be present in the note's JSON tag array.
+    private static void AppendTagFilters(SqliteCommand command, List<string> filters, IReadOnlyCollection<string>? tags)
+    {
+        if (tags is null)
+        {
+            return;
+        }
+
+        var index = 0;
+        foreach (var tag in tags)
+        {
+            var parameter = $"$tag{index++}";
+            filters.Add($"EXISTS (SELECT 1 FROM json_each(n.tags_json) WHERE json_each.value = {parameter})");
+            command.Parameters.AddWithValue(parameter, tag);
+        }
+    }
+
+    // Limits results to the caller's allowed domains; an empty set means the scope permits nothing.
+    private static void AppendDomainRestriction(SqliteCommand command, List<string> filters, IReadOnlyCollection<string>? restrictToDomains)
+    {
+        if (restrictToDomains is null)
+        {
+            return;
+        }
+
+        if (restrictToDomains.Count == 0)
+        {
+            filters.Add("0"); // scope allows nothing -> no results
+            return;
+        }
+
+        var placeholders = new List<string>();
+        var index = 0;
+        foreach (var allowed in restrictToDomains)
+        {
+            var parameter = $"$rd{index++}";
+            placeholders.Add(parameter);
+            command.Parameters.AddWithValue(parameter, allowed);
+        }
+
+        filters.Add($"n.domain IN ({string.Join(", ", placeholders)})");
+    }
+
+    // Appends the optional user filter DSL fragment and binds its parameters.
+    private static void AppendCompiledFilter(SqliteCommand command, List<string> filters, CompiledFilter? compiledFilter)
+    {
+        if (compiledFilter is null)
+        {
+            return;
+        }
+
+        filters.Add(compiledFilter.Sql);
+        foreach (var parameter in compiledFilter.Parameters)
+        {
+            command.Parameters.AddWithValue(parameter.Name, parameter.Value);
+        }
     }
 }
