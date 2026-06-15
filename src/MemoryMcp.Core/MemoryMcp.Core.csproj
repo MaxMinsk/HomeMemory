@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Domain, storage, schema registry. Settings inherited from Directory.Build.props. -->
+
+</Project>

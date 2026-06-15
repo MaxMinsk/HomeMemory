@@ -1,0 +1,17 @@
+# Personal / working docs — not part of the public repo (Russian, internal)
+Notes~/
+implementation_plan/
+
+# .NET build output
+bin/
+obj/
+*.user
+.vs/
+
+# Local database & WAL sidecars
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# OS noise
+.DS_Store
