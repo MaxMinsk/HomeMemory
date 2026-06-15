@@ -41,6 +41,7 @@ dotnet_diagnostic.CA1062.severity = none      # public-arg null checks: noisy wi
 dotnet_diagnostic.CA1305.severity = none      # IFormatProvider: server is invariant-only; timestamps already use InvariantCulture explicitly
 dotnet_diagnostic.CA1861.severity = none      # constant-array-arg caching: micro-opt, almost all in tests
 dotnet_diagnostic.CA1859.severity = none      # concrete-type return perf: micro-opt, not worth the churn here
+dotnet_diagnostic.CA1848.severity = none      # LoggerMessage delegates: perf for hot logging paths; our logs are startup/rare, not worth the ceremony
 
 # --- Meziantou.Analyzer (MEMP-044) ---
 # We keep the high-value rules active (MA0009 ReDoS, MA0051 method length, etc.) and mute the

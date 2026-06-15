@@ -146,6 +146,13 @@ static void Bootstrap(IServiceProvider services)
     var factory = services.GetRequiredService<ISqliteConnectionFactory>();
     new Migrator(factory, SchemaMigrations.All).Migrate();
     services.GetRequiredService<SchemaRegistry>().SyncToDatabase(factory);
+
+    // Log a one-line stats snapshot at startup so the add-on log shows what is stored.
+    var stats = services.GetRequiredService<DiagnosticsService>().Snapshot();
+    var byType = string.Join(", ", stats.NotesByType.Select(pair => $"{pair.Key}={pair.Value}"));
+    services.GetRequiredService<ILoggerFactory>().CreateLogger("MemoryMcp.Stats").LogInformation(
+        "Memory stats: schema v{Schema}, {Notes} notes ({ByType}), {Attachments} attachments, {Bytes} blob bytes.",
+        stats.SchemaVersion, stats.NoteCount, byType, stats.AttachmentCount, stats.BlobBytes);
 }
 
 static void RunBacklogCli(string[] args, string dbPath)

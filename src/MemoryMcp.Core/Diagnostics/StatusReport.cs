@@ -1,9 +1,14 @@
 namespace MemoryMcp.Core.Diagnostics;
 
-/// <summary>A snapshot of server/database health for the <c>status</c> tool.</summary>
+/// <summary>A snapshot of server/database health and contents for the <c>status</c> tool.</summary>
 /// <param name="SchemaVersion">The database's current schema version (PRAGMA user_version).</param>
 /// <param name="RegisteredSchemas">Registered payload schemas as <c>type@version</c> strings.</param>
 /// <param name="NoteCount">Number of live (non-deleted) notes.</param>
+/// <param name="NotesByType">Live note counts grouped by type (e.g. backlog_item, recipe, skill, sprint).</param>
+/// <param name="AttachmentCount">Number of attachment rows.</param>
+/// <param name="BlobBytes">Total bytes stored in the content-addressed blob store.</param>
 /// <param name="SearchBackend">A description of the search backend in use.</param>
 public sealed record StatusReport(
-    int SchemaVersion, IReadOnlyList<string> RegisteredSchemas, long NoteCount, string SearchBackend);
+    int SchemaVersion, IReadOnlyList<string> RegisteredSchemas, long NoteCount,
+    IReadOnlyDictionary<string, long> NotesByType, long AttachmentCount, long BlobBytes,
+    string SearchBackend);

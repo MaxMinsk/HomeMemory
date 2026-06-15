@@ -15,6 +15,18 @@ Stores notes as a relational envelope plus a typed JSON payload, with full-text 
 | `allowed_domains` | Comma-separated domains this token may access (e.g. `kitchen,personal`). Empty = all domains. |
 | `log_level` | `Trace` / `Debug` / `Information` / `Warning` / `Error`. |
 
+Advanced (environment variables, optional): `MEMORY_BLOB_ROOT` (blob store dir, default `/data/blobs`), `MEMORY_BLOB_QUOTA_BYTES` (default 1 GiB), `MEMORY_INGEST_ROOT` (directory that `artifacts_put`'s `sourcePath` files must live under; unset disables file ingestion).
+
+## Stats
+
+On startup the add-on logs a one-line snapshot of what's stored, e.g.:
+
+```
+Memory stats: schema v4, 56 notes (backlog_item=49, skill=2, sprint=3, ...), 0 attachments, 0 blob bytes.
+```
+
+The same breakdown (note counts by type, attachment count, blob bytes) is available any time via the MCP `status` tool, so an agent can report or chart it. (A native Home-Assistant sensor feed for graphing is a planned follow-up.)
+
 ## Connecting
 
 Point your MCP client at the **streamable-HTTP** endpoint `http://<home-assistant-host>:8099/mcp` with the bearer token (`Authorization: Bearer <token>`). It is a `POST` endpoint that negotiates over `text/event-stream`; opening it in a browser (GET) returns 400 — that is expected, it is not a web page. The database lives in the add-on's `/data` volume and survives restarts and updates.
