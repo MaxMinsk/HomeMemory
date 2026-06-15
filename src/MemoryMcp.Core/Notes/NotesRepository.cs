@@ -60,6 +60,9 @@ public sealed class NotesRepository
     /// <inheritdoc cref="NotesReader.Events"/>
     public IReadOnlyList<NoteEvent> Events(string id, int limit = 50) => _reader.Events(id, limit);
 
+    /// <inheritdoc cref="NotesReader.Event"/>
+    public NoteEventDetail? Event(string noteId, string eventId) => _reader.Event(noteId, eventId);
+
     /// <inheritdoc cref="NotesReader.TagCounts"/>
     public IReadOnlyDictionary<string, long> TagCounts() => _reader.TagCounts();
 

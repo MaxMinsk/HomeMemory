@@ -49,4 +49,62 @@ internal static class NoteAudit
         diff["after"] = after;
         return diff.ToJsonString();
     }
+
+    /// <summary>
+    /// Derives which mutable fields changed from a stored <c>diff_json</c>, without returning the heavy
+    /// before/after snapshots. For a create (no <c>before</c>) it lists the fields that were set; for ops
+    /// without snapshots (link/archive/…) it returns nothing (the op itself is the story).
+    /// </summary>
+    public static IReadOnlyList<string> ChangedFields(string? diffJson)
+    {
+        var fields = new List<string>();
+        if (string.IsNullOrEmpty(diffJson))
+        {
+            return fields;
+        }
+
+        JsonObject? root;
+        try
+        {
+            root = JsonNode.Parse(diffJson) as JsonObject;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return fields;
+        }
+
+        if (root?["after"] is not JsonObject after)
+        {
+            return fields;
+        }
+
+        var before = root["before"] as JsonObject;
+        foreach (var entry in after)
+        {
+            var afterValue = entry.Value;
+            if (before is null)
+            {
+                if (afterValue is not null)
+                {
+                    fields.Add(entry.Key);
+                }
+            }
+            else if (!JsonEquals(before[entry.Key], afterValue))
+            {
+                fields.Add(entry.Key);
+            }
+        }
+
+        return fields;
+    }
+
+    private static bool JsonEquals(JsonNode? a, JsonNode? b)
+    {
+        if (a is null || b is null)
+        {
+            return a is null && b is null;
+        }
+
+        return string.Equals(a.ToJsonString(), b.ToJsonString(), StringComparison.Ordinal);
+    }
 }

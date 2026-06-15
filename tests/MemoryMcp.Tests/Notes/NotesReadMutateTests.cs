@@ -395,6 +395,34 @@ public class NotesReadMutateTests
         Assert.Contains(events, e => e.Op == "archive");
     }
 
+    [Fact]
+    public void History_is_compact_with_changed_fields_and_detail_on_demand()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        var id = Seed(repo, "MEMP-200", "ready", title: "Old", body: "Body");
+        var rev = repo.Get(id)!.UpdatedUtc;
+        repo.Patch(id, "New title", null, null, null, rev, "me");
+        repo.Archive(id);
+
+        var events = repo.Events(id);
+
+        var patch = Assert.Single(events, e => e.Op == "patch");
+        Assert.Contains("title", patch.ChangedFields);            // only the title changed
+        Assert.DoesNotContain("body", patch.ChangedFields);
+        Assert.True(patch.DiffBytes > 0);
+
+        var archive = Assert.Single(events, e => e.Op == "archive");
+        Assert.Empty(archive.ChangedFields);                     // no snapshot fields for archive
+
+        // The heavy before/after is only fetched on demand by event id.
+        var detail = repo.Event(id, patch.EventId);
+        Assert.NotNull(detail);
+        Assert.Contains("New title", detail!.DiffJson!);
+        Assert.Contains("before", detail.DiffJson!);
+        Assert.Null(repo.Event(id, "no-such-event"));
+    }
+
     private static (NotesRepository Repo, SqliteConnectionFactory Factory) NewRepo(TempDatabase temp)
     {
         var factory = new SqliteConnectionFactory(temp.FilePath);

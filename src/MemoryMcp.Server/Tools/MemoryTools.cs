@@ -240,15 +240,26 @@ public sealed class MemoryTools
             return _notes.Unlink(fromId, toId, rel);
         });
 
-    /// <summary>Returns a note's change history (newest first).</summary>
+    /// <summary>Returns a note's change history (newest first), compact — no full before/after.</summary>
     [McpServerTool(Name = "notes_history", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
-    [Description("Get a note's append-only history (create/update/archive/restore/link/...), newest first.")]
+    [Description("Get a note's append-only history (create/update/archive/restore/link/...), newest first. Compact: each entry has eventId, op, actor, ts, changedFields and diffBytes — NOT the full before/after (which can be huge). Fetch one event's detail with notes_history_event.")]
     public IReadOnlyList<NoteEvent> NotesHistory(
         [Description("Note id")] string id,
         [Description("Max events (default 50)")] int limit = 50)
     {
         var note = _notes.Get(id);
         return note is not null && Guard().IsAllowed(note.Domain) ? _notes.Events(id, limit) : Array.Empty<NoteEvent>();
+    }
+
+    /// <summary>Returns the full detail (before/after diff) of one history event, if it is in scope.</summary>
+    [McpServerTool(Name = "notes_history_event", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("Get the full detail of ONE history event by id (op, actor, ts and the before/after diff JSON). Use after notes_history to inspect a specific change without pulling every event's snapshots.")]
+    public NoteEventDetail? NotesHistoryEvent(
+        [Description("Note id")] string id,
+        [Description("Event id from notes_history")] string eventId)
+    {
+        var note = _notes.Get(id);
+        return note is not null && Guard().IsAllowed(note.Domain) ? _notes.Event(id, eventId) : null;
     }
 
     /// <summary>Lists registered note types as type@version.</summary>

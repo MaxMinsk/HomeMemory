@@ -189,7 +189,7 @@ public sealed class NotesReader
         using var connection = _connectionFactory.Create();
         using var command = connection.CreateCommand();
         command.CommandText =
-            "SELECT op, actor, ts, diff_json FROM note_events WHERE note_id = $id ORDER BY ts DESC, event_id DESC LIMIT $limit;";
+            "SELECT event_id, op, actor, ts, diff_json FROM note_events WHERE note_id = $id ORDER BY ts DESC, event_id DESC LIMIT $limit;";
         command.Parameters.AddWithValue("$id", id);
         command.Parameters.AddWithValue("$limit", Math.Clamp(limit, 1, 500));
 
@@ -197,14 +197,40 @@ public sealed class NotesReader
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
+            var diff = reader.IsDBNull(4) ? null : reader.GetString(4);
             events.Add(new NoteEvent(
                 reader.GetString(0),
-                reader.IsDBNull(1) ? null : reader.GetString(1),
-                reader.GetString(2),
-                reader.IsDBNull(3) ? null : reader.GetString(3)));
+                reader.GetString(1),
+                reader.IsDBNull(2) ? null : reader.GetString(2),
+                reader.GetString(3),
+                NoteAudit.ChangedFields(diff),
+                diff?.Length ?? 0));
         }
 
         return events;
+    }
+
+    /// <summary>Returns the full detail (including the before/after diff) of one history event, or <c>null</c>.</summary>
+    /// <param name="noteId">The note the event belongs to.</param>
+    /// <param name="eventId">The event id (from <see cref="Events"/>).</param>
+    public NoteEventDetail? Event(string noteId, string eventId)
+    {
+        using var connection = _connectionFactory.Create();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT event_id, op, actor, ts, diff_json FROM note_events WHERE note_id = $n AND event_id = $e LIMIT 1;";
+        command.Parameters.AddWithValue("$n", noteId);
+        command.Parameters.AddWithValue("$e", eventId);
+
+        using var reader = command.ExecuteReader();
+        return reader.Read()
+            ? new NoteEventDetail(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.IsDBNull(2) ? null : reader.GetString(2),
+                reader.GetString(3),
+                reader.IsDBNull(4) ? null : reader.GetString(4))
+            : null;
     }
 
     /// <summary>Lists full notes for a domain/type (active, non-deleted), newest first.</summary>
