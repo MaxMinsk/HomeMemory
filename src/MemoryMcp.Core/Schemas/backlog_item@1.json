@@ -1,0 +1,15 @@
+{
+  "$id": "backlog_item@1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["key", "status"],
+  "additionalProperties": false,
+  "properties": {
+    "key": { "type": "string", "pattern": "^[A-Z]+-[0-9]{3,}$" },
+    "status": { "enum": ["ready", "next", "later", "in_progress", "done", "blocked"] },
+    "priority": { "enum": ["low", "normal", "high"] },
+    "acceptance": { "type": "string" },
+    "estimate": { "type": "string" },
+    "blocked_by": { "type": "array", "items": { "type": "string" } }
+  }
+}

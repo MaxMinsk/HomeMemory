@@ -4,6 +4,13 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="JsonSchema.Net" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Payload JSON Schemas are embedded so the registry can load them at runtime. -->
+    <None Remove="Schemas/**/*.json" />
+    <EmbeddedResource Include="Schemas/**/*.json" />
   </ItemGroup>
 
 </Project>
