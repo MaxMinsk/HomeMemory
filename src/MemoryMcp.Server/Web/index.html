@@ -37,6 +37,7 @@
 <header>
   <b>Memory MCP</b> <span class="k">viewer</span>
   <span id="stats"></span>
+  <button onclick="logout()" style="background:#222838;color:var(--muted);margin-left:10px">logout</button>
 </header>
 <main>
   <div id="left">
@@ -44,6 +45,11 @@
       <input type="text" id="q" placeholder="full-text query" />
       <select id="type"><option value="">any type</option></select>
       <select id="domain"><option value="">any domain</option></select>
+      <select id="status" title="envelope status">
+        <option value="active" selected>active</option>
+        <option value="archived">archived</option>
+        <option value="superseded">superseded</option>
+      </select>
       <input type="text" id="tag" placeholder="tag (e.g. loc:summer-kitchen)" />
       <button onclick="search()">Search</button>
     </div>
@@ -55,6 +61,8 @@
 const $ = s => document.querySelector(s);
 let token = localStorage.getItem('memtoken') || '';
 if (!token) { token = prompt('Bearer token:') || ''; if (token) localStorage.setItem('memtoken', token); }
+const PAGE = 50;
+let offset = 0;
 
 async function api(path) {
   const r = await fetch(path, { headers: { 'Authorization': 'Bearer ' + token } });
@@ -63,37 +71,61 @@ async function api(path) {
   return r.json();
 }
 function esc(s){ return (s==null?'':String(s)).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function logout(){ localStorage.removeItem('memtoken'); location.hash=''; location.reload(); }
+
+const FIELDS = [['q','#q'],['type','#type'],['domain','#domain'],['status','#status'],['tag','#tag']];
+function writeHash(){
+  const p = new URLSearchParams();
+  for (const [k,id] of FIELDS){ const v=$(id).value; if (v && !(k==='status'&&v==='active')) p.set(k,v); }
+  if ($('#detail').dataset.sel) p.set('sel', $('#detail').dataset.sel);
+  history.replaceState(null,'','#'+p.toString());
+}
+function readHash(){
+  const p = new URLSearchParams(location.hash.slice(1));
+  for (const [k,id] of FIELDS){ if (p.has(k)) $(id).value = p.get(k); }
+  return p.get('sel');
+}
 
 async function loadStats() {
   try {
     const s = await api('/api/stats');
-    $('#stats').textContent = `${s.noteCount} notes · ` + Object.entries(s.notesByType).map(([k,v])=>`${k} ${v}`).join('  ') +
-      `  · ${s.attachmentCount} attach`;
+    const archived = (s.notesByStatus && s.notesByStatus.archived) || 0;
+    $('#stats').textContent = `${s.noteCount} active · ` + Object.entries(s.notesByType).map(([k,v])=>`${k} ${v}`).join('  ') +
+      `  · ${s.attachmentCount} attach` + (archived ? `  · ${archived} archived` : '');
     const fill = (id, counts) => { const sel=$(id); Object.keys(counts).sort().forEach(k => { const o=document.createElement('option'); o.value=k; o.textContent=`${k} (${counts[k]})`; sel.appendChild(o); }); };
     fill('#type', s.notesByType);
     fill('#domain', s.notesByDomain || {});
   } catch(e){ $('#stats').textContent = e.message; }
 }
 
-async function search() {
+function itemHtml(it){
+  let tags = []; try { tags = it.tagsJson ? JSON.parse(it.tagsJson) : []; } catch {}
+  return `<div class="item" onclick="open_('${it.id}')"><div class="t">${esc(it.title)||'<i>untitled</i>'}</div>` +
+    `<div class="m"><span class="badge">${esc(it.type)}</span><span class="badge">${esc(it.domain)}</span>${esc(it.status||'')}</div>` +
+    (tags.length ? `<div>${tags.map(t=>`<span class="tag">${esc(t)}</span>`).join('')}</div>` : '') + `</div>`;
+}
+
+async function search(reset=true) {
+  if (reset) offset = 0;
   const p = new URLSearchParams();
   if ($('#q').value) p.set('q', $('#q').value);
   if ($('#type').value) p.set('type', $('#type').value);
   if ($('#domain').value) p.set('domain', $('#domain').value);
+  if ($('#status').value) p.set('status', $('#status').value);
   if ($('#tag').value) p.set('tags', $('#tag').value);
-  p.set('limit', '100');
+  p.set('limit', String(PAGE)); p.set('offset', String(offset));
+  const list = $('#list');
   try {
     const page = await api('/api/search?' + p.toString());
-    const list = $('#list');
-    if (!page.items.length) { list.innerHTML = '<div class="empty">No matches.</div>'; return; }
-    list.innerHTML = page.items.map(it => {
-      let tags = []; try { tags = it.tagsJson ? JSON.parse(it.tagsJson) : []; } catch {}
-      return `<div class="item" onclick="open_('${it.id}')"><div class="t">${esc(it.title)||'<i>untitled</i>'}</div>` +
-        `<div class="m"><span class="badge">${esc(it.type)}</span><span class="badge">${esc(it.domain)}</span>${esc(it.status||'')}</div>` +
-        (tags.length ? `<div>${tags.map(t=>`<span class="tag">${esc(t)}</span>`).join('')}</div>` : '') + `</div>`;
-    }).join('');
-    $('#stats').dataset.total = page.total;
-  } catch(e){ $('#list').innerHTML = '<div class="empty">'+esc(e.message)+'</div>'; }
+    const more = $('#more'); if (more) more.remove();
+    const html = page.items.map(itemHtml).join('');
+    if (reset) list.innerHTML = page.items.length ? html : '<div class="empty">No matches.</div>';
+    else list.insertAdjacentHTML('beforeend', html);
+    offset += page.items.length;
+    if (page.hasMore) list.insertAdjacentHTML('beforeend',
+      `<div class="item" id="more" style="text-align:center;color:var(--accent)" onclick="search(false)">Load more (${offset}/${page.total})</div>`);
+    writeHash();
+  } catch(e){ list.innerHTML = '<div class="empty">'+esc(e.message)+'</div>'; }
 }
 
 async function open_(id) {
@@ -115,10 +147,17 @@ async function open_(id) {
       (n.body ? `<h3>body</h3><pre>${esc(n.body)}</pre>` : '') +
       (links ? `<h3>links</h3><ul>${links}</ul>` : '') +
       (atts ? `<h3>attachments</h3><ul>${atts}</ul>` : '');
+    $('#detail').dataset.sel = id; writeHash();
   } catch(e){ $('#detail').innerHTML = '<div class="empty">'+esc(e.message)+'</div>'; }
 }
 
-loadStats();
+async function init() {
+  await loadStats();          // populates type/domain option lists first
+  const sel = readHash();     // then restore filters from the URL
+  await search();
+  if (sel) open_(sel);
+}
+init();
 </script>
 </body>
 </html>
