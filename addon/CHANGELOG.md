@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.9.0
+
+Reliability & multi-agent hardening (from two product reviews).
+
+- **Forced onboarding**: the server now returns `instructions` on connect (the core "how to author" model),
+  plus a `memory-authoring` core skill. New discovery tools: `domains_list`, `tags_list`.
+- **Safe updates**: `notes_patch(id, …, expectedUpdatedUtc)` — merge (not full replace) with optimistic
+  concurrency; `notes_get`/upsert expose `updated_utc` as the revision/etag.
+- **Links graph is readable**: `notes_links` (both directions, resolved), `notes_unlink`; the viewer shows links.
+- **Reversibility & history**: `notes_restore` (un-archive), `notes_history` (the audit log), `pending_actions_list`.
+- **Artifact security**: browser links are short-lived signed URLs — the bearer token is no longer placed in
+  artifact URLs. `schema_get(type, version)` for an exact schema version.
+- **Search**: prefix matching finds longer word forms; `notes_search` (includePayload) also returns
+  tags/dedupKey/updatedUtc; the viewer shows tags and a domain dropdown.
+- **Stats**: default counts are active-only (archived no longer inflate them); adds notesByStatus,
+  notesByDomain and pendingActionsCount.
+
 ## 0.8.0
 
 - **Fix**: text artifacts (`/artifacts/{id}`) are now served with `charset=utf-8`, so Cyrillic markdown/HTML
