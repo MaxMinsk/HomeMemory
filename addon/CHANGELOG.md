@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.13.0
+
+Sprint 6 — data quality + artifact lifecycle.
+
+- **`notes_lint`** (MEMP-073): read-only data-quality scan that flags notes which are hard to find or
+  maintain (`no_tags`, `no_dedup_key`, `no_title`) and dangling links (`broken_link`). Scope-limited,
+  domain-focusable; returns structured findings. Suggests fixes, changes nothing.
+- **Two-phase artifact delete** (MEMP-070): `artifacts_delete` no longer deletes immediately — it returns a
+  confirmation token; `notes_confirm` applies it (`notes_cancel` drops it), GC'ing the blob if unreferenced.
+  Destructive ops are now uniformly reversible-by-default.
+- **Signed artifact upload** (MEMP-066): `artifacts_request_upload` returns a short-lived signed PUT URL
+  bound to the exact domain/filename/contentType/noteId; a remote agent PUTs opaque bytes (photos/PDF)
+  straight to the server — never through the model context. Blob quota still applies.
+- **`notes_search includeLinks`** (MEMP-034): each hit can carry its links (both directions), so a board/
+  graph renders without a `notes_links` call per row.
+
 ## 0.12.0
 
 Sprint 5 — large-note ergonomics + hygiene (context-efficient reads, from the Codex architecture note).
