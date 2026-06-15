@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- MCP endpoint moved to the conventional `/mcp` path (was `/`). Connect clients to `http://<host>:8099/mcp`.
+
 ## 0.1.0
 
 - Initial release.

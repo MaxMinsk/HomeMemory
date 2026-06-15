@@ -52,7 +52,7 @@ if (transport == "http")
         await next();
     });
 
-    app.MapMcp();
+    app.MapMcp("/mcp");
     await app.RunAsync();
 }
 else

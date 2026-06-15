@@ -17,4 +17,6 @@ Stores notes as a relational envelope plus a typed JSON payload, with full-text 
 
 ## Connecting
 
-Point your MCP client at `http://<home-assistant-host>:8099/` with the bearer token. The database lives in the add-on's `/data` volume and survives restarts and updates.
+Point your MCP client at the **streamable-HTTP** endpoint `http://<home-assistant-host>:8099/mcp` with the bearer token (`Authorization: Bearer <token>`). It is a `POST` endpoint that negotiates over `text/event-stream`; opening it in a browser (GET) returns 400 — that is expected, it is not a web page. The database lives in the add-on's `/data` volume and survives restarts and updates.
+
+For remote access through a Cloudflare Tunnel, route a hostname to `http://<home-assistant-host>:8099` and connect to `https://<your-host>/mcp`. The bearer token is the only gate on a public endpoint, so use a long random one.
