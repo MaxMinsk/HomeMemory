@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Text;
 using MemoryMcp.Core.Artifacts;
 using MemoryMcp.Core.Confirmation;
+using MemoryMcp.Core.Naming;
 using MemoryMcp.Core.Security;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
@@ -54,6 +55,27 @@ public sealed class ArtifactTools
             Guard().Authorize(domain);
             var bytes = ResolveBytes(content, sourcePath, ref filename);
             return _artifacts.Put(domain, bytes, filename, contentType, noteId, sourceAgent);
+        });
+
+    /// <summary>Returns a signed upload URL so a client can PUT opaque bytes directly (never via context).</summary>
+    [McpServerTool(Name = "artifacts_request_upload", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("Get a temporary signed upload URL (HTTP PUT) for an artifact you'll attach. PUT the raw bytes to it (curl -T / fetch) — bytes go straight to the server, never through the model context. The URL is bound to the exact domain/filename/contentType/noteId you pass. After the PUT succeeds the artifact exists; artifacts_list/artifacts_get show it. Use this for opaque bytes (photos/PDF) from a remote agent; inline text still goes via artifacts_put.")]
+    public string ArtifactsRequestUpload(
+        [Description("Namespace, e.g. kitchen")] string domain,
+        [Description("Display/original filename")] string filename,
+        [Description("MIME type, e.g. image/jpeg")] string? contentType = null,
+        [Description("Note id to attach the artifact to (optional)")] string? noteId = null,
+        [Description("Lifetime in seconds (default 3600 = 1h; min 60, capped at 7 days)")] int? ttlSeconds = null)
+        => Translate(() =>
+        {
+            if (string.IsNullOrWhiteSpace(filename))
+            {
+                throw new ArtifactException("A filename is required for an upload URL.");
+            }
+
+            Guard().Authorize(domain);
+            var normalizedDomain = Identifiers.Normalize(domain);
+            return _signer.BuildUploadUrl(normalizedDomain, filename, contentType, noteId, ttlSeconds ?? 3600);
         });
 
     /// <summary>Gets artifact metadata by id (no bytes), if in scope.</summary>

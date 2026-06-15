@@ -48,6 +48,39 @@ internal static class ViewerEndpoints
             return Results.Json(new { note, attachments, links = notes.Links(id) });
         });
 
+        app.MapArtifactBytes();
+    }
+
+    // Artifact byte transfer (out-of-band, never through the model context): signed PUT upload + GET serve.
+    private static void MapArtifactBytes(this IEndpointRouteBuilder app)
+    {
+        // Upload opaque bytes directly via a signed capability URL (from artifacts_request_upload). The
+        // signature (verified in middleware) binds the destination, so we trust the query parameters here.
+        // Bytes go straight to disk, never through the model context. Kestrel caps the body size.
+        app.MapPut("/artifacts/upload", async (HttpRequest request, ArtifactsService artifacts) =>
+        {
+            using var buffer = new MemoryStream();
+            await request.Body.CopyToAsync(buffer);
+            var bytes = buffer.ToArray();
+            if (bytes.Length == 0)
+            {
+                return Results.BadRequest("Empty upload body.");
+            }
+
+            var query = request.Query;
+            var contentType = string.IsNullOrEmpty(query["contentType"]) ? null : query["contentType"].ToString();
+            var noteId = string.IsNullOrEmpty(query["noteId"]) ? null : query["noteId"].ToString();
+            try
+            {
+                var artifact = artifacts.Put(query["domain"].ToString(), bytes, query["filename"].ToString(), contentType, noteId, "upload");
+                return Results.Json(artifact);
+            }
+            catch (ArtifactException exception)
+            {
+                return Results.Problem(exception.Message, statusCode: StatusCodes.Status413PayloadTooLarge);
+            }
+        });
+
         // Serve an artifact's bytes to the browser (rendered HTML renders inline, md/text shows as text).
         // The bytes go to the human, never back through the model context. Auth: bearer header or ?t= token.
         app.MapGet("/artifacts/{id}", (string id, ArtifactsService artifacts, BlobStore blobs) =>

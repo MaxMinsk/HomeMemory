@@ -77,13 +77,16 @@ if (transport == "http")
             return;
         }
 
-        // /artifacts links are opened by the browser via a short-lived signed URL (no bearer in the URL).
+        // /artifacts links use a short-lived signed URL (no bearer in the URL): a read link signs the id,
+        // an upload link (/artifacts/upload) signs the destination params. Bearer also authorizes.
         if (context.Request.Path.StartsWithSegments("/artifacts", out var rest))
         {
             var signer = context.RequestServices.GetRequiredService<ArtifactUrlSigner>();
-            var artifactId = rest.Value?.Trim('/') ?? string.Empty;
-            var ok = (!string.IsNullOrEmpty(token) && HasValidBearer(context, token))
-                || signer.Verify(artifactId, context.Request.Query["exp"], context.Request.Query["sig"]);
+            var query = context.Request.Query;
+            var hasBearer = !string.IsNullOrEmpty(token) && HasValidBearer(context, token);
+            var ok = string.Equals(rest.Value?.Trim('/'), "upload", StringComparison.Ordinal)
+                ? hasBearer || signer.VerifyUpload(query["domain"], query["filename"], query["contentType"], query["noteId"], query["exp"], query["sig"])
+                : hasBearer || signer.Verify(rest.Value?.Trim('/') ?? string.Empty, query["exp"], query["sig"]);
             if (!ok)
             {
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;

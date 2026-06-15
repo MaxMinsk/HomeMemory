@@ -53,9 +53,50 @@ public sealed class ArtifactUrlSigner
             Encoding.UTF8.GetBytes(sig), Encoding.UTF8.GetBytes(Sign(id, expiry)));
     }
 
+    /// <summary>
+    /// Builds a signed one-time-ish upload URL (HTTP PUT) bound to exactly these attachment parameters,
+    /// so the client cannot change the destination domain/filename/etc. Bytes are PUT directly to the
+    /// server, never through the model context.
+    /// </summary>
+    public string BuildUploadUrl(string domain, string filename, string? contentType, string? noteId, int ttlSeconds = DefaultTtlSeconds)
+    {
+        var expiry = _clock.GetUtcNow().ToUnixTimeSeconds() + Math.Clamp(ttlSeconds, 60, MaxTtlSeconds);
+        var query =
+            $"domain={Uri.EscapeDataString(domain)}&filename={Uri.EscapeDataString(filename)}" +
+            $"&contentType={Uri.EscapeDataString(contentType ?? string.Empty)}&noteId={Uri.EscapeDataString(noteId ?? string.Empty)}" +
+            $"&exp={expiry}&sig={SignUpload(domain, filename, contentType, noteId, expiry)}";
+        return (_baseUrl ?? string.Empty) + $"/artifacts/upload?{query}";
+    }
+
+    /// <summary>Verifies a signed upload request: the signature matches these exact parameters and has not expired.</summary>
+    public bool VerifyUpload(string? domain, string? filename, string? contentType, string? noteId, string? exp, string? sig)
+    {
+        if (sig is null || string.IsNullOrEmpty(domain) || string.IsNullOrEmpty(filename)
+            || !long.TryParse(exp, NumberStyles.Integer, CultureInfo.InvariantCulture, out var expiry))
+        {
+            return false;
+        }
+
+        if (_clock.GetUtcNow().ToUnixTimeSeconds() > expiry)
+        {
+            return false;
+        }
+
+        return CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(sig), Encoding.UTF8.GetBytes(SignUpload(domain, filename, contentType, noteId, expiry)));
+    }
+
     private string Sign(string id, long expiry)
     {
         var mac = HMACSHA256.HashData(_key, Encoding.UTF8.GetBytes($"{id}\n{expiry}"));
+        return Convert.ToHexString(mac).ToLowerInvariant();
+    }
+
+    // Distinct "upload" message prefix so an upload signature can never be replayed as a read signature.
+    private string SignUpload(string domain, string filename, string? contentType, string? noteId, long expiry)
+    {
+        var message = $"upload\n{domain}\n{filename}\n{contentType ?? string.Empty}\n{noteId ?? string.Empty}\n{expiry}";
+        var mac = HMACSHA256.HashData(_key, Encoding.UTF8.GetBytes(message));
         return Convert.ToHexString(mac).ToLowerInvariant();
     }
 }
