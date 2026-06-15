@@ -44,6 +44,21 @@ public class ArtifactsServiceTests
     }
 
     [Fact]
+    public void Put_replaces_prior_attachment_with_same_note_and_filename()
+    {
+        using var temp = new TempDatabase();
+        using var dir = new TempDir();
+        var service = NewService(temp, dir);
+
+        service.Put("kitchen", Encoding.UTF8.GetBytes("v1"), "r.md", "text/markdown", "note-1", "t");
+        service.Put("kitchen", Encoding.UTF8.GetBytes("v2"), "r.md", "text/markdown", "note-1", "t"); // same -> replace
+        Assert.Single(service.List("kitchen", "note-1"));
+
+        service.Put("kitchen", Encoding.UTF8.GetBytes("x"), "other.md", "text/markdown", "note-1", "t"); // different name -> kept
+        Assert.Equal(2, service.List("kitchen", "note-1").Count);
+    }
+
+    [Fact]
     public void Get_missing_returns_null()
     {
         using var temp = new TempDatabase();

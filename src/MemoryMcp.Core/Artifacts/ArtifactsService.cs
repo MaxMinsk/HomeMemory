@@ -39,21 +39,40 @@ public sealed class ArtifactsService
         var nowUtc = NowUtc();
 
         using var connection = _connectionFactory.Create();
-        using var command = connection.CreateCommand();
-        command.CommandText =
-            $"INSERT INTO attachments ({Columns}, source_agent) " +
-            "VALUES ($id, $d, $sha, $n, $f, $ct, $sz, $now, $by);";
-        command.Parameters.AddWithValue("$id", id);
-        command.Parameters.AddWithValue("$d", domain);
-        command.Parameters.AddWithValue("$sha", blob.Sha256);
-        command.Parameters.AddWithValue("$n", (object?)noteId ?? DBNull.Value);
-        command.Parameters.AddWithValue("$f", (object?)filename ?? DBNull.Value);
-        command.Parameters.AddWithValue("$ct", (object?)contentType ?? DBNull.Value);
-        command.Parameters.AddWithValue("$sz", blob.SizeBytes);
-        command.Parameters.AddWithValue("$now", nowUtc);
-        command.Parameters.AddWithValue("$by", (object?)sourceAgent ?? DBNull.Value);
-        command.ExecuteNonQuery();
+        using var transaction = connection.BeginTransaction();
 
+        // Idempotent per (domain, note_id, filename): re-attaching the same named file to the same note
+        // replaces the prior row instead of piling up duplicates (MEMP-059). Unnamed/unattached puts append.
+        if (noteId is not null && !string.IsNullOrEmpty(filename))
+        {
+            using var supersede = connection.CreateCommand();
+            supersede.Transaction = transaction;
+            supersede.CommandText = "DELETE FROM attachments WHERE domain = $d AND note_id = $n AND filename = $f;";
+            supersede.Parameters.AddWithValue("$d", domain);
+            supersede.Parameters.AddWithValue("$n", noteId);
+            supersede.Parameters.AddWithValue("$f", filename);
+            supersede.ExecuteNonQuery();
+        }
+
+        using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText =
+                $"INSERT INTO attachments ({Columns}, source_agent) " +
+                "VALUES ($id, $d, $sha, $n, $f, $ct, $sz, $now, $by);";
+            command.Parameters.AddWithValue("$id", id);
+            command.Parameters.AddWithValue("$d", domain);
+            command.Parameters.AddWithValue("$sha", blob.Sha256);
+            command.Parameters.AddWithValue("$n", (object?)noteId ?? DBNull.Value);
+            command.Parameters.AddWithValue("$f", (object?)filename ?? DBNull.Value);
+            command.Parameters.AddWithValue("$ct", (object?)contentType ?? DBNull.Value);
+            command.Parameters.AddWithValue("$sz", blob.SizeBytes);
+            command.Parameters.AddWithValue("$now", nowUtc);
+            command.Parameters.AddWithValue("$by", (object?)sourceAgent ?? DBNull.Value);
+            command.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
         return new Artifact(id, domain, blob.Sha256, UriScheme + blob.Sha256, noteId, filename, contentType, blob.SizeBytes, nowUtc);
     }
 

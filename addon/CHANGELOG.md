@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0
+
+- **Fix (MEMP-059)**: `artifacts_put` is now idempotent per `(note, filename)` — re-attaching a
+  same-named file to the same note replaces the previous attachment instead of piling up duplicates
+  (the blob bytes were already de-duplicated; this removes the duplicate metadata rows). Existing
+  duplicates from earlier runs collapse the next time their file is re-attached.
+
 ## 0.5.0
 
 - **Read-only web viewer** at `/ui` (also the add-on's "Open Web UI" button): paste the bearer once,
