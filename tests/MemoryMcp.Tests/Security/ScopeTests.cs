@@ -52,9 +52,9 @@ public class ScopeTests
         Seed(repo, "kitchen", "KIT-100");
         Seed(repo, "work", "WORK-100");
 
-        Assert.Single(repo.Search(restrictToDomains: new[] { "kitchen" }));
-        Assert.Equal(2, repo.Search().Count);
-        Assert.Empty(repo.Search(restrictToDomains: Array.Empty<string>()));
+        Assert.Single(repo.Search(restrictToDomains: new[] { "kitchen" }).Items);
+        Assert.Equal(2, repo.Search().Total);
+        Assert.Empty(repo.Search(restrictToDomains: Array.Empty<string>()).Items);
     }
 
     private static void Seed(NotesRepository repo, string domain, string key) =>

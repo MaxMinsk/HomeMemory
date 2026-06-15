@@ -26,19 +26,20 @@ public sealed class MemoryTools
         _scope = scope;
     }
 
-    /// <summary>Searches notes by optional full-text query plus structured filters (scope-restricted).</summary>
+    /// <summary>Searches notes by optional full-text query plus structured filters (scope-restricted, paginated).</summary>
     [McpServerTool(Name = "notes_search")]
-    [Description("Search notes by an optional full-text query plus filters. Returns snippets and BM25 scores, never the full body.")]
-    public IReadOnlyList<SearchResult> NotesSearch(
+    [Description("Search notes by an optional full-text query plus filters. Returns ONE page of hits (snippets + BM25 scores, never the full body) with total/hasMore — paginate with offset; do not try to fetch everything at once.")]
+    public SearchPage NotesSearch(
         [Description("Full-text query (optional)")] string? query = null,
         [Description("Domain filter, e.g. memory-mcp")] string? domain = null,
         [Description("Type filter, e.g. backlog_item")] string? type = null,
         [Description("Tags; every supplied tag must be present")] string[]? tags = null,
         [Description("Envelope status filter; defaults to active")] string status = "active",
-        [Description("Maximum number of results")] int limit = 10)
+        [Description("Page size, 1-100 (default 20; larger values are clamped)")] int limit = 20,
+        [Description("Results to skip for pagination (default 0). Use the returned total/hasMore to page.")] int offset = 0)
     {
         var restriction = Guard().RestrictionForSearch(domain);
-        return _notes.Search(query, domain, type, tags, status, limit, restriction);
+        return _notes.Search(query, domain, type, tags, status, limit, offset, restriction);
     }
 
     /// <summary>Gets a full note (envelope + payload) by id, if it is in scope.</summary>

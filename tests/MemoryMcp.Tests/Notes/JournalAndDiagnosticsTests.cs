@@ -25,7 +25,7 @@ public class JournalAndDiagnosticsTests
         Assert.Equal("bought mackerel, try smoking it", note.Body);
         Assert.Null(note.PayloadJson);
         Assert.Equal(0, note.SchemaVer);
-        Assert.Single(repo.Search(query: "mackerel", domain: "kitchen"));
+        Assert.Single(repo.Search(query: "mackerel", domain: "kitchen").Items);
     }
 
     [Fact]

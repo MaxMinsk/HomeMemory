@@ -44,7 +44,7 @@ public class NotesReadMutateTests
 
         var hits = repo.Search(query: "uniqueword");
 
-        var hit = Assert.Single(hits);
+        var hit = Assert.Single(hits.Items);
         Assert.Equal(id, hit.Id);
         Assert.NotNull(hit.Snippet);
         Assert.Contains("uniqueword", hit.Snippet!);
@@ -58,8 +58,8 @@ public class NotesReadMutateTests
         Seed(repo, "MEMP-200", "ready", body: "alpha beta");
 
         // Hyphen/colon/quote would break a raw FTS5 MATCH; the sanitizer turns them into phrases.
-        Assert.Single(repo.Search(query: "alpha-beta"));
-        Assert.Empty(repo.Search(query: "\"missing\":"));
+        Assert.Single(repo.Search(query: "alpha-beta").Items);
+        Assert.Empty(repo.Search(query: "\"missing\":").Items);
     }
 
     [Fact]
@@ -70,9 +70,9 @@ public class NotesReadMutateTests
         Seed(repo, "MEMP-200", "ready", domain: "memory-mcp");
         Seed(repo, "WORK-200", "ready", domain: "work");
 
-        Assert.Single(repo.Search(domain: "memory-mcp"));
-        Assert.Single(repo.Search(domain: "work"));
-        Assert.Empty(repo.Search(type: "recipe"));
+        Assert.Single(repo.Search(domain: "memory-mcp").Items);
+        Assert.Single(repo.Search(domain: "work").Items);
+        Assert.Empty(repo.Search(type: "recipe").Items);
     }
 
     [Fact]
@@ -83,8 +83,8 @@ public class NotesReadMutateTests
         Seed(repo, "MEMP-200", "ready", tags: """["urgent"]""");
         Seed(repo, "MEMP-201", "ready", tags: """["later"]""");
 
-        Assert.Single(repo.Search(tags: new[] { "urgent" }));
-        Assert.Empty(repo.Search(tags: new[] { "missing" }));
+        Assert.Single(repo.Search(tags: new[] { "urgent" }).Items);
+        Assert.Empty(repo.Search(tags: new[] { "missing" }).Items);
     }
 
     [Fact]
@@ -97,8 +97,33 @@ public class NotesReadMutateTests
 
         var hits = repo.Search();
 
-        Assert.Equal(2, hits.Count);
-        Assert.All(hits, h => Assert.Null(h.Snippet));
+        Assert.Equal(2, hits.Total);
+        Assert.Equal(2, hits.Items.Count);
+        Assert.All(hits.Items, h => Assert.Null(h.Snippet));
+    }
+
+    [Fact]
+    public void Search_paginates_with_total_and_hasMore()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        for (var i = 0; i < 5; i++)
+        {
+            Seed(repo, $"MEMP-30{i}", "ready");
+        }
+
+        var first = repo.Search(limit: 2, offset: 0);
+        Assert.Equal(5, first.Total);
+        Assert.Equal(2, first.Items.Count);
+        Assert.True(first.HasMore);
+
+        var last = repo.Search(limit: 2, offset: 4);
+        Assert.Single(last.Items);
+        Assert.False(last.HasMore);
+
+        var clamped = repo.Search(limit: 9999);
+        Assert.Equal(NotesReader.MaxLimit, clamped.Limit); // page size clamped to 100
+        Assert.Equal(5, clamped.Items.Count);
     }
 
     [Fact]
@@ -110,8 +135,8 @@ public class NotesReadMutateTests
 
         Assert.True(repo.Archive(id));
 
-        Assert.Empty(repo.Search(query: "findme"));                    // default status = active
-        Assert.Single(repo.Search(query: "findme", status: "archived"));
+        Assert.Empty(repo.Search(query: "findme").Items);                    // default status = active
+        Assert.Single(repo.Search(query: "findme", status: "archived").Items);
         Assert.Equal("archived", repo.Get(id)!.Status);               // still retrievable by id
         Assert.False(repo.Archive(id));                               // already archived -> no-op
     }
