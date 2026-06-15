@@ -12,5 +12,6 @@ public static class SchemaMigrations
     public static IReadOnlyList<IMigration> All { get; } = new IMigration[]
     {
         new Migration0001Init(),
+        new Migration0002Fts(),
     };
 }

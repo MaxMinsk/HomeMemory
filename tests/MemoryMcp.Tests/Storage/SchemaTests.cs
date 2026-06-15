@@ -12,9 +12,10 @@ public class SchemaTests
         using var temp = new TempDatabase();
         var factory = new SqliteConnectionFactory(temp.FilePath);
 
-        var version = new Migrator(factory, SchemaMigrations.All).Migrate();
+        var migrator = new Migrator(factory, SchemaMigrations.All);
+        var version = migrator.Migrate();
 
-        Assert.Equal(1, version);
+        Assert.Equal(migrator.LatestVersion, version);
         using var connection = factory.Create();
         foreach (var table in new[] { "notes", "note_links", "note_events", "schemas" })
         {
