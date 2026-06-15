@@ -5,6 +5,7 @@ using MemoryMcp.Core.Artifacts;
 using MemoryMcp.Core.Backlog;
 using MemoryMcp.Core.Confirmation;
 using MemoryMcp.Core.Diagnostics;
+using MemoryMcp.Core.Maintenance;
 using MemoryMcp.Core.Notes;
 using MemoryMcp.Core.Schemas;
 using MemoryMcp.Core.Security;
@@ -49,6 +50,12 @@ if (args.Length > 0 && (args[0] == "import-backlog" || args[0] == "export-backlo
 if (args.Length > 0 && args[0] == "push-backlog")
 {
     await RunPushBacklog(args);
+    return;
+}
+
+if (args.Length > 0 && (args[0] == "gc-blobs" || args[0] == "normalize-identifiers"))
+{
+    RunMaintenance(args, dbPath);
     return;
 }
 
@@ -206,6 +213,36 @@ static void Bootstrap(IServiceProvider services)
     services.GetRequiredService<ILoggerFactory>().CreateLogger("MemoryMcp.Stats").LogInformation(
         "Memory stats: schema v{Schema}, {Notes} notes ({ByType}), {Attachments} attachments, {Bytes} blob bytes.",
         stats.SchemaVersion, stats.NoteCount, byType, stats.AttachmentCount, stats.BlobBytes);
+}
+
+// Admin maintenance subcommands (run via the binary, not model-facing): `gc-blobs [--apply]`,
+// `normalize-identifiers [--apply]`. Without --apply they are a dry run that only reports.
+static void RunMaintenance(string[] args, string dbPath)
+{
+    var factory = new SqliteConnectionFactory(dbPath);
+    new Migrator(factory, SchemaMigrations.All).Migrate();
+    var apply = args.Contains("--apply", StringComparer.Ordinal);
+
+    if (args[0] == "gc-blobs")
+    {
+        var report = BlobReconciler.Reconcile(factory, BuildBlobStore(dbPath), apply);
+        Console.WriteLine($"gc-blobs: {report.OrphanBlobs.Count} orphan blob(s), {report.FreedBytes} bytes" +
+            (apply ? " freed." : " (dry run; pass --apply to delete)."));
+        if (report.MissingBlobs.Count > 0)
+        {
+            Console.WriteLine($"  WARNING: {report.MissingBlobs.Count} attachment(s) reference a missing blob.");
+        }
+
+        return;
+    }
+
+    var backfill = IdentifierBackfill.Run(factory, apply);
+    Console.WriteLine($"normalize-identifiers: {backfill.NotesUpdated} note(s), {backfill.AttachmentsUpdated} attachment(s)" +
+        (apply ? " updated." : " would change (dry run; pass --apply to write)."));
+    if (backfill.Collisions.Count > 0)
+    {
+        Console.WriteLine($"  WARNING: {backfill.Collisions.Count} note(s) skipped due to dedup collisions: {string.Join(", ", backfill.Collisions)}");
+    }
 }
 
 static void RunBacklogCli(string[] args, string dbPath)

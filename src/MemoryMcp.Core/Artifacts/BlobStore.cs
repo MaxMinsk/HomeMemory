@@ -87,6 +87,20 @@ public sealed class BlobStore
     /// <summary>The on-disk path for a hash (whether or not it exists).</summary>
     public string PathFor(string sha256) => Path.Combine(_root, sha256[..2], sha256[2..4], sha256);
 
+    /// <summary>Byte size of a stored blob, or 0 if absent.</summary>
+    public long Size(string sha256)
+    {
+        var path = PathFor(sha256);
+        return File.Exists(path) ? new FileInfo(path).Length : 0;
+    }
+
+    /// <summary>All stored blob hashes (for reconciliation); excludes in-flight temp files. Materialized.</summary>
+    public IReadOnlyList<string> EnumerateShas() =>
+        Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories)
+            .Select(file => Path.GetFileName(file))
+            .Where(name => name.Length == 64)
+            .ToList();
+
     /// <summary>Total bytes currently stored (sum of blob file sizes; excludes in-flight temp files).</summary>
     public long TotalBytes() =>
         Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories)
