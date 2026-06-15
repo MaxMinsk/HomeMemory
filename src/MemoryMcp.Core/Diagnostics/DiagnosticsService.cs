@@ -31,21 +31,23 @@ public sealed class DiagnosticsService
         var schemaVersion = Convert.ToInt32(Scalar(connection, "PRAGMA user_version;"));
         var noteCount = Convert.ToInt64(Scalar(connection, "SELECT count(*) FROM notes WHERE deleted = 0;"));
         var attachmentCount = Convert.ToInt64(Scalar(connection, "SELECT count(*) FROM attachments;"));
-        var notesByType = CountByType(connection);
+        var notesByType = CountBy(connection, "type");
+        var notesByDomain = CountBy(connection, "domain");
 
         var schemas = _registry.All
             .Select(definition => $"{definition.Type}@{definition.Version}")
             .OrderBy(value => value, StringComparer.Ordinal)
             .ToList();
 
-        return new StatusReport(schemaVersion, schemas, noteCount, notesByType, attachmentCount,
+        return new StatusReport(schemaVersion, schemas, noteCount, notesByType, notesByDomain, attachmentCount,
             _blobs?.TotalBytes() ?? 0, "fts5-bm25 (lexical; no vectors)");
     }
 
-    private static IReadOnlyDictionary<string, long> CountByType(SqliteConnection connection)
+    // column is a fixed identifier ("type"/"domain"), never user input — safe to interpolate.
+    private static IReadOnlyDictionary<string, long> CountBy(SqliteConnection connection, string column)
     {
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT type, count(*) FROM notes WHERE deleted = 0 GROUP BY type ORDER BY type;";
+        command.CommandText = $"SELECT {column}, count(*) FROM notes WHERE deleted = 0 GROUP BY {column} ORDER BY {column};";
         var counts = new Dictionary<string, long>(StringComparer.Ordinal);
         using var reader = command.ExecuteReader();
         while (reader.Read())

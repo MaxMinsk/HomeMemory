@@ -43,7 +43,7 @@
     <div id="filters">
       <input type="text" id="q" placeholder="full-text query" />
       <select id="type"><option value="">any type</option></select>
-      <input type="text" id="domain" placeholder="domain" style="width:90px" />
+      <select id="domain"><option value="">any domain</option></select>
       <input type="text" id="tag" placeholder="tag (e.g. loc:summer-kitchen)" />
       <button onclick="search()">Search</button>
     </div>
@@ -69,8 +69,9 @@ async function loadStats() {
     const s = await api('/api/stats');
     $('#stats').textContent = `${s.noteCount} notes · ` + Object.entries(s.notesByType).map(([k,v])=>`${k} ${v}`).join('  ') +
       `  · ${s.attachmentCount} attach`;
-    const sel = $('#type');
-    Object.keys(s.notesByType).sort().forEach(t => { const o=document.createElement('option'); o.value=t; o.textContent=t; sel.appendChild(o); });
+    const fill = (id, counts) => { const sel=$(id); Object.keys(counts).sort().forEach(k => { const o=document.createElement('option'); o.value=k; o.textContent=`${k} (${counts[k]})`; sel.appendChild(o); }); };
+    fill('#type', s.notesByType);
+    fill('#domain', s.notesByDomain || {});
   } catch(e){ $('#stats').textContent = e.message; }
 }
 

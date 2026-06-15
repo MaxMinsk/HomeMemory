@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.0
+
+- **Fix**: text artifacts (`/artifacts/{id}`) are now served with `charset=utf-8`, so Cyrillic markdown/HTML
+  renders correctly in the browser instead of mojibake.
+- **Domain discovery**: `status` / `/api/stats` now include `notesByDomain`; the viewer's domain filter
+  is a dropdown of existing domains (so it's clear what domains exist and that they differ from tags).
+
 ## 0.7.0
 
 - **`artifacts_delete`** tool: remove an attachment by id; the underlying blob is garbage-collected if

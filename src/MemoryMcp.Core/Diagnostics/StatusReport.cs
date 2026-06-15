@@ -5,10 +5,11 @@ namespace MemoryMcp.Core.Diagnostics;
 /// <param name="RegisteredSchemas">Registered payload schemas as <c>type@version</c> strings.</param>
 /// <param name="NoteCount">Number of live (non-deleted) notes.</param>
 /// <param name="NotesByType">Live note counts grouped by type (e.g. backlog_item, recipe, skill, sprint).</param>
+/// <param name="NotesByDomain">Live note counts grouped by domain (namespace), for discoverability.</param>
 /// <param name="AttachmentCount">Number of attachment rows.</param>
 /// <param name="BlobBytes">Total bytes stored in the content-addressed blob store.</param>
 /// <param name="SearchBackend">A description of the search backend in use.</param>
 public sealed record StatusReport(
     int SchemaVersion, IReadOnlyList<string> RegisteredSchemas, long NoteCount,
-    IReadOnlyDictionary<string, long> NotesByType, long AttachmentCount, long BlobBytes,
-    string SearchBackend);
+    IReadOnlyDictionary<string, long> NotesByType, IReadOnlyDictionary<string, long> NotesByDomain,
+    long AttachmentCount, long BlobBytes, string SearchBackend);

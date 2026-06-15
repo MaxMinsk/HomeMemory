@@ -53,9 +53,20 @@ internal static class ViewerEndpoints
             }
 
             var bytes = blobs.Read(artifact.Sha256);
-            return bytes is null
-                ? Results.NotFound()
-                : Results.File(bytes, artifact.ContentType ?? "application/octet-stream");
+            if (bytes is null)
+            {
+                return Results.NotFound();
+            }
+
+            // Text artifacts are UTF-8; without an explicit charset the browser guesses (Latin-1) and mangles Cyrillic.
+            var contentType = artifact.ContentType ?? "application/octet-stream";
+            if (contentType.StartsWith("text/", StringComparison.OrdinalIgnoreCase)
+                && !contentType.Contains("charset", StringComparison.OrdinalIgnoreCase))
+            {
+                contentType += "; charset=utf-8";
+            }
+
+            return Results.File(bytes, contentType);
         });
     }
 
