@@ -7,6 +7,7 @@
   "properties": {
     "key": { "type": "string", "pattern": "^[A-Z]+-[0-9]{3,}$" },
     "status": { "enum": ["ready", "next", "later", "in_progress", "done", "blocked"] },
+    "assignee": { "type": "string", "description": "Who should act on this, e.g. 'me', 'agent', or a name. Personal-backlog views filter on it (hide agent-owned tasks)." },
     "priority": { "enum": ["low", "normal", "high"] },
     "acceptance": { "type": "string" },
     "estimate": { "type": "string" },

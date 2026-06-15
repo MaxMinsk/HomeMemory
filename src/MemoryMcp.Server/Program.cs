@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using MemoryMcp.Core.Backlog;
 using MemoryMcp.Core.Diagnostics;
 using MemoryMcp.Core.Notes;
@@ -20,6 +21,12 @@ var dbPath = Environment.GetEnvironmentVariable("MEMORY_DB_PATH") ?? "memory.sql
 if (args.Length > 0 && (args[0] == "import-backlog" || args[0] == "export-backlog"))
 {
     RunBacklogCli(args, dbPath);
+    return;
+}
+
+if (args.Length > 0 && args[0] == "push-backlog")
+{
+    await RunPushBacklog(args);
     return;
 }
 
@@ -108,6 +115,69 @@ static void RunBacklogCli(string[] args, string dbPath)
         File.WriteAllText(path, BacklogExporter.Export(repository));
         Console.WriteLine($"Exported backlog to '{path}'.");
     }
+}
+
+static async Task RunPushBacklog(string[] args)
+{
+    if (args.Length < 4)
+    {
+        throw new ArgumentException("Usage: push-backlog <file> <url> <token> [domain]");
+    }
+
+    var file = args[1];
+    var url = args[2];
+    var token = args[3];
+    var domain = args.Length > 4 ? args[4] : "memory-mcp";
+
+    var items = BacklogImporter.Parse(File.ReadAllText(file));
+    using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+    http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+    var id = 1;
+    var ok = 0;
+    var failed = 0;
+    foreach (var item in items)
+    {
+        var payload = JsonSerializer.Serialize(new { key = item.Key, status = item.Status });
+        var arguments = new Dictionary<string, object?>
+        {
+            ["domain"] = domain,
+            ["type"] = "backlog_item",
+            ["title"] = item.Title,
+            ["body"] = string.IsNullOrWhiteSpace(item.Body) ? null : item.Body,
+            ["payload"] = payload,
+            ["dedupKey"] = item.Key,
+            ["sourceAgent"] = "backlog-importer",
+        };
+        var rpc = new
+        {
+            jsonrpc = "2.0",
+            id = id++,
+            method = "tools/call",
+            @params = new { name = "notes_upsert", arguments },
+        };
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(rpc), Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Accept.ParseAdd("application/json");
+        request.Headers.Accept.ParseAdd("text/event-stream");
+
+        using var response = await http.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+        if (response.IsSuccessStatusCode && !body.Contains("\"isError\":true", StringComparison.Ordinal))
+        {
+            ok++;
+        }
+        else
+        {
+            failed++;
+            Console.Error.WriteLine($"{item.Key}: HTTP {(int)response.StatusCode} {body}");
+        }
+    }
+
+    Console.WriteLine($"Pushed {ok} items to {url} (failed {failed}).");
 }
 
 static bool HasValidBearer(HttpContext context, string expected)

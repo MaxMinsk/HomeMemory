@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.4
+
+- `backlog_item` schema gains an optional `assignee` (e.g. `me` / `agent` / a name) so personal-backlog views can hide agent-owned tasks. Additive and backward-compatible.
+
 ## 0.1.3
 
 - Republish (no functional change since 0.1.2). Ensures the stateless `/mcp` build is distributed and gives a clean update to pull.

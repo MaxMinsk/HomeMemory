@@ -41,7 +41,7 @@ public class SchemaRegistryAndValidatorTests
         var validator = new SchemaValidator(SchemaRegistry.FromEmbeddedResources());
 
         var result = validator.Validate("backlog_item",
-            """{ "key": "MEMP-007", "status": "next", "priority": "high" }""");
+            """{ "key": "MEMP-007", "status": "next", "priority": "high", "assignee": "agent" }""");
 
         Assert.True(result.IsValid, string.Join("; ", result.Errors));
     }
