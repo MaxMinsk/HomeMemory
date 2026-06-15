@@ -28,6 +28,7 @@ Internal planning docs (design overview, master plan, M0 detail, backlog) live i
 - **Conventions live in the server, not only in the agents.** Schemas (the hard contract, enforced on write) and skills (the soft craft — naming, units, when to split, how to render) are first-class server-hosted objects, served to agents on demand, so every agent writes a given note type the same way. The server hosts these conventions but never runs an LLM itself; the reasoning happens agent-side, guided by them.
 - **Source of truth is the structured note; human-readable views (markdown/HTML) are derived render artifacts**, produced on create per the record type's skill. A recipe note is strict and structured; its informal human form is a rendered attachment. The same pattern dogfoods the backlog: structured `backlog_item` notes regenerate the flat backlog file.
 - **Soft-delete + append-only `note_events` only.** No hard delete in the tool surface (admin-only, outside MCP).
+- **Link relations are active-voice verbs.** `note_links.rel` reads as a present-tense verb phrase from source → target, in `lower_snake_case` (`uses`, `supersedes`, `depends_on`, `derived_from`, `in_sprint`, `rendered_from`). Enforced at the `notes_link` boundary; document new verbs in the relevant skill.
 - **Auth with domain scoping is mandatory**, not "later". Bearer token + an allowed-domains list per token.
 - **Small tool surface** (~8 in M0). Skills and schemas are loaded via progressive disclosure, never injected wholesale.
 - **Bytes never live in SQLite or pass through the LLM context** — content-addressed blob store; agents get a URI + preview (from M1).
@@ -50,11 +51,11 @@ Detailed, source-cited best-practices for the stack live in `references/` (local
 
 ## Backlog conventions
 
-Task key prefix: **MEMP-NNN** (three or more digits, monotonic, never reused). The backlog lives in `implementation_plan/backlog.md` (gitignored, Russian), organized into **sprints** (see below). It also lives in memory (`domain=memory-mcp`, `type=backlog_item`); once querying it via MCP is as convenient as the file (after the sprint model + search-filter DSL land), memory becomes the single source of truth and the local file is deleted.
+Task key prefix: **MEMP-NNN** (three or more digits, monotonic, never reused). As of MEMP-050 the backlog **lives in memory** (`domain=memory-mcp`, `type=backlog_item`; sprints are `type=sprint`) and is the single source of truth — the old `implementation_plan/backlog.md` was deleted (a pointer file remains).
 
-- Group tasks under their sprint; keep a `Done` section of one-line summaries (strip the detailed body on close — full body/history live in `note_events`). Work beyond the planned sprints goes in `Backlog`.
-- Sprint tasks carry full bodies (title, **Acceptance**, what to do); `Backlog` items are one line each.
-- Versioning follows the sprint cadence (see **Sprints & releases**), not per task.
+- Manage it through MCP: sprint board via `notes_search` with the filter DSL (`payload.sprint == 'S1'`, `payload.sprint is null` for the general backlog); `notes_get`/`notes_upsert` (idempotent by `dedupKey=MEMP-NNN`) to add/move/close.
+- `status` in the DSL is the *envelope* status; a ticket's/sprint's lifecycle status is `payload.status` — filter on that.
+- On close, set `status=done` and keep the title concise (full history lives in `note_events` and git). Versioning follows the sprint cadence (see **Sprints & releases**), not per task.
 
 ## Sprints & releases
 

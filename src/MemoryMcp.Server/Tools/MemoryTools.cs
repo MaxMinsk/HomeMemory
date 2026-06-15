@@ -110,9 +110,14 @@ public sealed class MemoryTools
     public string NotesLink(
         [Description("Source note id")] string fromId,
         [Description("Target note id")] string toId,
-        [Description("Relationship verb")] string rel)
+        [Description("Relationship verb (active-voice lower_snake_case, e.g. uses, depends_on, in_sprint)")] string rel)
         => Translate(() =>
         {
+            if (!RelationName.IsValid(rel))
+            {
+                throw new McpException($"Invalid relation '{rel}': {RelationName.Expectation}.");
+            }
+
             AuthorizeNote(fromId);
             AuthorizeNote(toId);
             _notes.Link(fromId, toId, rel);
