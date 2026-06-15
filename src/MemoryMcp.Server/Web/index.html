@@ -96,7 +96,7 @@ async function open_(id) {
     const n = d.note;
     let payload = ''; try { payload = JSON.stringify(JSON.parse(n.payloadJson), null, 2); } catch { payload = n.payloadJson || ''; }
     const tags = n.tagsJson ? JSON.parse(n.tagsJson) : [];
-    const atts = (d.attachments||[]).map(a => `<li>${esc(a.filename||a.sha256.slice(0,12))} <span class="k">${esc(a.contentType||'')} · ${a.sizeBytes}b · ${esc(a.uri)}</span></li>`).join('');
+    const atts = (d.attachments||[]).map(a => `<li><a href="/artifacts/${a.id}?t=${encodeURIComponent(token)}" target="_blank">${esc(a.filename||a.sha256.slice(0,12))}</a> <span class="k">${esc(a.contentType||'')} · ${a.sizeBytes}b</span></li>`).join('');
     $('#detail').innerHTML =
       `<h2>${esc(n.title)||'<i>untitled</i>'}</h2>` +
       `<div class="m"><span class="badge">${esc(n.type)}</span><span class="badge">${esc(n.domain)}</span>` +

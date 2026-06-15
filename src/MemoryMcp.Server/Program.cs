@@ -65,7 +65,10 @@ if (transport == "http")
             return;
         }
 
-        if (!string.IsNullOrEmpty(token) && !HasValidBearer(context, token))
+        // /artifacts links are opened by the browser, so also accept the token via ?t= there.
+        var artifactToken = context.Request.Path.StartsWithSegments("/artifacts")
+            && string.Equals(context.Request.Query["t"], token, StringComparison.Ordinal);
+        if (!string.IsNullOrEmpty(token) && !artifactToken && !HasValidBearer(context, token))
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
             return;

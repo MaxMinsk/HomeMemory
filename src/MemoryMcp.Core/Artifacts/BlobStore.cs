@@ -60,6 +60,14 @@ public sealed class BlobStore
     /// <summary>True if a blob with this hash is stored.</summary>
     public bool Exists(string sha256) => File.Exists(PathFor(sha256));
 
+    /// <summary>Reads a blob's bytes, or <c>null</c> if it is not stored. For serving to a browser/UI
+    /// (the bytes go to the human, never back through the model context).</summary>
+    public byte[]? Read(string sha256)
+    {
+        var path = PathFor(sha256);
+        return File.Exists(path) ? File.ReadAllBytes(path) : null;
+    }
+
     /// <summary>The on-disk path for a hash (whether or not it exists).</summary>
     public string PathFor(string sha256) => Path.Combine(_root, sha256[..2], sha256[2..4], sha256);
 

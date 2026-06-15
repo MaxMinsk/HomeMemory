@@ -41,6 +41,22 @@ internal static class ViewerEndpoints
                 ? Results.NotFound()
                 : Results.Json(new { note, attachments = artifacts.List(note.Domain, id) });
         });
+
+        // Serve an artifact's bytes to the browser (rendered HTML renders inline, md/text shows as text).
+        // The bytes go to the human, never back through the model context. Auth: bearer header or ?t= token.
+        app.MapGet("/artifacts/{id}", (string id, ArtifactsService artifacts, BlobStore blobs) =>
+        {
+            var artifact = artifacts.Get(id);
+            if (artifact is null)
+            {
+                return Results.NotFound();
+            }
+
+            var bytes = blobs.Read(artifact.Sha256);
+            return bytes is null
+                ? Results.NotFound()
+                : Results.File(bytes, artifact.ContentType ?? "application/octet-stream");
+        });
     }
 
     private static string IndexHtml()
