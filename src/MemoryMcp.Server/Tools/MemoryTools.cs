@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using MemoryMcp.Core.Confirmation;
 using MemoryMcp.Core.Diagnostics;
+using MemoryMcp.Core.Maintenance;
 using MemoryMcp.Core.Notes;
 using MemoryMcp.Core.Query;
 using MemoryMcp.Core.Schemas;
@@ -314,6 +315,14 @@ public sealed class MemoryTools
     [McpServerTool(Name = "tags_list", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
     [Description("List tags (cross-cutting facets) with counts, most-used first — to discover the tag taxonomy.")]
     public IReadOnlyDictionary<string, long> TagsList() => _notes.TagCounts();
+
+    /// <summary>Scans notes for data-quality issues (read-only), within the caller's scope.</summary>
+    [McpServerTool(Name = "notes_lint", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("Scan notes for data-quality issues (no_tags, no_dedup_key, no_title, broken_link) and return findings (noteId/title/domain/type/rule/severity/message). Pass a domain to focus. Read-only — it suggests fixes, changes nothing.")]
+    public IReadOnlyList<LintFinding> NotesLint(
+        [Description("Domain to focus on (optional; default = all in scope)")] string? domain = null,
+        [Description("Max findings (default 200, max 1000)")] int limit = 200)
+        => Translate(() => new NotesLinter(_connectionFactory).Lint(domain, Guard().RestrictionForSearch(domain), limit));
 
     /// <summary>Lists unresolved destructive-action confirmations.</summary>
     [McpServerTool(Name = "pending_actions_list", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
