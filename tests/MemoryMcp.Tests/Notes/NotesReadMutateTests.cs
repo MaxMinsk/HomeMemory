@@ -295,6 +295,25 @@ public class NotesReadMutateTests
         Assert.Contains("\"sprint\":\"S1\"", richHit.PayloadJson!.Replace(" ", string.Empty));
     }
 
+    [Fact]
+    public void Search_includeLinks_attaches_links_only_when_requested()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        var a = Seed(repo, "MEMP-200", "ready");
+        var b = Seed(repo, "MEMP-201", "ready");
+        repo.Link(a, b, "depends_on");
+
+        var lean = repo.Search(domain: "memory-mcp");
+        Assert.All(lean.Items, hit => Assert.Null(hit.Links));
+
+        var rich = repo.Search(domain: "memory-mcp", includeLinks: true);
+        var hitA = Assert.Single(rich.Items, hit => hit.Id == a);
+        var link = Assert.Single(hitA.Links!);
+        Assert.Equal("depends_on", link.Rel);
+        Assert.Equal(b, link.NoteId);
+    }
+
     private static string SeedSprint(NotesRepository repo, string key, string sprint) =>
         repo.Upsert("memory-mcp", "backlog_item", key, null,
             $$"""{ "key": "{{key}}", "status": "ready", "sprint": "{{sprint}}" }""", null, key, "tester").Id;

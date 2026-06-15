@@ -325,11 +325,12 @@ public sealed class NotesReader
     /// <param name="restrictToDomains">When non-null, restricts results to these domains (auth scope); empty yields nothing.</param>
     /// <param name="filter">Optional filter DSL, e.g. <c>payload.sprint == 'S1' AND status == 'ready'</c>.</param>
     /// <param name="includePayload">When true, each hit also carries its envelope status and payload JSON (still no body), so callers can render a board without a follow-up get per row.</param>
+    /// <param name="includeLinks">When true, each hit also carries its links (both directions), so callers can render a graph without a notes_links call per row.</param>
     public SearchPage Search(
         string? query = null, string? domain = null, string? type = null,
         IReadOnlyCollection<string>? tags = null, string status = "active",
         int limit = DefaultLimit, int offset = 0, IReadOnlyCollection<string>? restrictToDomains = null,
-        string? filter = null, bool includePayload = false)
+        string? filter = null, bool includePayload = false, bool includeLinks = false)
     {
         domain = Identifiers.NormalizeOptional(domain);
         type = Identifiers.NormalizeOptional(type);
@@ -343,6 +344,11 @@ public sealed class NotesReader
         using var connection = _connectionFactory.Create();
         var total = Count(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter);
         var items = Page(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload);
+        if (includeLinks)
+        {
+            items = items.Select(item => item with { Links = Links(item.Id) }).ToList();
+        }
+
         return new SearchPage(items, total, offset, limit, offset + items.Count < total);
     }
 
