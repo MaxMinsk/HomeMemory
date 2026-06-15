@@ -11,8 +11,10 @@ namespace MemoryMcp.Core.Diagnostics;
 /// <param name="BlobBytes">Total bytes stored in the content-addressed blob store.</param>
 /// <param name="PendingActionsCount">Number of unresolved destructive-action confirmations awaiting confirm/cancel.</param>
 /// <param name="SearchBackend">A description of the search backend in use.</param>
+/// <param name="ServerVersion">The running server build version (matches the add-on release).</param>
+/// <param name="BlobQuotaBytes">The configured blob-store byte quota (0 = unlimited).</param>
 public sealed record StatusReport(
     int SchemaVersion, IReadOnlyList<string> RegisteredSchemas, long NoteCount,
     IReadOnlyDictionary<string, long> NotesByType, IReadOnlyDictionary<string, long> NotesByDomain,
     IReadOnlyDictionary<string, long> NotesByStatus, long AttachmentCount, long BlobBytes,
-    long PendingActionsCount, string SearchBackend);
+    long PendingActionsCount, string SearchBackend, string ServerVersion, long BlobQuotaBytes);

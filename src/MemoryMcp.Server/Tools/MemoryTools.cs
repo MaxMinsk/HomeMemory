@@ -302,7 +302,7 @@ public sealed class MemoryTools
 
     /// <summary>Returns server/database diagnostics.</summary>
     [McpServerTool(Name = "status", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
-    [Description("Server and database diagnostics: schema version, registered schemas, note counts by type/domain/status, attachments, blob bytes, pending confirmations.")]
+    [Description("Server and database diagnostics: server build version, schema version, registered schemas, note counts by type/domain/status, attachments, blob bytes + quota, pending confirmations. Check serverVersion to confirm which build prod is running.")]
     public StatusReport Status() => _diagnostics.Snapshot();
 
     /// <summary>Lists domains (namespaces) with their note counts.</summary>

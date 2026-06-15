@@ -1,3 +1,4 @@
+using System.Reflection;
 using MemoryMcp.Core.Artifacts;
 using MemoryMcp.Core.Schemas;
 using MemoryMcp.Core.Storage;
@@ -8,6 +9,11 @@ namespace MemoryMcp.Core.Diagnostics;
 /// <summary>Produces a <see cref="StatusReport"/> describing the current database, registry and blob state.</summary>
 public sealed class DiagnosticsService
 {
+    // The build version, from the assembly (set by Directory.Build.props). Strip any "+commit" metadata.
+    private static readonly string ServerVersion =
+        (typeof(DiagnosticsService).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? "0.0.0").Split('+')[0];
+
     private readonly ISqliteConnectionFactory _connectionFactory;
     private readonly SchemaRegistry _registry;
     private readonly BlobStore? _blobs;
@@ -43,7 +49,8 @@ public sealed class DiagnosticsService
             .ToList();
 
         return new StatusReport(schemaVersion, schemas, noteCount, notesByType, notesByDomain, notesByStatus,
-            attachmentCount, _blobs?.TotalBytes() ?? 0, pending, "fts5-bm25 (lexical; no vectors)");
+            attachmentCount, _blobs?.TotalBytes() ?? 0, pending, "fts5-bm25 (lexical; no vectors)",
+            ServerVersion, _blobs?.QuotaBytes ?? 0);
     }
 
     // column is a fixed identifier ("type"/"domain"/"status"), never user input — safe to interpolate.

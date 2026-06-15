@@ -26,6 +26,9 @@ public sealed class BlobStore
         Directory.CreateDirectory(_root);
     }
 
+    /// <summary>The configured byte quota (0 = unlimited).</summary>
+    public long QuotaBytes => _quotaBytes;
+
     /// <summary>Stores content (idempotently) and returns its hash and size; throws if the quota would be exceeded.</summary>
     public BlobRef Put(byte[] content)
     {

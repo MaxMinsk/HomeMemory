@@ -67,4 +67,20 @@ public class JournalAndDiagnosticsTests
         Assert.Equal(1, status.AttachmentCount);
         Assert.Equal(5, status.BlobBytes);
     }
+
+    [Fact]
+    public void Diagnostics_reports_server_version_and_blob_quota()
+    {
+        using var temp = new TempDatabase();
+        using var dir = new TempDir();
+        var factory = new SqliteConnectionFactory(temp.FilePath);
+        new Migrator(factory, SchemaMigrations.All).Migrate();
+        var registry = SchemaRegistry.FromEmbeddedResources();
+        var blobs = new BlobStore(dir.Path, 1_000_000);
+
+        var status = new DiagnosticsService(factory, registry, blobs).Snapshot();
+
+        Assert.Equal(1_000_000, status.BlobQuotaBytes);
+        Assert.Matches(@"^\d+\.\d+\.\d+", status.ServerVersion); // semver from the assembly
+    }
 }
