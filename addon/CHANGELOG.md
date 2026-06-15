@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.14.0
+
+Sprint 7 — read-ergonomics finish, maintenance & viewer (from the Codex 0.12.0 re-review).
+
+- **Viewer v2** (MEMP-071/082): status filter (active by default — archived/superseded hidden until chosen),
+  load-more pagination, deep-link URL state (shareable filters + selected note), and a logout button.
+- **Large-note reads finished**: `notes_outline` headings now include `endOffset` (MEMP-094); the forced
+  server instructions tell agents to peek/slice a big note before pulling the whole body (MEMP-095);
+  `notes_history_event` gains `maxChars` + `fields` (full/before/after/changed) so a huge diff can't flood
+  context in one call (MEMP-093).
+- **Maintenance CLIs** (admin/ops, dry-run by default; `--apply` to write):
+  - `gc-blobs` — deletes content-addressed blobs no attachment references (cleans historical orphans) and
+    reports attachments whose blob is missing (MEMP-091).
+  - `normalize-identifiers` — lowercases existing note domain/type, canonicalizes tags and lowercases
+    attachment domains so legacy data (e.g. `Home`) matches the write-time normalization; collision-aware
+    (MEMP-092).
+
 ## 0.13.0
 
 Sprint 6 — data quality + artifact lifecycle.
