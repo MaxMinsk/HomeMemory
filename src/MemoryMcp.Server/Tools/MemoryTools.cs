@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using MemoryMcp.Core.Diagnostics;
 using MemoryMcp.Core.Notes;
+using MemoryMcp.Core.Query;
 using MemoryMcp.Core.Schemas;
 using MemoryMcp.Core.Security;
 using ModelContextProtocol;
@@ -38,8 +39,9 @@ public sealed class MemoryTools
         [Description("Tags; every supplied tag must be present")] string[]? tags = null,
         [Description("Envelope status filter; defaults to active")] string status = "active",
         [Description("Page size, 1-100 (default 20; larger values are clamped)")] int limit = 20,
-        [Description("Results to skip for pagination (default 0). Use the returned total/hasMore to page.")] int offset = 0)
-        => Translate(() => _notes.Search(query, domain, type, tags, status, limit, offset, Guard().RestrictionForSearch(domain)));
+        [Description("Results to skip for pagination (default 0). Use the returned total/hasMore to page.")] int offset = 0,
+        [Description("Optional filter DSL: field op value joined by AND/OR with parentheses. Fields: domain/type/status/title/... and payload.<x>. Ops: == != in. E.g. \"payload.sprint == 'S1' AND payload.status in ('ready','next')\".")] string? filter = null)
+        => Translate(() => _notes.Search(query, domain, type, tags, status, limit, offset, Guard().RestrictionForSearch(domain), filter));
 
     /// <summary>Gets a full note (envelope + payload) by id, if it is in scope.</summary>
     [McpServerTool(Name = "notes_get", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
@@ -161,6 +163,10 @@ public sealed class MemoryTools
             throw new McpException(exception.Message);
         }
         catch (ScopeForbiddenException exception)
+        {
+            throw new McpException(exception.Message);
+        }
+        catch (FilterException exception)
         {
             throw new McpException(exception.Message);
         }

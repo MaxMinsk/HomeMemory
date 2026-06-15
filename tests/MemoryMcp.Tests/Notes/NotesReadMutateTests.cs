@@ -172,6 +172,28 @@ public class NotesReadMutateTests
         Assert.Equal(1L, Count(c, $"SELECT count(*) FROM note_events WHERE note_id = '{oldId}' AND op = 'supersede';"));
     }
 
+    [Fact]
+    public void Search_filter_dsl_matches_payload_field()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        SeedSprint(repo, "MEMP-700", "S1");
+        SeedSprint(repo, "MEMP-701", "S1");
+        SeedSprint(repo, "MEMP-702", "S2");
+
+        var s1 = repo.Search(type: "backlog_item", filter: "payload.sprint == 'S1'");
+        Assert.Equal(2, s1.Total);
+
+        var combined = repo.Search(filter: "payload.sprint == 'S1' AND payload.status == 'ready'");
+        Assert.Equal(2, combined.Total);
+
+        Assert.Empty(repo.Search(filter: "payload.sprint == 'S9'").Items);
+    }
+
+    private static string SeedSprint(NotesRepository repo, string key, string sprint) =>
+        repo.Upsert("memory-mcp", "backlog_item", key, null,
+            $$"""{ "key": "{{key}}", "status": "ready", "sprint": "{{sprint}}" }""", null, key, "tester").Id;
+
     private static (NotesRepository Repo, SqliteConnectionFactory Factory) NewRepo(TempDatabase temp)
     {
         var factory = new SqliteConnectionFactory(temp.FilePath);

@@ -1,3 +1,4 @@
+using MemoryMcp.Core.Query;
 using MemoryMcp.Core.Storage;
 using Microsoft.Data.Sqlite;
 
@@ -59,10 +60,10 @@ public sealed class NotesReader
     }
 
     /// <summary>
-    /// Paginated search by optional full-text <paramref name="query"/> plus structured filters.
-    /// Returns a bounded page plus <c>total</c>/<c>hasMore</c> so callers paginate instead of pulling
-    /// everything. Text queries include a snippet; the full body is never returned.
-    /// <paramref name="limit"/> is clamped to [1, <see cref="MaxLimit"/>].
+    /// Paginated search by optional full-text <paramref name="query"/>, structured filters, and an
+    /// optional <paramref name="filter"/> DSL. Returns a bounded page plus <c>total</c>/<c>hasMore</c>
+    /// so callers paginate instead of pulling everything. Text queries include a snippet; the full
+    /// body is never returned. <paramref name="limit"/> is clamped to [1, <see cref="MaxLimit"/>].
     /// </summary>
     /// <param name="query">Full-text query; when null/blank, results are structured-only (newest first).</param>
     /// <param name="domain">Optional domain filter.</param>
@@ -72,28 +73,32 @@ public sealed class NotesReader
     /// <param name="limit">Page size, clamped to [1, 100].</param>
     /// <param name="offset">Number of matches to skip (for paging).</param>
     /// <param name="restrictToDomains">When non-null, restricts results to these domains (auth scope); empty yields nothing.</param>
+    /// <param name="filter">Optional filter DSL, e.g. <c>payload.sprint == 'S1' AND status == 'ready'</c>.</param>
     public SearchPage Search(
         string? query = null, string? domain = null, string? type = null,
         IReadOnlyCollection<string>? tags = null, string status = "active",
-        int limit = DefaultLimit, int offset = 0, IReadOnlyCollection<string>? restrictToDomains = null)
+        int limit = DefaultLimit, int offset = 0, IReadOnlyCollection<string>? restrictToDomains = null,
+        string? filter = null)
     {
         limit = Math.Clamp(limit, 1, MaxLimit);
         offset = Math.Max(0, offset);
         var tokens = string.IsNullOrWhiteSpace(query) ? new List<string>() : SnippetBuilder.Tokenize(query!);
         var useFts = tokens.Count > 0;
+        var compiledFilter = string.IsNullOrWhiteSpace(filter) ? null : NoteFilter.Compile(filter!);
 
         using var connection = _connectionFactory.Create();
-        var total = Count(connection, useFts, tokens, domain, type, tags, status, restrictToDomains);
-        var items = Page(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, limit, offset);
+        var total = Count(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter);
+        var items = Page(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset);
         return new SearchPage(items, total, offset, limit, offset + items.Count < total);
     }
 
     private static int Count(
         SqliteConnection connection, bool useFts, IReadOnlyList<string> tokens,
-        string? domain, string? type, IReadOnlyCollection<string>? tags, string status, IReadOnlyCollection<string>? restrictToDomains)
+        string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
+        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter)
     {
         using var command = connection.CreateCommand();
-        var where = ApplyFilters(command, useFts, tokens, domain, type, tags, status, restrictToDomains);
+        var where = ApplyFilters(command, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter);
         command.CommandText = useFts
             ? $"SELECT count(*) FROM notes_fts JOIN notes n ON n.rowid = notes_fts.rowid WHERE {where};"
             : $"SELECT count(*) FROM notes n WHERE {where};";
@@ -102,11 +107,11 @@ public sealed class NotesReader
 
     private static IReadOnlyList<SearchResult> Page(
         SqliteConnection connection, bool useFts, IReadOnlyList<string> tokens,
-        string? domain, string? type, IReadOnlyCollection<string>? tags, string status, IReadOnlyCollection<string>? restrictToDomains,
-        int limit, int offset)
+        string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
+        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, int limit, int offset)
     {
         using var command = connection.CreateCommand();
-        var where = ApplyFilters(command, useFts, tokens, domain, type, tags, status, restrictToDomains);
+        var where = ApplyFilters(command, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter);
         command.Parameters.AddWithValue("$limit", limit);
         command.Parameters.AddWithValue("$offset", offset);
         command.CommandText = useFts
@@ -137,7 +142,8 @@ public sealed class NotesReader
     // Binds all filter parameters to the command and returns the shared WHERE clause (reused by Count + Page).
     private static string ApplyFilters(
         SqliteCommand command, bool useFts, IReadOnlyList<string> tokens,
-        string? domain, string? type, IReadOnlyCollection<string>? tags, string status, IReadOnlyCollection<string>? restrictToDomains)
+        string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
+        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter)
     {
         var filters = new List<string>();
 
@@ -193,6 +199,15 @@ public sealed class NotesReader
                 }
 
                 filters.Add($"n.domain IN ({string.Join(", ", placeholders)})");
+            }
+        }
+
+        if (compiledFilter is not null)
+        {
+            filters.Add(compiledFilter.Sql);
+            foreach (var parameter in compiledFilter.Parameters)
+            {
+                command.Parameters.AddWithValue(parameter.Name, parameter.Value);
             }
         }
 
