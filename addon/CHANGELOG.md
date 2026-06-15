@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0
+
+- **Search filter DSL**: `notes_search` gains a `filter` parameter — small, safe expressions
+  (`field op value` joined by `AND`/`OR` with parentheses; operators `== != in`) over envelope
+  fields and `payload.<x>`, e.g. `payload.sprint == 'S1' AND payload.status in ('ready','next')`.
+  Values are always parameterized; field names are whitelisted/validated (no SQL injection).
+- **Sprint model**: new `sprint@1` note type (key/goal/status/version_target/dates) and an optional
+  `sprint` field on `backlog_item` (empty = not part of a sprint). Additive and backward-compatible.
+- Internal (no runtime behavior change): added Meziantou.Analyzer with ReDoS-hardened regexes and
+  smaller methods; SQLite connection tidy-up (`Foreign Keys` keyword, `synchronous=NORMAL`); test
+  suite split into fast/integration with `FakeTimeProvider`; English-only CI gate; README + ADRs.
+
 ## 0.1.6
 
 - Read tools (`notes_search`/`notes_get`, `schema_list_types`, `status`) return **structured content** (typed output schema) and carry behavioral hints (read-only / idempotent / non-destructive) so clients use them correctly.
