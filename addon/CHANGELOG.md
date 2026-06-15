@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0
+
+- **Read-only web viewer** at `/ui` (also the add-on's "Open Web UI" button): paste the bearer once,
+  then filter notes by type/domain/tag or full-text and open a note to see its structured payload,
+  body and attachments. Backed by a small JSON API (`/api/stats`, `/api/search`, `/api/notes/{id}`).
+- **Artifacts as browser links**: `GET /artifacts/{id}` serves a stored artifact's bytes with its
+  content-type — a rendered recipe HTML opens in the browser, markdown shows as text. Authenticated by
+  the bearer (header or `?t=<token>` so plain links work); the bytes go to the browser, never through
+  an agent's context. (Signed capability URLs with TTL/revoke remain a later enhancement.)
+
 ## 0.4.0
 
 - **Artifacts / files**: content-addressed blob store + `attachments` and the `artifacts_put` /
