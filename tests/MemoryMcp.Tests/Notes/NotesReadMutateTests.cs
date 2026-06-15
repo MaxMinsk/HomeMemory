@@ -190,6 +190,24 @@ public class NotesReadMutateTests
         Assert.Empty(repo.Search(filter: "payload.sprint == 'S9'").Items);
     }
 
+    [Fact]
+    public void Search_includePayload_returns_status_and_payload_only_when_requested()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        SeedSprint(repo, "MEMP-700", "S1");
+
+        var lean = repo.Search(type: "backlog_item");
+        var leanHit = Assert.Single(lean.Items);
+        Assert.Null(leanHit.Status);
+        Assert.Null(leanHit.PayloadJson);
+
+        var rich = repo.Search(type: "backlog_item", includePayload: true);
+        var richHit = Assert.Single(rich.Items);
+        Assert.Equal("active", richHit.Status);          // envelope status
+        Assert.Contains("\"sprint\":\"S1\"", richHit.PayloadJson!.Replace(" ", string.Empty));
+    }
+
     private static string SeedSprint(NotesRepository repo, string key, string sprint) =>
         repo.Upsert("memory-mcp", "backlog_item", key, null,
             $$"""{ "key": "{{key}}", "status": "ready", "sprint": "{{sprint}}" }""", null, key, "tester").Id;

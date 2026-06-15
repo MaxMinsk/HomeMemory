@@ -57,6 +57,6 @@ public sealed class NotesRepository
         string? query = null, string? domain = null, string? type = null,
         IReadOnlyCollection<string>? tags = null, string status = "active",
         int limit = NotesReader.DefaultLimit, int offset = 0, IReadOnlyCollection<string>? restrictToDomains = null,
-        string? filter = null)
-        => _reader.Search(query, domain, type, tags, status, limit, offset, restrictToDomains, filter);
+        string? filter = null, bool includePayload = false)
+        => _reader.Search(query, domain, type, tags, status, limit, offset, restrictToDomains, filter, includePayload);
 }

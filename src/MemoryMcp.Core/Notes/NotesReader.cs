@@ -93,11 +93,12 @@ public sealed class NotesReader
     /// <param name="offset">Number of matches to skip (for paging).</param>
     /// <param name="restrictToDomains">When non-null, restricts results to these domains (auth scope); empty yields nothing.</param>
     /// <param name="filter">Optional filter DSL, e.g. <c>payload.sprint == 'S1' AND status == 'ready'</c>.</param>
+    /// <param name="includePayload">When true, each hit also carries its envelope status and payload JSON (still no body), so callers can render a board without a follow-up get per row.</param>
     public SearchPage Search(
         string? query = null, string? domain = null, string? type = null,
         IReadOnlyCollection<string>? tags = null, string status = "active",
         int limit = DefaultLimit, int offset = 0, IReadOnlyCollection<string>? restrictToDomains = null,
-        string? filter = null)
+        string? filter = null, bool includePayload = false)
     {
         limit = Math.Clamp(limit, 1, MaxLimit);
         offset = Math.Max(0, offset);
@@ -107,7 +108,7 @@ public sealed class NotesReader
 
         using var connection = _connectionFactory.Create();
         var total = Count(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter);
-        var items = Page(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset);
+        var items = Page(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload);
         return new SearchPage(items, total, offset, limit, offset + items.Count < total);
     }
 
@@ -127,17 +128,19 @@ public sealed class NotesReader
     private static IReadOnlyList<SearchResult> Page(
         SqliteConnection connection, bool useFts, IReadOnlyList<string> tokens,
         string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
-        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, int limit, int offset)
+        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, int limit, int offset, bool includePayload)
     {
         using var command = connection.CreateCommand();
         var where = ApplyFilters(command, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter);
         command.Parameters.AddWithValue("$limit", limit);
         command.Parameters.AddWithValue("$offset", offset);
+        // status + payload_json are always selected (cheap); they reach the caller only when includePayload is set.
+        const string columns = "n.id, n.title, n.type, n.domain, n.body, {0} AS score, n.status, n.payload_json";
         command.CommandText = useFts
-            ? "SELECT n.id, n.title, n.type, n.domain, n.body, bm25(notes_fts) AS score " +
+            ? $"SELECT {string.Format(System.Globalization.CultureInfo.InvariantCulture, columns, "bm25(notes_fts)")} " +
               $"FROM notes_fts JOIN notes n ON n.rowid = notes_fts.rowid WHERE {where} " +
               "ORDER BY score LIMIT $limit OFFSET $offset;"
-            : "SELECT n.id, n.title, n.type, n.domain, n.body, 0.0 AS score " +
+            : $"SELECT {string.Format(System.Globalization.CultureInfo.InvariantCulture, columns, "0.0")} " +
               $"FROM notes n WHERE {where} ORDER BY n.updated_utc DESC LIMIT $limit OFFSET $offset;";
 
         var results = new List<SearchResult>();
@@ -152,7 +155,9 @@ public sealed class NotesReader
                 useFts ? SnippetBuilder.Build(title, body, tokens) : null,
                 reader.GetString(2),
                 reader.GetString(3),
-                reader.GetDouble(5)));
+                reader.GetDouble(5),
+                includePayload ? reader.GetString(6) : null,
+                includePayload && !reader.IsDBNull(7) ? reader.GetString(7) : null));
         }
 
         return results;
