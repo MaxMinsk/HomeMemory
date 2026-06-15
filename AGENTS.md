@@ -50,11 +50,19 @@ Detailed, source-cited best-practices for the stack live in `references/` (local
 
 ## Backlog conventions
 
-Task key prefix: **MEMP-NNN** (three or more digits, monotonic, never reused). The backlog currently lives in `implementation_plan/backlog.md` (gitignored, Russian) and migrates into memory itself (`domain=memory-mcp`, `type=backlog_item`) after M0, then is driven via MCP tools.
+Task key prefix: **MEMP-NNN** (three or more digits, monotonic, never reused). The backlog lives in `implementation_plan/backlog.md` (gitignored, Russian), organized into **sprints** (see below). It also lives in memory (`domain=memory-mcp`, `type=backlog_item`); once querying it via MCP is as convenient as the file (after the sprint model + search-filter DSL land), memory becomes the single source of truth and the local file is deleted.
 
-- On closing a task: move it to `Done` as a one-line summary and remove its detailed body from `Ready`/`Next`/`Later`. (After the migration to memory, the full body and history live in `note_events`, so this stripping rule relaxes.)
-- `Ready`/`Next` carry full bodies (title, **Acceptance**, what to do); `Later` is one line each plus a phase tag `[M1]`/`[M2]`/`[M3]`.
-- Do not bump add-on or release versions without an explicit request.
+- Group tasks under their sprint; keep a `Done` section of one-line summaries (strip the detailed body on close — full body/history live in `note_events`). Work beyond the planned sprints goes in `Backlog`.
+- Sprint tasks carry full bodies (title, **Acceptance**, what to do); `Backlog` items are one line each.
+- Versioning follows the sprint cadence (see **Sprints & releases**), not per task.
+
+## Sprints & releases
+
+Work proceeds in **sprints**. A sprint is a first-class note (`type=sprint`, schema `sprint@1`) with a goal, status and a target add-on version; tickets opt into a sprint via an optional `sprint` field on `backlog_item` (unset = general backlog, not in any sprint). The plan is kept ~3 sprints ahead.
+
+- **Within a sprint:** normal commits, **no version bump**.
+- **At sprint end:** bump the add-on version once, release to GHCR, then **verify in prod**. Only after prod verification do we open the next sprint.
+- The release procedure itself will move into memory as a skill (and later a vetted script) so any agent releases the same way.
 
 ## Decisions (ADR)
 
