@@ -6,7 +6,11 @@ implementation_plan/
 bin/
 obj/
 *.user
+
+# IDE
 .vs/
+.idea/
+*.DotSettings.user
 
 # Local database & WAL sidecars
 *.sqlite
