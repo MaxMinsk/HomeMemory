@@ -87,6 +87,19 @@ public sealed class MemoryTools
         return note is not null && Guard().IsAllowed(note.Domain) ? _notes.Outline(id) : null;
     }
 
+    /// <summary>Finds a substring within one note's body (case-insensitive), if it is in scope.</summary>
+    [McpServerTool(Name = "notes_find", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("Find a substring within ONE note's body (case-insensitive), like ripgrep on a file: returns each match's character offset and a surrounding context window, plus matchCount/truncated. Use a match's offset with notes_read to read around it — avoids pulling the whole body to locate something.")]
+    public NoteFindResult? NotesFind(
+        [Description("Note id")] string id,
+        [Description("Substring to search for")] string query,
+        [Description("Characters of context each side of a match (default 80, max 500)")] int contextChars = NotesReader.DefaultContextChars,
+        [Description("Max matches to return (default 10, max 100)")] int limit = NotesReader.DefaultFindMatches)
+    {
+        var note = _notes.Get(id);
+        return note is not null && Guard().IsAllowed(note.Domain) ? _notes.Find(id, query, contextChars, limit) : null;
+    }
+
     /// <summary>Creates or updates a note, validating the payload against the type schema.</summary>
     [McpServerTool(Name = "notes_upsert", Destructive = false, Idempotent = true, UseStructuredContent = true)]
     [Description("Create or update a note by (domain, type, dedup_key). Validates payload against the type schema.")]

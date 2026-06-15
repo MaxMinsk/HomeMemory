@@ -93,6 +93,48 @@ public class NotesPartialReadTests
         Assert.Equal("real", heading.Text);
     }
 
+    [Fact]
+    public void Find_locates_matches_with_offset_and_context()
+    {
+        using var temp = new TempDatabase();
+        var repo = NewRepo(temp);
+        var id = Seed(repo, body: "the quick brown fox jumps over the lazy dog");
+
+        var result = repo.Find(id, "the", contextChars: 3);
+        Assert.Equal(2, result!.MatchCount);                 // "the" at start and before "lazy"
+        Assert.False(result.Truncated);
+        Assert.Equal(0, result.Matches[0].Offset);
+
+        // The offset addresses the match; reading there returns the matched text.
+        var at = repo.ReadBody(id, result.Matches[1].Offset, 3);
+        Assert.Equal("the", at!.Content);
+        Assert.Contains("the", result.Matches[0].Context, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Find_is_case_insensitive_and_reports_truncation()
+    {
+        using var temp = new TempDatabase();
+        var repo = NewRepo(temp);
+        var id = Seed(repo, body: "Aa aA aa AA");
+
+        var result = repo.Find(id, "aa", limit: 2);
+        Assert.Equal(4, result!.MatchCount);   // all case variants match
+        Assert.Equal(2, result.Matches.Count); // capped at the limit
+        Assert.True(result.Truncated);
+    }
+
+    [Fact]
+    public void Find_empty_query_and_missing_note()
+    {
+        using var temp = new TempDatabase();
+        var repo = NewRepo(temp);
+        var id = Seed(repo, body: "content");
+
+        Assert.Equal(0, repo.Find(id, "")!.MatchCount);
+        Assert.Null(repo.Find("nope", "x"));
+    }
+
     private static NotesRepository NewRepo(TempDatabase temp)
     {
         var factory = new SqliteConnectionFactory(temp.FilePath);

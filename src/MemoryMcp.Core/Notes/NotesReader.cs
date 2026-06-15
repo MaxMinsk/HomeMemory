@@ -19,6 +19,12 @@ public sealed class NotesReader
     /// <summary>Largest body slice a single <see cref="ReadBody"/> may return.</summary>
     public const int MaxReadChars = 20000;
 
+    /// <summary>Default characters of context on each side of an in-note <see cref="Find"/> match.</summary>
+    public const int DefaultContextChars = 80;
+
+    /// <summary>Default number of matches a single <see cref="Find"/> returns.</summary>
+    public const int DefaultFindMatches = 10;
+
     private readonly ISqliteConnectionFactory _connectionFactory;
 
     /// <summary>Creates a reader over the given database.</summary>
@@ -107,6 +113,49 @@ public sealed class NotesReader
         var content = body.Substring(start, end - start);
         var truncated = end < total;
         return new NoteReadSlice(id, content, start, content.Length, total, truncated, truncated ? end : null, note.UpdatedUtc);
+    }
+
+    /// <summary>
+    /// Finds occurrences of <paramref name="query"/> in a note's body (case-insensitive), each with a
+    /// surrounding context window and offset — so a caller can locate and read just the relevant parts of a
+    /// large note. Returns <c>null</c> only when the note is missing.
+    /// </summary>
+    /// <param name="id">The note id.</param>
+    /// <param name="query">Substring to search for; empty yields no matches.</param>
+    /// <param name="contextChars">Characters of context each side of a match (clamped to [0, 500]).</param>
+    /// <param name="limit">Max matches to return (clamped to [1, 100]); more set <c>Truncated</c>.</param>
+    public NoteFindResult? Find(string id, string query, int contextChars = DefaultContextChars, int limit = DefaultFindMatches)
+    {
+        var note = Get(id);
+        if (note is null)
+        {
+            return null;
+        }
+
+        var body = note.Body ?? string.Empty;
+        var matches = new List<NoteMatch>();
+        var count = 0;
+        if (!string.IsNullOrEmpty(query) && query.Length <= body.Length)
+        {
+            var context = Math.Clamp(contextChars, 0, 500);
+            var max = Math.Clamp(limit, 1, 100);
+            var pos = 0;
+            int idx;
+            while (pos <= body.Length - query.Length && (idx = body.IndexOf(query, pos, StringComparison.OrdinalIgnoreCase)) >= 0)
+            {
+                count++;
+                if (matches.Count < max)
+                {
+                    var start = Math.Max(0, idx - context);
+                    var end = Math.Min(body.Length, idx + query.Length + context);
+                    matches.Add(new NoteMatch(idx, body.Substring(start, end - start)));
+                }
+
+                pos = idx + query.Length;
+            }
+        }
+
+        return new NoteFindResult(id, query, body.Length, count, count > matches.Count, matches, note.UpdatedUtc);
     }
 
     /// <summary>Returns the Markdown heading map of a note's body (for section reads), or <c>null</c> if missing.</summary>

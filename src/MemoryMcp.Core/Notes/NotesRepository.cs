@@ -80,6 +80,10 @@ public sealed class NotesRepository
     /// <inheritdoc cref="NotesReader.Outline"/>
     public NoteOutline? Outline(string id) => _reader.Outline(id);
 
+    /// <inheritdoc cref="NotesReader.Find"/>
+    public NoteFindResult? Find(string id, string query, int contextChars = NotesReader.DefaultContextChars, int limit = NotesReader.DefaultFindMatches)
+        => _reader.Find(id, query, contextChars, limit);
+
     /// <inheritdoc cref="NotesReader.GetByDedupKey"/>
     public Note? GetByDedupKey(string domain, string type, string dedupKey) => _reader.GetByDedupKey(domain, type, dedupKey);
 
