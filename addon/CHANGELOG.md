@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.0
+
+- **`artifacts_url`**: returns a temporary signed URL (default ~1 day, no bearer in it) to open or validate
+  an artifact in a browser — bytes still never pass through the model context. New `public_base_url`
+  add-on option makes these URLs absolute (shareable).
+- **Find notes by key**: full-text search now indexes `dedup_key`, so searching "072" or "MEMP-072"
+  finds the ticket whose key is `MEMP-072` (previously the key wasn't searchable).
+
 ## 0.9.0
 
 Reliability & multi-agent hardening (from two product reviews).

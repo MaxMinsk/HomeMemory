@@ -16,5 +16,10 @@ if bashio::config.has_value 'allowed_domains'; then
   export MEMORY_ALLOWED_DOMAINS="$(bashio::config 'allowed_domains')"
 fi
 
+# Public origin (e.g. https://memory.kazmin.tech) so artifacts_url returns absolute, shareable links.
+if bashio::config.has_value 'public_base_url'; then
+  export MEMORY_PUBLIC_BASE_URL="$(bashio::config 'public_base_url')"
+fi
+
 bashio::log.info "Starting Memory MCP (HTTP on :8099, db=${MEMORY_DB_PATH})"
 exec /opt/memory-mcp/MemoryMcp.Server

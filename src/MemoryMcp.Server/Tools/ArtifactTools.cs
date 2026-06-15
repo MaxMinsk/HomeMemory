@@ -23,13 +23,15 @@ public sealed class ArtifactTools
 {
     private readonly ArtifactsService _artifacts;
     private readonly IScopeAccessor _scope;
+    private readonly ArtifactUrlSigner _signer;
     private readonly string? _ingestRoot;
 
-    /// <summary>Creates the artifact tools over the service, scope accessor and ingest options.</summary>
-    public ArtifactTools(ArtifactsService artifacts, IScopeAccessor scope, ArtifactIngestOptions options)
+    /// <summary>Creates the artifact tools over the service, scope accessor, URL signer and ingest options.</summary>
+    public ArtifactTools(ArtifactsService artifacts, IScopeAccessor scope, ArtifactUrlSigner signer, ArtifactIngestOptions options)
     {
         _artifacts = artifacts;
         _scope = scope;
+        _signer = signer;
         _ingestRoot = options.IngestRoot;
     }
 
@@ -58,6 +60,19 @@ public sealed class ArtifactTools
     {
         var artifact = _artifacts.Get(id);
         return artifact is not null && Guard().IsAllowed(artifact.Domain) ? artifact : null;
+    }
+
+    /// <summary>Returns a temporary signed URL to open/validate an artifact in a browser (no bearer in it).</summary>
+    [McpServerTool(Name = "artifacts_url", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("Get a temporary signed URL (default ~1 day) to open/download an artifact in a browser. The URL carries no bearer — hand it to a human or open it to view/validate. Returns null if not found/out of scope.")]
+    public string? ArtifactsUrl(
+        [Description("Artifact id")] string id,
+        [Description("Lifetime in seconds (default 86400 = 1 day; capped at 7 days)")] int? ttlSeconds = null)
+    {
+        var artifact = _artifacts.Get(id);
+        return artifact is not null && Guard().IsAllowed(artifact.Domain)
+            ? _signer.BuildUrl(id, ttlSeconds ?? 86400)
+            : null;
     }
 
     /// <summary>Deletes an artifact by id (and GCs its blob if unreferenced), if in scope.</summary>

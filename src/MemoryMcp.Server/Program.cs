@@ -182,7 +182,8 @@ static void RegisterServices(IServiceCollection services, string dbPath)
     services.AddSingleton<ArtifactsService>();
     services.AddSingleton(new ArtifactIngestOptions(Environment.GetEnvironmentVariable("MEMORY_INGEST_ROOT")));
     services.AddSingleton(provider => new ArtifactUrlSigner(
-        Environment.GetEnvironmentVariable("MEMORY_BEARER_TOKEN"), provider.GetRequiredService<TimeProvider>()));
+        Environment.GetEnvironmentVariable("MEMORY_BEARER_TOKEN"), provider.GetRequiredService<TimeProvider>(),
+        Environment.GetEnvironmentVariable("MEMORY_PUBLIC_BASE_URL")));
     services.AddSingleton<DiagnosticsService>();
 }
 

@@ -1,5 +1,5 @@
 name: Memory MCP
-version: "0.9.0"
+version: "0.10.0"
 slug: memory_mcp
 description: Shared memory / notes / skills data-plane (MCP) for Home Assistant agents.
 url: https://github.com/MaxMinsk/HomeMemory/tree/main/addon
@@ -20,8 +20,10 @@ options:
   bearer_token: ""
   allowed_domains: ""
   log_level: "Information"
+  public_base_url: ""
 schema:
   db_path: str
   bearer_token: password?
   allowed_domains: str?
   log_level: list(Trace|Debug|Information|Warning|Error)
+  public_base_url: str?

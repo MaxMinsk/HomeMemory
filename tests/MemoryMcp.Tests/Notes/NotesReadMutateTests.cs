@@ -64,6 +64,19 @@ public class NotesReadMutateTests
     }
 
     [Fact]
+    public void Search_finds_note_by_its_dedup_key()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        // Title deliberately omits the key; the key lives only in dedup_key/payload.
+        repo.Upsert("memory-mcp", "backlog_item", "A structured-inputs task", null,
+            """{ "key": "MEMP-072", "status": "next" }""", null, "MEMP-072", "me");
+
+        Assert.Single(repo.Search(query: "072").Items);        // key token, via the FTS dedup_key column
+        Assert.Single(repo.Search(query: "MEMP-072").Items);
+    }
+
+    [Fact]
     public void Search_filters_by_domain_and_type()
     {
         using var temp = new TempDatabase();
