@@ -6,6 +6,7 @@ using MemoryMcp.Core.Diagnostics;
 using MemoryMcp.Core.Notes;
 using MemoryMcp.Core.Schemas;
 using MemoryMcp.Core.Security;
+using MemoryMcp.Core.Skills;
 using MemoryMcp.Core.Storage;
 using MemoryMcp.Server.Security;
 using MemoryMcp.Server.Tools;
@@ -36,7 +37,8 @@ if (transport == "http")
     RegisterServices(builder.Services, dbPath);
     builder.Services.AddHttpContextAccessor();
     builder.Services.AddSingleton<IScopeAccessor, HttpScopeAccessor>();
-    builder.Services.AddMcpServer().WithHttpTransport(options => options.Stateless = true).WithTools<MemoryTools>();
+    builder.Services.AddMcpServer().WithHttpTransport(options => options.Stateless = true)
+        .WithTools<MemoryTools>().WithTools<SkillTools>();
 
     var app = builder.Build();
     Bootstrap(app.Services);
@@ -72,7 +74,8 @@ else
 
     RegisterServices(builder.Services, dbPath);
     builder.Services.AddSingleton<IScopeAccessor, TrustedScopeAccessor>(); // local stdio is trusted
-    builder.Services.AddMcpServer().WithStdioServerTransport().WithTools<MemoryTools>();
+    builder.Services.AddMcpServer().WithStdioServerTransport()
+        .WithTools<MemoryTools>().WithTools<SkillTools>();
 
     var app = builder.Build();
     Bootstrap(app.Services);
@@ -85,6 +88,7 @@ static void RegisterServices(IServiceCollection services, string dbPath)
     services.AddSingleton<ISqliteConnectionFactory>(new SqliteConnectionFactory(dbPath));
     services.AddSingleton(SchemaRegistry.FromEmbeddedResources());
     services.AddSingleton<NotesRepository>();
+    services.AddSingleton<SkillsService>();
     services.AddSingleton<DiagnosticsService>();
 }
 

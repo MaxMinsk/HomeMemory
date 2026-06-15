@@ -4,6 +4,7 @@ using MemoryMcp.Core.Notes;
 using MemoryMcp.Core.Query;
 using MemoryMcp.Core.Schemas;
 using MemoryMcp.Core.Security;
+using MemoryMcp.Core.Skills;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
 
@@ -19,14 +20,16 @@ public sealed class MemoryTools
     private readonly SchemaRegistry _schemas;
     private readonly DiagnosticsService _diagnostics;
     private readonly IScopeAccessor _scope;
+    private readonly SkillsService _skills;
 
-    /// <summary>Creates the tool set over the repository, registry, diagnostics and scope accessor.</summary>
-    public MemoryTools(NotesRepository notes, SchemaRegistry schemas, DiagnosticsService diagnostics, IScopeAccessor scope)
+    /// <summary>Creates the tool set over the repository, registry, diagnostics, scope accessor and skills.</summary>
+    public MemoryTools(NotesRepository notes, SchemaRegistry schemas, DiagnosticsService diagnostics, IScopeAccessor scope, SkillsService skills)
     {
         _notes = notes;
         _schemas = schemas;
         _diagnostics = diagnostics;
         _scope = scope;
+        _skills = skills;
     }
 
     /// <summary>Searches notes by optional full-text query plus structured filters (scope-restricted, paginated).</summary>
@@ -64,11 +67,28 @@ public sealed class MemoryTools
         [Description("Tags as a JSON array string")] string? tags = null,
         [Description("Stable upsert key (e.g. MEMP-001)")] string? dedupKey = null,
         [Description("Who is writing (provenance)")] string? sourceAgent = null)
-        => Translate(() =>
+    {
+        try
         {
             Guard().Authorize(domain);
             return _notes.Upsert(domain, type, title, body, payload, tags, dedupKey, sourceAgent ?? "mcp");
-        });
+        }
+        catch (NoteValidationException exception)
+        {
+            // On a schema miss, point the model at any skill that teaches how to author this type.
+            throw new McpException(exception.Message + SkillHint(domain, type));
+        }
+        catch (ScopeForbiddenException exception)
+        {
+            throw new McpException(exception.Message);
+        }
+    }
+
+    private string SkillHint(string domain, string type)
+    {
+        var keys = _skills.List(domain, type).Select(skill => skill.Key).ToArray();
+        return keys.Length == 0 ? string.Empty : $" Guidance available — call skill_get for: {string.Join(", ", keys)}.";
+    }
 
     /// <summary>Appends a schema-less free-text journal note (capture-first).</summary>
     [McpServerTool(Name = "notes_append_journal", Destructive = false)]

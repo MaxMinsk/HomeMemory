@@ -1,0 +1,13 @@
+{
+  "$id": "skill@1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["key", "version"],
+  "additionalProperties": false,
+  "properties": {
+    "key": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+    "target_type": { "type": "string", "description": "Note type this skill teaches how to author (e.g. recipe, backlog_item). Unset = general guidance." },
+    "version": { "type": "integer", "minimum": 1 },
+    "summary": { "type": "string", "description": "One-line description of what the skill teaches." }
+  }
+}

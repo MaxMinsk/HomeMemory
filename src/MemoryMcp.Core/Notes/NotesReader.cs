@@ -33,6 +33,25 @@ public sealed class NotesReader
         return reader.Read() ? NoteRowMapper.Map(reader) : null;
     }
 
+    /// <summary>Returns the active note for (domain, type, dedupKey), or <c>null</c>. Key-addressed lookup (e.g. skills).</summary>
+    /// <param name="domain">Domain filter.</param>
+    /// <param name="type">Type filter.</param>
+    /// <param name="dedupKey">Stable upsert key.</param>
+    public Note? GetByDedupKey(string domain, string type, string dedupKey)
+    {
+        using var connection = _connectionFactory.Create();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            $"SELECT {NoteRowMapper.Columns} FROM notes " +
+            "WHERE domain = $d AND type = $t AND dedup_key = $k AND deleted = 0 AND status = 'active' LIMIT 1;";
+        command.Parameters.AddWithValue("$d", domain);
+        command.Parameters.AddWithValue("$t", type);
+        command.Parameters.AddWithValue("$k", dedupKey);
+
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? NoteRowMapper.Map(reader) : null;
+    }
+
     /// <summary>Lists full notes for a domain/type (active, non-deleted), newest first.</summary>
     /// <param name="domain">Domain filter.</param>
     /// <param name="type">Type filter.</param>

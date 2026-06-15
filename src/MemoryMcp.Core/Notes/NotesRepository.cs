@@ -46,6 +46,9 @@ public sealed class NotesRepository
     /// <inheritdoc cref="NotesReader.Get"/>
     public Note? Get(string id) => _reader.Get(id);
 
+    /// <inheritdoc cref="NotesReader.GetByDedupKey"/>
+    public Note? GetByDedupKey(string domain, string type, string dedupKey) => _reader.GetByDedupKey(domain, type, dedupKey);
+
     /// <inheritdoc cref="NotesReader.List"/>
     public IReadOnlyList<Note> List(string domain, string type, int limit = 1000) => _reader.List(domain, type, limit);
 
