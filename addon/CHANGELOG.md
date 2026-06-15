@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.0
+
+- **Server-hosted skills**: new `skill_upsert` / `skill_list` / `skill_get` tools and a `skill@1` type.
+  Skills are shared guidance for how to author each note type; when an `notes_upsert` fails schema
+  validation, the error now points at any skill that teaches that type (`skill_hint`).
+- **Two-phase confirmation for destructive actions**: `notes_archive` and `notes_supersede` no longer
+  apply immediately — they return a confirmation token; call `notes_confirm` to apply it (executed at
+  most once via compare-and-swap) or `notes_cancel` to drop it. The `pending_actions` table is the audit trail.
+- **Search**: `notes_search` gains `includePayload` — each hit can carry its status and payload JSON
+  (still no body), so a board renders without a follow-up `notes_get` per row.
+- **Filter DSL**: supports `is null` / `is not null`, e.g. `payload.sprint is null` for the general backlog.
+- **Link relations** are validated as active-voice `lower_snake_case` verbs at the `notes_link` boundary.
+- Internal: expected, model-visible errors (bad input, out-of-scope, invalid filter) are no longer logged
+  as server faults with stack traces.
+
 ## 0.2.0
 
 - **Search filter DSL**: `notes_search` gains a `filter` parameter — small, safe expressions
