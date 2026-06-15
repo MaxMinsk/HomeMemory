@@ -37,6 +37,7 @@ public class StdioRoundTripTests
         Assert.Contains(tools, tool => tool.Name == "status");
         Assert.Contains(tools, tool => tool.Name == "skill_upsert");
         Assert.Contains(tools, tool => tool.Name == "skill_get");
+        Assert.Contains(tools, tool => tool.Name == "notes_confirm");
 
         await AssertNotesRoundTrip(client, cts.Token);
         await AssertSkillRoundTrip(client, cts.Token);

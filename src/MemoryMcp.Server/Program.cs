@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using MemoryMcp.Core.Backlog;
+using MemoryMcp.Core.Confirmation;
 using MemoryMcp.Core.Diagnostics;
 using MemoryMcp.Core.Notes;
 using MemoryMcp.Core.Schemas;
@@ -121,6 +122,7 @@ static void RegisterServices(IServiceCollection services, string dbPath)
     services.AddSingleton(SchemaRegistry.FromEmbeddedResources());
     services.AddSingleton<NotesRepository>();
     services.AddSingleton<SkillsService>();
+    services.AddSingleton<ConfirmationService>();
     services.AddSingleton<DiagnosticsService>();
 }
 

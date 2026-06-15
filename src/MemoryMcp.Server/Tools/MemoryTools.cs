@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using MemoryMcp.Core.Confirmation;
 using MemoryMcp.Core.Diagnostics;
 using MemoryMcp.Core.Notes;
 using MemoryMcp.Core.Query;
@@ -21,15 +22,18 @@ public sealed class MemoryTools
     private readonly DiagnosticsService _diagnostics;
     private readonly IScopeAccessor _scope;
     private readonly SkillsService _skills;
+    private readonly ConfirmationService _confirmations;
 
-    /// <summary>Creates the tool set over the repository, registry, diagnostics, scope accessor and skills.</summary>
-    public MemoryTools(NotesRepository notes, SchemaRegistry schemas, DiagnosticsService diagnostics, IScopeAccessor scope, SkillsService skills)
+    /// <summary>Creates the tool set over the repository, registry, diagnostics, scope accessor, skills and confirmations.</summary>
+    public MemoryTools(NotesRepository notes, SchemaRegistry schemas, DiagnosticsService diagnostics, IScopeAccessor scope,
+        SkillsService skills, ConfirmationService confirmations)
     {
         _notes = notes;
         _schemas = schemas;
         _diagnostics = diagnostics;
         _scope = scope;
         _skills = skills;
+        _confirmations = confirmations;
     }
 
     /// <summary>Searches notes by optional full-text query plus structured filters (scope-restricted, paginated).</summary>
@@ -124,28 +128,40 @@ public sealed class MemoryTools
             return "ok";
         });
 
-    /// <summary>Soft-archives a note (no hard delete).</summary>
-    [McpServerTool(Name = "notes_archive", Idempotent = true)]
-    [Description("Soft-archive a note (status -> archived). No hard delete. Returns true if archived.")]
-    public bool NotesArchive([Description("Note id")] string id)
+    /// <summary>Requests a soft-archive; returns a pending confirmation token (apply via notes_confirm).</summary>
+    [McpServerTool(Name = "notes_archive", Destructive = false, UseStructuredContent = true)]
+    [Description("Request to soft-archive a note. Does NOT archive immediately — returns a confirmation token; call notes_confirm to apply it (or notes_cancel to drop it).")]
+    public PendingAction NotesArchive([Description("Note id")] string id)
         => Translate(() =>
         {
             AuthorizeNote(id);
-            return _notes.Archive(id);
+            return _confirmations.Request("archive", id, null, $"archive note {id}", null);
         });
 
-    /// <summary>Marks the old note superseded by the new one and links them.</summary>
-    [McpServerTool(Name = "notes_supersede")]
-    [Description("Mark the old note superseded by the new one and link them (supersedes).")]
-    public bool NotesSupersede(
+    /// <summary>Requests a supersede; returns a pending confirmation token (apply via notes_confirm).</summary>
+    [McpServerTool(Name = "notes_supersede", Destructive = false, UseStructuredContent = true)]
+    [Description("Request to mark the old note superseded by the new one. Does NOT apply immediately — returns a confirmation token; call notes_confirm to apply it.")]
+    public PendingAction NotesSupersede(
         [Description("Note being replaced")] string oldId,
         [Description("Replacement note")] string newId)
         => Translate(() =>
         {
             AuthorizeNote(oldId);
             AuthorizeNote(newId);
-            return _notes.Supersede(oldId, newId);
+            return _confirmations.Request("supersede", oldId, newId, $"supersede {oldId} with {newId}", null);
         });
+
+    /// <summary>Confirms and executes a previously requested destructive action (exactly once).</summary>
+    [McpServerTool(Name = "notes_confirm", Destructive = true, UseStructuredContent = true)]
+    [Description("Confirm and execute a destructive action requested earlier (archive/supersede) by its token. A token executes at most once.")]
+    public ConfirmationResult NotesConfirm([Description("Confirmation token from notes_archive/notes_supersede")] string token)
+        => Translate(() => _confirmations.Confirm(token, null));
+
+    /// <summary>Cancels a pending destructive action so it can never execute.</summary>
+    [McpServerTool(Name = "notes_cancel", Idempotent = true, UseStructuredContent = true)]
+    [Description("Cancel a pending destructive action by its token so it can never execute.")]
+    public ConfirmationResult NotesCancel([Description("Confirmation token")] string token)
+        => Translate(() => _confirmations.Cancel(token, null));
 
     /// <summary>Lists registered note types as type@version.</summary>
     [McpServerTool(Name = "schema_list_types", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
@@ -193,6 +209,10 @@ public sealed class MemoryTools
             throw new McpException(exception.Message);
         }
         catch (FilterException exception)
+        {
+            throw new McpException(exception.Message);
+        }
+        catch (ConfirmationException exception)
         {
             throw new McpException(exception.Message);
         }
