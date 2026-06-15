@@ -1,0 +1,26 @@
+name: Memory MCP
+version: "0.1.0"
+slug: memory_mcp
+description: Shared memory / notes / skills data-plane (MCP) for Home Assistant agents.
+url: https://github.com/MaxMinsk/HomeMemory/tree/main/addon
+arch:
+  - amd64
+  - aarch64
+startup: services
+boot: auto
+init: false
+image: ghcr.io/maxminsk/homememory
+ports:
+  "8099/tcp": 8099
+ports_description:
+  "8099/tcp": MCP streamable-HTTP endpoint (bearer-protected)
+options:
+  db_path: "/data/memory.sqlite"
+  bearer_token: ""
+  allowed_domains: ""
+  log_level: "Information"
+schema:
+  db_path: str
+  bearer_token: password?
+  allowed_domains: str?
+  log_level: list(Trace|Debug|Information|Warning|Error)
