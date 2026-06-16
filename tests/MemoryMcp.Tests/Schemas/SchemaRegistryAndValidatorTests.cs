@@ -62,6 +62,36 @@ public class SchemaRegistryAndValidatorTests
         Assert.NotEmpty(result.Errors);
     }
 
+    [Theory]
+    [InlineData("preference", """{ "preference": "reply concisely", "confidence": "high" }""")]
+    [InlineData("decision", """{ "decision": "recipe@1 is source of truth", "status": "active", "date": "2026-06-16" }""")]
+    [InlineData("project_state", """{ "project": "memory-mcp", "state": "v0.17.0 in prod", "open_issues": ["scope stats"] }""")]
+    [InlineData("fact", """{ "statement": "pipe is 32mm plastic", "source": "site visit", "as_of": "2026-06-16", "confidence": "medium" }""")]
+    [InlineData("episode", """{ "summary": "sent easement letter", "occurred_utc": "2026-06-16", "participants": ["neighbour"] }""")]
+    public void Valid_agentic_memory_types_pass(string type, string payload)
+    {
+        var registry = SchemaRegistry.FromEmbeddedResources();
+        Assert.NotNull(registry.GetLatest(type));
+
+        var result = new SchemaValidator(registry).Validate(type, payload);
+
+        Assert.True(result.IsValid, string.Join("; ", result.Errors));
+    }
+
+    [Theory]
+    [InlineData("preference", "{ }")]                                                  // missing preference
+    [InlineData("decision", """{ "decision": "x", "status": "bogus" }""")]             // bad status enum
+    [InlineData("fact", """{ "statement": "x", "confidence": "certain" }""")]          // bad confidence enum
+    [InlineData("fact", """{ "subject": "x" }""")]                                     // missing statement
+    [InlineData("episode", """{ "summary": "x", "extra": true }""")]                   // additionalProperties
+    public void Invalid_agentic_memory_types_are_rejected(string type, string payload)
+    {
+        var result = new SchemaValidator(SchemaRegistry.FromEmbeddedResources()).Validate(type, payload);
+
+        Assert.False(result.IsValid);
+        Assert.NotEmpty(result.Errors);
+    }
+
     [Fact]
     public void Unknown_type_is_rejected()
     {

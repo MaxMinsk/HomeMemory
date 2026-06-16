@@ -1,0 +1,14 @@
+{
+  "$id": "preference@1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["preference"],
+  "additionalProperties": false,
+  "properties": {
+    "preference": { "type": "string", "description": "The durable preference, e.g. 'reply in Russian; keep answers concise'." },
+    "subject": { "type": "string", "description": "Who/what the preference is about (default: the user)." },
+    "scope": { "type": "string", "description": "Where it applies, e.g. a domain or 'global'." },
+    "source": { "type": "string", "description": "Where this came from (a turn, a request, an inference)." },
+    "confidence": { "enum": ["low", "medium", "high"] }
+  }
+}

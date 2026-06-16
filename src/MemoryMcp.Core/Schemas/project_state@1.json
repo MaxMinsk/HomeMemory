@@ -1,0 +1,15 @@
+{
+  "$id": "project_state@1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["project", "state"],
+  "additionalProperties": false,
+  "properties": {
+    "project": { "type": "string", "description": "Project/case slug, e.g. memory-mcp." },
+    "state": { "type": "string", "description": "Current state summary, e.g. 'v0.17.0 in prod; security hardening done'." },
+    "version": { "type": "string", "description": "Current version/build, if applicable." },
+    "verified": { "type": "string", "description": "What has been verified and when." },
+    "open_issues": { "type": "array", "items": { "type": "string" }, "description": "Outstanding issues/follow-ups." },
+    "updated": { "type": "string", "description": "When this state was last updated (ISO-8601)." }
+  }
+}

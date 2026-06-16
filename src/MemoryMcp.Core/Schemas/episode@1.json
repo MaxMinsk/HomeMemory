@@ -1,0 +1,13 @@
+{
+  "$id": "episode@1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["summary"],
+  "additionalProperties": false,
+  "properties": {
+    "summary": { "type": "string", "description": "What happened, e.g. 'sent the easement letter to the neighbour'." },
+    "occurred_utc": { "type": "string", "description": "When it happened (ISO-8601)." },
+    "participants": { "type": "array", "items": { "type": "string" }, "description": "Who/what was involved." },
+    "outcome": { "type": "string", "description": "Result or follow-up, if any." }
+  }
+}

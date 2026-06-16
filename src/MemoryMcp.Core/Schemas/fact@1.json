@@ -1,0 +1,17 @@
+{
+  "$id": "fact@1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["statement"],
+  "additionalProperties": false,
+  "properties": {
+    "statement": { "type": "string", "description": "A verifiable fact, e.g. 'the water pipe on the plot is plastic, 32mm'." },
+    "subject": { "type": "string", "description": "What/who the fact is about." },
+    "source": { "type": "string", "description": "Where the fact came from (a person, a document, an observation)." },
+    "as_of": { "type": "string", "description": "When the fact was established/observed (ISO-8601)." },
+    "confidence": { "enum": ["low", "medium", "high"] },
+    "valid_from": { "type": "string", "description": "Start of validity (ISO-8601), for temporal facts." },
+    "valid_to": { "type": "string", "description": "End of validity (ISO-8601); unset = still valid." },
+    "supersedes": { "type": "string", "description": "dedupKey/id of an earlier fact this replaces (ADD-only: don't overwrite, supersede)." }
+  }
+}

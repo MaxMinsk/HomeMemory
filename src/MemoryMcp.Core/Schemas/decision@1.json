@@ -1,0 +1,14 @@
+{
+  "$id": "decision@1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["decision"],
+  "additionalProperties": false,
+  "properties": {
+    "decision": { "type": "string", "description": "The decision taken, e.g. 'recipe@1 is the source of truth; md/html are derived'." },
+    "rationale": { "type": "string", "description": "Why it was decided." },
+    "date": { "type": "string", "description": "When decided (ISO-8601)." },
+    "status": { "enum": ["active", "superseded"] },
+    "supersedes": { "type": "string", "description": "dedupKey/id of an earlier decision this replaces." }
+  }
+}
