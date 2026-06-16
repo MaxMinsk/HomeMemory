@@ -64,6 +64,12 @@ if (args.Length > 0 && (args[0] == "gc-blobs" || args[0] == "normalize-identifie
     return;
 }
 
+if (args.Length > 0 && args[0] == "tokens")
+{
+    RunTokens(args, dbPath);
+    return;
+}
+
 if (transport == "http")
 {
     // Fail closed: HTTP mode must be authenticated (it sits behind HA/tunnels). Without a bearer, /mcp,
@@ -89,9 +95,7 @@ if (transport == "http")
     var app = builder.Build();
     Bootstrap(app.Services);
 
-    var token = Environment.GetEnvironmentVariable("MEMORY_BEARER_TOKEN");
-    var allowedDomains = (Environment.GetEnvironmentVariable("MEMORY_ALLOWED_DOMAINS") ?? string.Empty)
-        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    var authenticator = app.Services.GetRequiredService<BearerAuthenticator>();
 
     app.Use(async (context, next) =>
     {
@@ -102,40 +106,37 @@ if (transport == "http")
             return;
         }
 
-        // /artifacts links use a short-lived signed URL (no bearer in the URL): a read link signs the id,
-        // an upload link (/artifacts/upload) signs the destination params. Bearer also authorizes.
+        // Resolve the presented bearer to a scope (env root token OR a DB token's per-domain scope); null
+        // means unauthenticated/unknown. In dev mode (no env token) this is always unrestricted (MEMP-032).
+        var scope = authenticator.Authenticate(context);
+
+        // /artifacts also accepts a short-lived signed URL as a capability (no bearer in the URL).
         if (context.Request.Path.StartsWithSegments("/artifacts", out var rest))
         {
             var signer = context.RequestServices.GetRequiredService<ArtifactUrlSigner>();
             var query = context.Request.Query;
-            var hasBearer = !string.IsNullOrEmpty(token) && HasValidBearer(context, token);
-            var ok = string.Equals(rest.Value?.Trim('/'), "upload", StringComparison.Ordinal)
-                ? hasBearer || signer.VerifyUpload(query["domain"], query["filename"], query["contentType"], query["noteId"], query["exp"], query["sig"])
-                : hasBearer || signer.Verify(rest.Value?.Trim('/') ?? string.Empty, query["exp"], query["sig"]);
-            if (!ok)
+            var signed = string.Equals(rest.Value?.Trim('/'), "upload", StringComparison.Ordinal)
+                ? signer.VerifyUpload(query["domain"], query["filename"], query["contentType"], query["noteId"], query["exp"], query["sig"])
+                : signer.Verify(rest.Value?.Trim('/') ?? string.Empty, query["exp"], query["sig"]);
+            if (scope is null && !signed)
             {
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 return;
             }
 
-            // A signed URL is a capability (already domain-bound); a bearer request carries the caller's
-            // scope so the endpoint can authorize the artifact's domain (MEMP-099).
-            context.Items[HttpScopeAccessor.ScopeKey] = hasBearer && allowedDomains.Length > 0
-                ? RequestScope.ForDomains(allowedDomains)
-                : RequestScope.Unrestricted;
+            // Signed URL = capability (already domain-bound); a bearer request carries the caller's scope.
+            context.Items[HttpScopeAccessor.ScopeKey] = scope ?? RequestScope.Unrestricted;
             await next();
             return;
         }
 
-        if (!string.IsNullOrEmpty(token) && !HasValidBearer(context, token))
+        if (scope is null)
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
             return;
         }
 
-        context.Items[HttpScopeAccessor.ScopeKey] = allowedDomains.Length == 0
-            ? RequestScope.Unrestricted
-            : RequestScope.ForDomains(allowedDomains);
+        context.Items[HttpScopeAccessor.ScopeKey] = scope;
         await next();
     });
 
@@ -222,6 +223,12 @@ static void RegisterServices(IServiceCollection services, string dbPath)
         provider.GetRequiredService<TimeProvider>(),
         Environment.GetEnvironmentVariable("MEMORY_PUBLIC_BASE_URL")));
     services.AddSingleton<DiagnosticsService>();
+    services.AddSingleton<TokenStore>();
+    services.AddSingleton(provider => new BearerAuthenticator(
+        Environment.GetEnvironmentVariable("MEMORY_BEARER_TOKEN"),
+        (Environment.GetEnvironmentVariable("MEMORY_ALLOWED_DOMAINS") ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+        provider.GetRequiredService<TokenStore>()));
 }
 
 static void Bootstrap(IServiceProvider services)
@@ -355,15 +362,35 @@ static async Task RunPushBacklog(string[] args)
     Console.WriteLine($"Pushed {ok} items to {url} (failed {failed}).");
 }
 
-static bool HasValidBearer(HttpContext context, string expected)
+// Admin token management (run via the binary): tokens add <label> <domains|*> | list | revoke <id>.
+// Generates DB-backed bearer tokens with per-domain scope; the raw token is printed once on add.
+static void RunTokens(string[] args, string dbPath)
 {
-    var header = context.Request.Headers.Authorization.ToString();
-    if (!header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
-    {
-        return false;
-    }
+    var factory = new SqliteConnectionFactory(dbPath);
+    new Migrator(factory, SchemaMigrations.All).Migrate();
+    var store = new TokenStore(factory);
+    var sub = args.Length > 1 ? args[1] : "list";
 
-    var presented = Encoding.UTF8.GetBytes(header["Bearer ".Length..].Trim());
-    var configured = Encoding.UTF8.GetBytes(expected);
-    return CryptographicOperations.FixedTimeEquals(presented, configured);
+    if (sub == "add")
+    {
+        var label = args.Length > 2 ? args[2] : null;
+        var domains = args.Length > 3 ? args[3] : "*";
+        var raw = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+        var record = store.Add(label, domains, raw);
+        Console.WriteLine($"Created token {record.Id} (label={record.Label ?? "-"}, domains={record.Domains}).");
+        Console.WriteLine($"TOKEN (shown once, store it now): {raw}");
+    }
+    else if (sub == "revoke")
+    {
+        var id = args.Length > 2 ? args[2] : throw new InvalidOperationException("Usage: tokens revoke <id>");
+        Console.WriteLine(store.Revoke(id) ? $"Revoked {id}." : $"No active token '{id}'.");
+    }
+    else
+    {
+        foreach (var token in store.List())
+        {
+            var state = token.RevokedUtc is null ? "active" : $"revoked {token.RevokedUtc}";
+            Console.WriteLine($"{token.Id}  domains={token.Domains}  label={token.Label ?? "-"}  created={token.CreatedUtc}  {state}");
+        }
+    }
 }

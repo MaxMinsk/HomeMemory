@@ -8,6 +8,7 @@ using System.Text.Json;
 using MemoryMcp.Core.Artifacts;
 using MemoryMcp.Core.Notes;
 using MemoryMcp.Core.Schemas;
+using MemoryMcp.Core.Security;
 using MemoryMcp.Core.Storage;
 using MemoryMcp.Tests.Storage;
 using Xunit;
@@ -92,6 +93,49 @@ public class HttpUploadTests
 
             Assert.Equal(HttpStatusCode.OK, (await http.GetAsync($"/api/notes/{homeId}", cts.Token)).StatusCode);
             Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync($"/api/notes/{workId}", cts.Token)).StatusCode);
+        }
+        finally
+        {
+            TryKill(server);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task Db_token_is_scoped_to_its_domains_and_unknown_tokens_are_rejected()
+    {
+        using var temp = new TempDatabase();
+        using var blobDir = new TempDir();
+        const string root = "root-bearer-token";
+        const string dbToken = "scoped-db-token-xyz";
+
+        // Seed two domains + a DB token scoped to "home" before the server starts.
+        var factory = new SqliteConnectionFactory(temp.FilePath);
+        new Migrator(factory, SchemaMigrations.All).Migrate();
+        var repo = new NotesRepository(factory, SchemaRegistry.FromEmbeddedResources());
+        var homeId = repo.Upsert("home", "backlog_item", "Home note", null, """{ "key": "MEMP-700", "status": "ready" }""", null, "MEMP-700", "t").Id;
+        var workId = repo.Upsert("work", "backlog_item", "Work note", null, """{ "key": "WORK-700", "status": "ready" }""", null, "WORK-700", "t").Id;
+        new TokenStore(factory).Add("home-agent", "home", dbToken);
+
+        var port = FreePort();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        using var server = StartHttpServer(temp.FilePath, blobDir.Path, root, port); // env root token, no MEMORY_ALLOWED_DOMAINS
+        try
+        {
+            using var http = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", dbToken); // authenticate as the scoped DB token
+            await WaitForReady(http, cts.Token);
+
+            var search = await http.GetStringAsync("/api/search?status=active", cts.Token);
+            Assert.Contains("Home note", search, StringComparison.Ordinal);
+            Assert.DoesNotContain("Work note", search, StringComparison.Ordinal);
+            Assert.Equal(HttpStatusCode.OK, (await http.GetAsync($"/api/notes/{homeId}", cts.Token)).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync($"/api/notes/{workId}", cts.Token)).StatusCode);
+
+            // An unknown token is rejected.
+            using var bad = new HttpRequestMessage(HttpMethod.Get, "/api/search");
+            bad.Headers.Authorization = new AuthenticationHeaderValue("Bearer", "not-a-real-token");
+            Assert.Equal(HttpStatusCode.Unauthorized, (await http.SendAsync(bad, cts.Token)).StatusCode);
         }
         finally
         {
