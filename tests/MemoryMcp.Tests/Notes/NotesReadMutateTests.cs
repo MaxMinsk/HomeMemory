@@ -1,5 +1,6 @@
 using System.Text.Json;
 using MemoryMcp.Core.Notes;
+using MemoryMcp.Core.Query;
 using MemoryMcp.Core.Schemas;
 using MemoryMcp.Core.Storage;
 using MemoryMcp.Tests.Storage;
@@ -146,6 +147,32 @@ public class NotesReadMutateTests
 
         Assert.Single(repo.Search(query: "072").Items);        // key token, via the FTS dedup_key column
         Assert.Single(repo.Search(query: "MEMP-072").Items);
+    }
+
+    [Fact]
+    public void Search_filter_accepts_camelCase_dedupKey_alias()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        Seed(repo, "MEMP-700", "ready");
+
+        Assert.Single(repo.Search(filter: "dedupKey == 'MEMP-700'").Items);   // camelCase alias (as it appears in output)
+        Assert.Single(repo.Search(filter: "dedup_key == 'MEMP-700'").Items);  // snake_case still works
+        var ex = Assert.Throws<FilterException>(() => repo.Search(filter: "nope == 'x'"));
+        Assert.Contains("Allowed:", ex.Message, StringComparison.Ordinal);    // error lists allowed fields
+    }
+
+    [Fact]
+    public void Upsert_result_carries_type_and_dedupKey()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+
+        var result = repo.Upsert("memory-mcp", "backlog_item", "T", null, """{ "key": "MEMP-200", "status": "ready" }""", null, "MEMP-200", "me");
+
+        Assert.Equal("backlog_item", result.Type);
+        Assert.Equal("MEMP-200", result.DedupKey);
+        Assert.NotNull(repo.GetByDedupKey("memory-mcp", "backlog_item", "MEMP-200")); // exact key lookup
     }
 
     [Fact]

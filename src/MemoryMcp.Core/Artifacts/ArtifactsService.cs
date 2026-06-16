@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using MemoryMcp.Core.Naming;
 using MemoryMcp.Core.Storage;
 using Microsoft.Data.Sqlite;
@@ -164,6 +165,51 @@ public sealed class ArtifactsService
         {
             _blobs.Delete(sha256);
         }
+    }
+
+    /// <summary>
+    /// Searches text inside an artifact (decoded as UTF-8) for <paramref name="query"/>, returning matches
+    /// with surrounding context + the blob hash — so an agent can validate a rendered HTML/MD artifact
+    /// without downloading it. Returns <c>null</c> if the artifact or its bytes are missing. For text content.
+    /// </summary>
+    public ArtifactFindResult? FindText(string id, string query, int contextChars = 80, int limit = 10)
+    {
+        var artifact = Get(id);
+        if (artifact is null)
+        {
+            return null;
+        }
+
+        var bytes = _blobs.Read(artifact.Sha256);
+        if (bytes is null)
+        {
+            return null;
+        }
+
+        var text = Encoding.UTF8.GetString(bytes);
+        var matches = new List<ArtifactTextMatch>();
+        var count = 0;
+        if (!string.IsNullOrEmpty(query) && query.Length <= text.Length)
+        {
+            var context = Math.Clamp(contextChars, 0, 500);
+            var max = Math.Clamp(limit, 1, 100);
+            var pos = 0;
+            int idx;
+            while (pos <= text.Length - query.Length && (idx = text.IndexOf(query, pos, StringComparison.OrdinalIgnoreCase)) >= 0)
+            {
+                count++;
+                if (matches.Count < max)
+                {
+                    var start = Math.Max(0, idx - context);
+                    var end = Math.Min(text.Length, idx + query.Length + context);
+                    matches.Add(new ArtifactTextMatch(idx, text.Substring(start, end - start)));
+                }
+
+                pos = idx + query.Length;
+            }
+        }
+
+        return new ArtifactFindResult(id, artifact.Sha256, query, text.Length, count, count > matches.Count, matches);
     }
 
     /// <summary>Lists artifacts in a domain (newest first), optionally only those attached to <paramref name="noteId"/>.</summary>

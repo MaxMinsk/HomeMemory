@@ -87,6 +87,21 @@ public sealed class ArtifactTools
         return artifact is not null && Guard().IsAllowed(artifact.Domain) ? artifact : null;
     }
 
+    /// <summary>Searches text inside a (text) artifact and returns matches + hash, if in scope.</summary>
+    [McpServerTool(Name = "artifacts_find_text", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("Search for text inside a TEXT artifact (e.g. validate a rendered HTML/MD without downloading it): returns each match's offset + surrounding context, matchCount/truncated, and the sha256. Bytes never pass through the model context. Binary artifacts give meaningless matches.")]
+    public ArtifactFindResult? ArtifactsFindText(
+        [Description("Artifact id")] string id,
+        [Description("Substring to search for")] string query,
+        [Description("Characters of context each side of a match (default 80, max 500)")] int contextChars = 80,
+        [Description("Max matches to return (default 10, max 100)")] int limit = 10)
+    {
+        var artifact = _artifacts.Get(id);
+        return artifact is not null && Guard().IsAllowed(artifact.Domain)
+            ? _artifacts.FindText(id, query, contextChars, limit)
+            : null;
+    }
+
     /// <summary>Returns a temporary signed URL to open/validate an artifact in a browser (no bearer in it).</summary>
     [McpServerTool(Name = "artifacts_url", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
     [Description("Get a temporary signed URL (default ~1 day) to open/download an artifact in a browser. The URL carries no bearer — hand it to a human or open it to view/validate. Returns null if not found/out of scope.")]

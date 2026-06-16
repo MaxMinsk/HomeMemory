@@ -65,7 +65,7 @@ public sealed class NotesWriter
         using var transaction = connection.BeginTransaction();
         var (id, created) = PersistNote(connection, transaction, domain, type, title, body, payloadJson, tagsJson, dedupKey, sourceAgent, schemaVer, nowUtc);
         transaction.Commit();
-        return new UpsertResult(id, created, nowUtc);
+        return new UpsertResult(id, created, nowUtc, type, dedupKey);
     }
 
     // Inserts a new note or dedup-updates the existing one, plus its audit event, within an existing

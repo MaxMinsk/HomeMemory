@@ -52,6 +52,8 @@ public class StdioRoundTripTests
         Assert.Contains(tools, tool => tool.Name == "notes_recall");
         Assert.Contains(tools, tool => tool.Name == "notes_recent");
         Assert.Contains(tools, tool => tool.Name == "notes_related");
+        Assert.Contains(tools, tool => tool.Name == "notes_get_by_key");
+        Assert.Contains(tools, tool => tool.Name == "artifacts_find_text");
 
         await AssertNotesRoundTrip(client, cts.Token);
         await AssertStructuredInputs(client, cts.Token);

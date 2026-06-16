@@ -97,6 +97,24 @@ public sealed class MemoryTools
         return view;
     }
 
+    /// <summary>Exact lookup of a note by its stable (domain, type, dedupKey), if in scope.</summary>
+    [McpServerTool(Name = "notes_get_by_key", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("Get a note by its stable key: (domain, type, dedupKey) — the reliable way to fetch a template/skill/canonical note without remembering its id. Returns the note (envelope + payload + size metadata) or null if not found.")]
+    public NoteView? NotesGetByKey(
+        [Description("Namespace, e.g. kitchen")] string domain,
+        [Description("Schema type, e.g. recipe")] string type,
+        [Description("Stable dedupKey, e.g. html-template-recipe-render")] string dedupKey)
+    {
+        var note = _notes.GetByDedupKey(domain, type, dedupKey);
+        if (note is null || !Guard().IsAllowed(note.Domain))
+        {
+            return null;
+        }
+
+        RecordUsage(note.Id);
+        return _notes.GetView(note.Id);
+    }
+
     /// <summary>Reads a windowed slice of a note's body, if it is in scope.</summary>
     [McpServerTool(Name = "notes_read", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
     [Description("Read a slice of a note's body: returns content from `offset` for up to `limitChars` chars (default 4000, max 20000), plus totalChars/returnedChars/truncated and a nextOffset cursor + the revision (updatedUtc). Page a large body by following nextOffset; for a section, get its offset from notes_outline. Cheaper than notes_get for big notes.")]

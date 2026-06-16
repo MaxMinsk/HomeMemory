@@ -30,6 +30,14 @@ public static class NoteFilter
         "source_agent", "schema_ver", "created_utc", "updated_utc", "deleted",
     };
 
+    // Accept the camelCase names that appear in tool OUTPUT (e.g. dedupKey, updatedUtc) as aliases for the
+    // snake_case columns, so a filter can use the same field names the results show (MEMP-123).
+    private static readonly Dictionary<string, string> FieldAliases = new(StringComparer.Ordinal)
+    {
+        ["dedupKey"] = "dedup_key", ["sourceAgent"] = "source_agent", ["schemaVer"] = "schema_ver",
+        ["createdUtc"] = "created_utc", ["updatedUtc"] = "updated_utc",
+    };
+
     private static readonly Regex PayloadKey = new("^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled, TimeSpan.FromSeconds(1));
 
     /// <summary>Compiles a filter expression into parameterized SQL. Throws <see cref="FilterException"/> on errors.</summary>
@@ -243,12 +251,14 @@ public static class NoteFilter
                 return $"json_extract(n.payload_json, '$.{key}')";
             }
 
-            if (!EnvelopeColumns.Contains(name))
+            var column = FieldAliases.GetValueOrDefault(name, name);
+            if (!EnvelopeColumns.Contains(column))
             {
-                throw new FilterException($"Invalid filter: unknown field '{name}'.");
+                throw new FilterException(
+                    $"Invalid filter: unknown field '{name}'. Allowed: {string.Join(", ", EnvelopeColumns.OrderBy(c => c, StringComparer.Ordinal))}, or payload.<key>.");
             }
 
-            return $"n.{name}";
+            return $"n.{column}";
         }
 
         private object ParseScalar()

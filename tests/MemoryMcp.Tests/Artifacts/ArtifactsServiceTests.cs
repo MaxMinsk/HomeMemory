@@ -116,6 +116,22 @@ public class ArtifactsServiceTests
         Assert.Equal(0, blobs.TotalBytes());
     }
 
+    [Fact]
+    public void FindText_locates_matches_in_a_text_artifact()
+    {
+        using var temp = new TempDatabase();
+        using var dir = new TempDir();
+        var service = new ArtifactsService(new BlobStore(dir.Path, 0), FactoryFor(temp));
+        var a = service.Put("kitchen", Encoding.UTF8.GetBytes("hello WORLD, hello there"), "f.md", "text/markdown", null, "me");
+
+        var result = service.FindText(a.Id, "hello", contextChars: 3, limit: 10);
+
+        Assert.Equal(2, result!.MatchCount);          // case-insensitive, both "hello"
+        Assert.Equal(a.Sha256, result.Sha256);
+        Assert.Contains("hello", result.Matches[0].Context, StringComparison.Ordinal);
+        Assert.Null(service.FindText("no-such-artifact", "x"));
+    }
+
     private static SqliteConnectionFactory FactoryFor(TempDatabase temp)
     {
         var factory = new SqliteConnectionFactory(temp.FilePath);
