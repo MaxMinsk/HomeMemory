@@ -4,6 +4,7 @@ using MemoryMcp.Core.Artifacts;
 using MemoryMcp.Core.Confirmation;
 using MemoryMcp.Core.Naming;
 using MemoryMcp.Core.Security;
+using MemoryMcp.Server.Security;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
 
@@ -24,16 +25,16 @@ public sealed record ArtifactIngestOptions(string? IngestRoot);
 public sealed class ArtifactTools
 {
     private readonly ArtifactsService _artifacts;
-    private readonly IScopeAccessor _scope;
+    private readonly RequestAuthorizer _authz;
     private readonly ArtifactUrlSigner _signer;
     private readonly ConfirmationService _confirmations;
     private readonly string? _ingestRoot;
 
-    /// <summary>Creates the artifact tools over the service, scope accessor, URL signer, confirmations and ingest options.</summary>
-    public ArtifactTools(ArtifactsService artifacts, IScopeAccessor scope, ArtifactUrlSigner signer, ConfirmationService confirmations, ArtifactIngestOptions options)
+    /// <summary>Creates the artifact tools over the service, request authorizer, URL signer, confirmations and ingest options.</summary>
+    public ArtifactTools(ArtifactsService artifacts, RequestAuthorizer authz, ArtifactUrlSigner signer, ConfirmationService confirmations, ArtifactIngestOptions options)
     {
         _artifacts = artifacts;
-        _scope = scope;
+        _authz = authz;
         _signer = signer;
         _confirmations = confirmations;
         _ingestRoot = options.IngestRoot;
@@ -52,7 +53,7 @@ public sealed class ArtifactTools
         [Description("Who is writing (provenance)")] string? sourceAgent = null)
         => Translate(() =>
         {
-            Guard().Authorize(domain);
+            _authz.AuthorizeWrite(domain);
             var bytes = ResolveBytes(content, sourcePath, ref filename);
             return _artifacts.Put(domain, bytes, filename, contentType, noteId, sourceAgent);
         });
@@ -73,7 +74,7 @@ public sealed class ArtifactTools
                 throw new ArtifactException("A filename is required for an upload URL.");
             }
 
-            Guard().Authorize(domain);
+            _authz.AuthorizeWrite(domain);
             var normalizedDomain = Identifiers.Normalize(domain);
             return _signer.BuildUploadUrl(normalizedDomain, filename, contentType, noteId, ttlSeconds ?? 3600);
         });
@@ -84,7 +85,7 @@ public sealed class ArtifactTools
     public Artifact? ArtifactsGet([Description("Artifact id")] string id)
     {
         var artifact = _artifacts.Get(id);
-        return artifact is not null && Guard().IsAllowed(artifact.Domain) ? artifact : null;
+        return artifact is not null && _authz.CanRead(artifact.Domain) ? artifact : null;
     }
 
     /// <summary>Searches text inside a (text) artifact and returns matches + hash, if in scope.</summary>
@@ -97,7 +98,7 @@ public sealed class ArtifactTools
         [Description("Max matches to return (default 10, max 100)")] int limit = 10)
     {
         var artifact = _artifacts.Get(id);
-        return artifact is not null && Guard().IsAllowed(artifact.Domain)
+        return artifact is not null && _authz.CanRead(artifact.Domain)
             ? _artifacts.FindText(id, query, contextChars, limit)
             : null;
     }
@@ -110,7 +111,7 @@ public sealed class ArtifactTools
         [Description("Lifetime in seconds (default 86400 = 1 day; capped at 7 days)")] int? ttlSeconds = null)
     {
         var artifact = _artifacts.Get(id);
-        return artifact is not null && Guard().IsAllowed(artifact.Domain)
+        return artifact is not null && _authz.CanRead(artifact.Domain)
             ? _signer.BuildUrl(id, ttlSeconds ?? 86400)
             : null;
     }
@@ -122,7 +123,7 @@ public sealed class ArtifactTools
         => Translate(() =>
         {
             var artifact = _artifacts.Get(id) ?? throw new ArtifactException($"Artifact '{id}' not found.");
-            Guard().Authorize(artifact.Domain);
+            _authz.AuthorizeWrite(artifact.Domain);
             return _confirmations.Request("artifact_delete", id, null, $"delete artifact {id} ({artifact.Filename})", null);
         });
 
@@ -132,7 +133,7 @@ public sealed class ArtifactTools
     public IReadOnlyList<Artifact> ArtifactsList(
         [Description("Namespace, e.g. kitchen")] string domain,
         [Description("Only artifacts attached to this note id (optional)")] string? noteId = null)
-        => Guard().IsAllowed(domain) ? _artifacts.List(domain, noteId) : Array.Empty<Artifact>();
+        => _authz.CanRead(domain) ? _artifacts.List(domain, noteId) : Array.Empty<Artifact>();
 
     private byte[] ResolveBytes(string? content, string? sourcePath, ref string? filename)
     {
@@ -175,8 +176,6 @@ public sealed class ArtifactTools
 
         return full;
     }
-
-    private ScopeGuard Guard() => new(_scope.Current);
 
     private static T Translate<T>(Func<T> action)
     {

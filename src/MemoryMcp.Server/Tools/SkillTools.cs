@@ -2,6 +2,7 @@ using System.ComponentModel;
 using MemoryMcp.Core.Notes;
 using MemoryMcp.Core.Security;
 using MemoryMcp.Core.Skills;
+using MemoryMcp.Server.Security;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
 
@@ -13,13 +14,13 @@ namespace MemoryMcp.Server.Tools;
 public sealed class SkillTools
 {
     private readonly SkillsService _skills;
-    private readonly IScopeAccessor _scope;
+    private readonly RequestAuthorizer _authz;
 
-    /// <summary>Creates the skill tools over the service and scope accessor.</summary>
-    public SkillTools(SkillsService skills, IScopeAccessor scope)
+    /// <summary>Creates the skill tools over the service and the request authorizer.</summary>
+    public SkillTools(SkillsService skills, RequestAuthorizer authz)
     {
         _skills = skills;
-        _scope = scope;
+        _authz = authz;
     }
 
     /// <summary>Creates or updates a skill (the body holds the guidance text).</summary>
@@ -36,7 +37,7 @@ public sealed class SkillTools
         [Description("Who is writing (provenance)")] string? sourceAgent = null)
         => Translate(() =>
         {
-            Guard().Authorize(domain);
+            _authz.AuthorizeWrite(domain);
             return _skills.Upsert(domain, key, title, body, targetType, version, summary, sourceAgent);
         });
 
@@ -46,7 +47,7 @@ public sealed class SkillTools
     public IReadOnlyList<Skill> SkillList(
         [Description("Namespace, e.g. memory-mcp")] string domain,
         [Description("Only skills guiding this note type (optional)")] string? targetType = null)
-        => Guard().IsAllowed(domain) ? _skills.List(domain, targetType) : Array.Empty<Skill>();
+        => _authz.CanRead(domain) ? _skills.List(domain, targetType) : Array.Empty<Skill>();
 
     /// <summary>Returns the full skill (including body) by key, if in scope.</summary>
     [McpServerTool(Name = "skill_get", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
@@ -54,9 +55,7 @@ public sealed class SkillTools
     public Skill? SkillGet(
         [Description("Namespace, e.g. memory-mcp")] string domain,
         [Description("Skill key, e.g. recipe-authoring")] string key)
-        => Guard().IsAllowed(domain) ? _skills.Get(domain, key) : null;
-
-    private ScopeGuard Guard() => new(_scope.Current);
+        => _authz.CanRead(domain) ? _skills.Get(domain, key) : null;
 
     private static T Translate<T>(Func<T> action)
     {

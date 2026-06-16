@@ -9,6 +9,7 @@ using MemoryMcp.Core.Schemas;
 using MemoryMcp.Core.Security;
 using MemoryMcp.Core.Skills;
 using MemoryMcp.Core.Storage;
+using MemoryMcp.Server.Security;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
 
@@ -23,19 +24,19 @@ public sealed class MemoryTools
     private readonly NotesRepository _notes;
     private readonly SchemaRegistry _schemas;
     private readonly DiagnosticsService _diagnostics;
-    private readonly IScopeAccessor _scope;
+    private readonly RequestAuthorizer _authz;
     private readonly SkillsService _skills;
     private readonly ConfirmationService _confirmations;
     private readonly ISqliteConnectionFactory _connectionFactory;
 
-    /// <summary>Creates the tool set over the repository, registry, diagnostics, scope accessor, skills, confirmations and database.</summary>
-    public MemoryTools(NotesRepository notes, SchemaRegistry schemas, DiagnosticsService diagnostics, IScopeAccessor scope,
+    /// <summary>Creates the tool set over the repository, registry, diagnostics, request authorizer, skills, confirmations and database.</summary>
+    public MemoryTools(NotesRepository notes, SchemaRegistry schemas, DiagnosticsService diagnostics, RequestAuthorizer authz,
         SkillsService skills, ConfirmationService confirmations, ISqliteConnectionFactory connectionFactory)
     {
         _notes = notes;
         _schemas = schemas;
         _diagnostics = diagnostics;
-        _scope = scope;
+        _authz = authz;
         _skills = skills;
         _confirmations = confirmations;
         _connectionFactory = connectionFactory;
@@ -55,7 +56,7 @@ public sealed class MemoryTools
         [Description("Optional filter DSL: field op value joined by AND/OR with parentheses. Fields: domain/type/status/title/... and payload.<x>. Ops: == != in, and 'is null'/'is not null'. E.g. \"payload.sprint is null\" (general backlog) or \"payload.sprint == 'S1' AND payload.status in ('ready','next')\".")] string? filter = null,
         [Description("When true, each hit also includes its envelope status and payload JSON (still no body), so you can render a board without a get per row.")] bool includePayload = false,
         [Description("When true, each hit also includes its links (both directions), so you can render a graph without a notes_links call per row.")] bool includeLinks = false)
-        => Translate(() => _notes.Search(query, domain, type, tags, status, limit, offset, Guard().RestrictionForSearch(domain), filter, includePayload, includeLinks));
+        => Translate(() => _notes.Search(query, domain, type, tags, status, limit, offset, _authz.ReadRestriction(domain), filter, includePayload, includeLinks));
 
     /// <summary>Recalls a compact context block (hits + linked neighbors) for a query, scope-restricted.</summary>
     [McpServerTool(Name = "notes_recall", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
@@ -66,7 +67,7 @@ public sealed class MemoryTools
         [Description("Max primary hits (default 10)")] int limit = 10,
         [Description("Include one-hop linked neighbors of the hits (default true)")] bool includeLinks = true,
         [Description("Graph expansion depth (currently one hop)")] int maxHops = 1)
-        => Translate(() => _notes.Recall(query, domain, limit, Guard().RestrictionForSearch(domain), includeLinks, maxHops));
+        => Translate(() => _notes.Recall(query, domain, limit, _authz.ReadRestriction(domain), includeLinks, maxHops));
 
     /// <summary>Lists the most-recently-updated (or most-used) notes in scope.</summary>
     [McpServerTool(Name = "notes_recent", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
@@ -76,7 +77,7 @@ public sealed class MemoryTools
         [Description("Type filter (optional)")] string? type = null,
         [Description("Max results (default 20)")] int limit = 20,
         [Description("Sort: 'updated' (default) or 'used' (by access count/recency)")] string? sort = null)
-        => Translate(() => _notes.Recent(domain, type, limit, Guard().RestrictionForSearch(domain),
+        => Translate(() => _notes.Recent(domain, type, limit, _authz.ReadRestriction(domain),
             string.Equals(sort, "used", StringComparison.OrdinalIgnoreCase)));
 
     /// <summary>Gets a note (envelope + payload + size metadata) by id, if it is in scope.</summary>
@@ -88,7 +89,7 @@ public sealed class MemoryTools
         [Description("Cap the returned body to this many characters (optional; default = full body). Sets truncated=true when it cuts.")] int? bodyMaxChars = null)
     {
         var view = _notes.GetView(id, includeBody, bodyMaxChars);
-        if (view is null || !Guard().IsAllowed(view.Domain))
+        if (view is null || !_authz.CanRead(view.Domain))
         {
             return null;
         }
@@ -106,7 +107,7 @@ public sealed class MemoryTools
         [Description("Stable dedupKey, e.g. html-template-recipe-render")] string dedupKey)
     {
         var note = _notes.GetByDedupKey(domain, type, dedupKey);
-        if (note is null || !Guard().IsAllowed(note.Domain))
+        if (note is null || !_authz.CanRead(note.Domain))
         {
             return null;
         }
@@ -124,7 +125,7 @@ public sealed class MemoryTools
         [Description("Max characters to return (default 4000, clamped to 20000)")] int limitChars = NotesReader.DefaultReadChars)
     {
         var note = _notes.Get(id);
-        if (note is null || !Guard().IsAllowed(note.Domain))
+        if (note is null || !_authz.CanRead(note.Domain))
         {
             return null;
         }
@@ -139,7 +140,7 @@ public sealed class MemoryTools
     public NoteOutline? NotesOutline([Description("Note id")] string id)
     {
         var note = _notes.Get(id);
-        return note is not null && Guard().IsAllowed(note.Domain) ? _notes.Outline(id) : null;
+        return note is not null && _authz.CanRead(note.Domain) ? _notes.Outline(id) : null;
     }
 
     /// <summary>Finds a substring within one note's body (case-insensitive), if it is in scope.</summary>
@@ -152,7 +153,7 @@ public sealed class MemoryTools
         [Description("Max matches to return (default 10, max 100)")] int limit = NotesReader.DefaultFindMatches)
     {
         var note = _notes.Get(id);
-        return note is not null && Guard().IsAllowed(note.Domain) ? _notes.Find(id, query, contextChars, limit) : null;
+        return note is not null && _authz.CanRead(note.Domain) ? _notes.Find(id, query, contextChars, limit) : null;
     }
 
     /// <summary>Creates or updates a note, validating the payload against the type schema.</summary>
@@ -170,7 +171,7 @@ public sealed class MemoryTools
     {
         try
         {
-            Guard().Authorize(domain);
+            _authz.AuthorizeWrite(domain);
             return _notes.Upsert(domain, type, title, body, JsonArg(payload), JsonArg(tags), dedupKey, sourceAgent ?? "mcp");
         }
         catch (NoteValidationException exception)
@@ -205,7 +206,7 @@ public sealed class MemoryTools
         [Description("Who is writing (provenance)")] string? sourceAgent = null)
         => Translate(() =>
         {
-            Guard().Authorize(domain);
+            _authz.AuthorizeWrite(domain);
             foreach (var link in links ?? Array.Empty<AssembleLink>())
             {
                 AuthorizeNote(link.ToId);
@@ -225,7 +226,7 @@ public sealed class MemoryTools
         [Description("Who is writing (provenance)")] string? sourceAgent = null)
         => Translate(() =>
         {
-            Guard().Authorize(domain);
+            _authz.AuthorizeWrite(domain);
             return _notes.AppendJournal(domain, text, title, tags, sourceAgent ?? "mcp");
         });
 
@@ -276,13 +277,13 @@ public sealed class MemoryTools
     [McpServerTool(Name = "notes_confirm", Destructive = true, UseStructuredContent = true)]
     [Description("Confirm and execute a destructive action requested earlier (archive / supersede / artifact delete) by its token. A token executes at most once.")]
     public ConfirmationResult NotesConfirm([Description("Confirmation token from notes_archive/notes_supersede")] string token)
-        => Translate(() => _confirmations.Confirm(token, Guard().WriteRestriction(), null));
+        => Translate(() => _confirmations.Confirm(token, _authz.WriteRestriction(), null));
 
     /// <summary>Cancels a pending destructive action so it can never execute.</summary>
     [McpServerTool(Name = "notes_cancel", Idempotent = true, UseStructuredContent = true)]
     [Description("Cancel a pending destructive action by its token so it can never execute.")]
     public ConfirmationResult NotesCancel([Description("Confirmation token")] string token)
-        => Translate(() => _confirmations.Cancel(token, Guard().WriteRestriction(), null));
+        => Translate(() => _confirmations.Cancel(token, _authz.WriteRestriction(), null));
 
     /// <summary>Partially updates a note by id (merge), with optional optimistic-concurrency check.</summary>
     [McpServerTool(Name = "notes_patch", Destructive = false, UseStructuredContent = true)]
@@ -320,8 +321,8 @@ public sealed class MemoryTools
         [Description("Max candidates (default 10)")] int limit = 10)
     {
         var note = _notes.Get(id);
-        return note is not null && Guard().IsAllowed(note.Domain)
-            ? _notes.Related(id, limit, Guard().RestrictionForSearch(null))
+        return note is not null && _authz.CanRead(note.Domain)
+            ? _notes.Related(id, limit, _authz.ReadRestriction(null))
             : Array.Empty<RelatedNote>();
     }
 
@@ -331,7 +332,7 @@ public sealed class MemoryTools
     public IReadOnlyList<LinkView> NotesLinks([Description("Note id")] string id)
     {
         var note = _notes.Get(id);
-        return note is not null && Guard().IsAllowed(note.Domain) ? _notes.Links(id) : Array.Empty<LinkView>();
+        return note is not null && _authz.CanRead(note.Domain) ? _notes.Links(id) : Array.Empty<LinkView>();
     }
 
     /// <summary>Removes a directed link from one note to another.</summary>
@@ -356,7 +357,7 @@ public sealed class MemoryTools
         [Description("Max events (default 50)")] int limit = 50)
     {
         var note = _notes.Get(id);
-        return note is not null && Guard().IsAllowed(note.Domain) ? _notes.Events(id, limit) : Array.Empty<NoteEvent>();
+        return note is not null && _authz.CanRead(note.Domain) ? _notes.Events(id, limit) : Array.Empty<NoteEvent>();
     }
 
     /// <summary>Returns the full detail (before/after diff) of one history event, if it is in scope.</summary>
@@ -369,7 +370,7 @@ public sealed class MemoryTools
         [Description("Diff projection: full (default), before, after, or changed")] string? fields = null)
     {
         var note = _notes.Get(id);
-        return note is not null && Guard().IsAllowed(note.Domain) ? _notes.Event(id, eventId, maxChars, fields) : null;
+        return note is not null && _authz.CanRead(note.Domain) ? _notes.Event(id, eventId, maxChars, fields) : null;
     }
 
     /// <summary>Lists registered note types as type@version.</summary>
@@ -406,7 +407,7 @@ public sealed class MemoryTools
     /// <summary>Returns the runtime contract for the caller's scope (version, known types, domain access).</summary>
     [McpServerTool(Name = "memory_capabilities", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
     [Description("Runtime contract — call on connect to discover what this build supports instead of guessing from a stale tool list: server build version, schema version, contract version, the note types this build knows (latest schema version + whether built-in), your token's domain scope (readable/writable + commons), search backend and blob quota.")]
-    public CapabilitiesReport Capabilities() => _diagnostics.Capabilities(_scope.Current);
+    public CapabilitiesReport Capabilities() => _diagnostics.Capabilities(_authz.Scope);
 
     /// <summary>Lists domains (namespaces) with their note counts.</summary>
     [McpServerTool(Name = "domains_list", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
@@ -424,12 +425,12 @@ public sealed class MemoryTools
     public IReadOnlyList<LintFinding> NotesLint(
         [Description("Domain to focus on (optional; default = all in scope)")] string? domain = null,
         [Description("Max findings (default 200, max 1000)")] int limit = 200)
-        => Translate(() => new NotesLinter(_connectionFactory).Lint(domain, Guard().RestrictionForSearch(domain), limit));
+        => Translate(() => new NotesLinter(_connectionFactory).Lint(domain, _authz.ReadRestriction(domain), limit));
 
     /// <summary>Lists unresolved destructive-action confirmations.</summary>
     [McpServerTool(Name = "pending_actions_list", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
     [Description("List unresolved destructive-action confirmations (so their tokens aren't lost). Resolve via notes_confirm / notes_cancel.")]
-    public IReadOnlyList<PendingAction> PendingActionsList() => _confirmations.ListPending(Guard().WriteRestriction());
+    public IReadOnlyList<PendingAction> PendingActionsList() => _confirmations.ListPending(_authz.WriteRestriction());
 
     // Accepts a tool argument that may be a structured object/array OR a JSON string, and returns the JSON
     // text either way (so agents can pass `{...}`/`[...]` directly instead of double-serializing). MEMP-072.
@@ -442,8 +443,6 @@ public sealed class MemoryTools
 
         return value.ValueKind == JsonValueKind.String ? value.GetString() : value.GetRawText();
     }
-
-    private ScopeGuard Guard() => new(_scope.Current);
 
     // Best-effort access signal for recency/most-used discovery; never let it break a read (MEMP-116).
     private void RecordUsage(string id)
@@ -462,7 +461,7 @@ public sealed class MemoryTools
     private void AuthorizeNote(string id)
     {
         var note = _notes.Get(id) ?? throw new McpException($"Note '{id}' not found.");
-        Guard().Authorize(note.Domain);
+        _authz.AuthorizeWrite(note.Domain);
     }
 
     // Authorize a note's domain only if it still exists (e.g. unlink's target may be a removed note).
@@ -471,7 +470,7 @@ public sealed class MemoryTools
         var note = _notes.Get(id);
         if (note is not null)
         {
-            Guard().Authorize(note.Domain);
+            _authz.AuthorizeWrite(note.Domain);
         }
     }
 

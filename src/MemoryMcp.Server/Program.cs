@@ -224,6 +224,9 @@ static void RegisterServices(IServiceCollection services, string dbPath)
         provider.GetRequiredService<TimeProvider>(),
         Environment.GetEnvironmentVariable("MEMORY_PUBLIC_BASE_URL")));
     services.AddSingleton<DiagnosticsService>();
+    // Single domain-authorization facade (MEMP-102): wraps the request scope so every tool/endpoint
+    // authorizes through one place. Safe as a singleton — it reads the ambient scope per call.
+    services.AddSingleton<RequestAuthorizer>();
     services.AddSingleton<TokenStore>();
     services.AddSingleton(provider => new BearerAuthenticator(
         Environment.GetEnvironmentVariable("MEMORY_BEARER_TOKEN"),

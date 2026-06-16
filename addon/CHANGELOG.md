@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.26.0
+
+Sprint 19 — centralized scope authorization (internal; no behavior change).
+
+- **One authorization facade** (MEMP-102): every tool (`MemoryTools`/`ArtifactTools`/`SkillTools`)
+  and HTTP/viewer endpoint now authorizes domain access through a single injected `RequestAuthorizer`
+  instead of each constructing its own `ScopeGuard`. This removes duplicated scope checks and gives a
+  new tool/endpoint one obvious, hard-to-bypass entry point (`AuthorizeWrite` / `CanRead` /
+  `ReadRestriction` / `WriteRestriction`). Completes the scope-centralization half of MEMP-102 (the
+  fail-closed accessor landed in 0.19.0). Pure refactor — the enforcement semantics are unchanged.
+
 ## 0.25.0
 
 Sprint 18 — memory hygiene + viewer polish.
