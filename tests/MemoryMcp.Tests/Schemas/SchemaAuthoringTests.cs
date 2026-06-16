@@ -42,6 +42,25 @@ public class SchemaAuthoringTests
         Assert.Contains("built-in", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Upsert_allows_a_new_version_of_a_builtin_type()
+    {
+        using var temp = new TempDatabase();
+        var (registry, factory) = New(temp);
+
+        // A higher version of a built-in type (e.g. recipe@2) is agent-authorable...
+        var v2 = registry.Upsert(factory,
+            """{ "$id": "recipe@2", "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": true }""");
+        Assert.Equal("recipe", v2.Type);
+        Assert.Equal(2, v2.Version);
+        Assert.Equal(2, registry.GetLatest("recipe")!.Version); // new writes validate against v2
+        Assert.NotNull(registry.Get("recipe", 1));              // ...but the shipped v1 is still there
+
+        // ...while the shipped version itself stays immutable.
+        Assert.Throws<SchemaAuthoringException>(() =>
+            registry.Upsert(factory, """{ "$id": "recipe@1", "type": "object" }"""));
+    }
+
     [Theory]
     [InlineData("not json at all")]
     [InlineData("""{ "type": "object" }""")]                  // missing $id

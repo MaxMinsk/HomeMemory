@@ -17,6 +17,7 @@ public sealed class SchemaRegistry
     private readonly Dictionary<string, SchemaDefinition> _byTypeVersion = new(StringComparer.Ordinal);
     private readonly Dictionary<string, SchemaDefinition> _latestByType = new(StringComparer.Ordinal);
     private readonly HashSet<string> _builtinTypes = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _builtinVersions = new(StringComparer.Ordinal); // "type@version" of code-owned schemas
     private readonly object _gate = new();
 
     private SchemaRegistry(IEnumerable<SchemaDefinition> builtins)
@@ -24,6 +25,7 @@ public sealed class SchemaRegistry
         foreach (var definition in builtins)
         {
             _builtinTypes.Add(definition.Type);
+            _builtinVersions.Add(Key(definition.Type, definition.Version));
             Index(definition);
         }
     }
@@ -94,12 +96,13 @@ public sealed class SchemaRegistry
         while (reader.Read())
         {
             var type = reader.GetString(0);
-            if (_builtinTypes.Contains(type))
+            var version = reader.GetInt32(1);
+            if (_builtinVersions.Contains(Key(type, version)))
             {
-                continue; // built-ins come from embedded resources, which are authoritative
+                continue; // shipped built-in versions come from embedded resources, which are authoritative
             }
 
-            var definition = new SchemaDefinition(type, reader.GetInt32(1), reader.GetString(2), JsonSchema.FromText(reader.GetString(2)));
+            var definition = new SchemaDefinition(type, version, reader.GetString(2), JsonSchema.FromText(reader.GetString(2)));
             lock (_gate)
             {
                 Index(definition);
@@ -133,9 +136,10 @@ public sealed class SchemaRegistry
             throw new SchemaAuthoringException(exception.Message);
         }
 
-        if (_builtinTypes.Contains(type))
+        if (_builtinVersions.Contains(Key(type, version)))
         {
-            throw new SchemaAuthoringException($"Type '{type}' is built-in and read-only.");
+            throw new SchemaAuthoringException(
+                $"Schema '{type}@{version}' is a built-in (shipped) version and read-only. Author a higher version (e.g. {type}@{version + 1}) to evolve it.");
         }
 
         JsonSchema compiled;
@@ -174,9 +178,9 @@ public sealed class SchemaRegistry
 
         foreach (var definition in All)
         {
-            if (!_builtinTypes.Contains(definition.Type))
+            if (!_builtinVersions.Contains(Key(definition.Type, definition.Version)))
             {
-                continue; // never overwrite agent-authored rows from the embedded sync
+                continue; // only sync shipped built-in versions; agent-authored ones persist via Upsert
             }
 
             using var command = connection.CreateCommand();
