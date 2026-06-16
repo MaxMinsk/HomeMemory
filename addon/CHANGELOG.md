@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.23.0
+
+Sprint 16 — agent ergonomics (from the kitchen agent's recipe-render workflow, MEMP-123).
+
+- **Exact lookup by key**: `notes_get_by_key(domain, type, dedupKey)` fetches a template/skill/canonical
+  note without remembering its id. The filter DSL also now accepts the camelCase names from tool output
+  (`dedupKey`, `updatedUtc`, …) as aliases, and an unknown-field error lists the allowed fields.
+- **Less round-tripping**: `notes_upsert` returns the note's `type` and `dedupKey` alongside id/revision,
+  so a write needn't be followed by a get.
+- **Validate artifacts cheaply**: `artifacts_find_text(id, query, …)` searches text inside a text artifact
+  (matches + context + sha256), so a rendered HTML/MD can be checked without download.
+
 ## 0.22.0
 
 Sprint 15 — graph integrity + recency/usage discovery.
