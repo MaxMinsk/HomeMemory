@@ -37,6 +37,13 @@ public sealed class NotesRepository
     /// <inheritdoc cref="NotesWriter.Link"/>
     public void Link(string fromId, string toId, string rel) => _writer.Link(fromId, toId, rel);
 
+    /// <inheritdoc cref="NotesWriter.Assemble"/>
+    public AssembleResult Assemble(
+        string domain, string type, string? title, string? body,
+        string? payloadJson, string? tagsJson, string? dedupKey,
+        IReadOnlyList<AssembleLink>? links, string? sourceAgent)
+        => _writer.Assemble(domain, type, title, body, payloadJson, tagsJson, dedupKey, links, sourceAgent);
+
     /// <inheritdoc cref="NotesWriter.Archive"/>
     public bool Archive(string id) => _writer.Archive(id);
 

@@ -63,13 +63,23 @@ public sealed class NotesWriter
 
         using var connection = _connectionFactory.Create();
         using var transaction = connection.BeginTransaction();
+        var (id, created) = PersistNote(connection, transaction, domain, type, title, body, payloadJson, tagsJson, dedupKey, sourceAgent, schemaVer, nowUtc);
+        transaction.Commit();
+        return new UpsertResult(id, created, nowUtc);
+    }
 
+    // Inserts a new note or dedup-updates the existing one, plus its audit event, within an existing
+    // transaction (the caller commits). Shared by Upsert and Assemble.
+    private static (string Id, bool Created) PersistNote(
+        SqliteConnection connection, SqliteTransaction transaction,
+        string domain, string type, string? title, string? body,
+        string? payloadJson, string? tagsJson, string? dedupKey, string? sourceAgent, int schemaVer, string nowUtc)
+    {
         var existing = dedupKey is null ? null : FindByDedup(connection, transaction, domain, type, dedupKey);
 
         string id;
         bool created;
         JsonObject? before = null;
-
         if (existing is null)
         {
             id = Guid.NewGuid().ToString("N");
@@ -87,9 +97,79 @@ public sealed class NotesWriter
         var after = NoteAudit.Snapshot(title, body, payloadJson, tagsJson, existing?.Status ?? "active", schemaVer);
         var op = created ? "create" : "update";
         NoteAudit.Append(connection, transaction, id, op, sourceAgent, nowUtc, NoteAudit.BuildDiff(op, before, after));
+        return (id, created);
+    }
+
+    /// <summary>
+    /// Creates (or dedup-upserts) a note AND its outgoing links in ONE transaction — all-or-nothing.
+    /// If any link's target is missing or its relation is invalid, nothing is persisted (no half-built case).
+    /// </summary>
+    public AssembleResult Assemble(
+        string domain, string type, string? title, string? body,
+        string? payloadJson, string? tagsJson, string? dedupKey,
+        IReadOnlyList<AssembleLink>? links, string? sourceAgent)
+    {
+        domain = Identifiers.Normalize(domain);
+        type = Identifiers.Normalize(type);
+        tagsJson = Identifiers.NormalizeTags(tagsJson);
+
+        var validation = _validator.Validate(type, payloadJson ?? "{}");
+        if (!validation.IsValid)
+        {
+            throw new NoteValidationException(validation.Errors);
+        }
+
+        var schemaVer = _registry.GetLatest(type)!.Version;
+        var nowUtc = NowUtc();
+        var specs = links ?? Array.Empty<AssembleLink>();
+
+        using var connection = _connectionFactory.Create();
+        using var transaction = connection.BeginTransaction();
+        var (id, created) = PersistNote(connection, transaction, domain, type, title, body, payloadJson, tagsJson, dedupKey, sourceAgent, schemaVer, nowUtc);
+
+        foreach (var link in specs)
+        {
+            if (!RelationName.IsValid(link.Rel))
+            {
+                throw new AssembleException($"Invalid relation '{link.Rel}': {RelationName.Expectation}.");
+            }
+
+            if (!NoteExists(connection, transaction, link.ToId))
+            {
+                throw new AssembleException($"Link target '{link.ToId}' does not exist; nothing was created.");
+            }
+
+            InsertLinkRow(connection, transaction, id, link.ToId, link.Rel, nowUtc);
+        }
 
         transaction.Commit();
-        return new UpsertResult(id, created, nowUtc);
+        return new AssembleResult(id, created, nowUtc, specs.Count);
+    }
+
+    private static bool NoteExists(SqliteConnection connection, SqliteTransaction transaction, string id)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT EXISTS (SELECT 1 FROM notes WHERE id = $id AND deleted = 0);";
+        command.Parameters.AddWithValue("$id", id);
+        return Convert.ToInt64(command.ExecuteScalar()) != 0;
+    }
+
+    private static void InsertLinkRow(SqliteConnection connection, SqliteTransaction transaction, string fromId, string toId, string rel, string nowUtc)
+    {
+        using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = "INSERT INTO note_links (from_id, to_id, rel, created_utc) VALUES ($f, $t, $r, $now);";
+            command.Parameters.AddWithValue("$f", fromId);
+            command.Parameters.AddWithValue("$t", toId);
+            command.Parameters.AddWithValue("$r", rel);
+            command.Parameters.AddWithValue("$now", nowUtc);
+            command.ExecuteNonQuery();
+        }
+
+        NoteAudit.Append(connection, transaction, fromId, "link", null, nowUtc,
+            new JsonObject { ["op"] = "link", ["to"] = toId, ["rel"] = rel }.ToJsonString());
     }
 
     /// <summary>
@@ -166,20 +246,7 @@ public sealed class NotesWriter
         var nowUtc = NowUtc();
         using var connection = _connectionFactory.Create();
         using var transaction = connection.BeginTransaction();
-
-        using (var command = connection.CreateCommand())
-        {
-            command.Transaction = transaction;
-            command.CommandText = "INSERT INTO note_links (from_id, to_id, rel, created_utc) VALUES ($f, $t, $r, $now);";
-            command.Parameters.AddWithValue("$f", fromId);
-            command.Parameters.AddWithValue("$t", toId);
-            command.Parameters.AddWithValue("$r", rel);
-            command.Parameters.AddWithValue("$now", nowUtc);
-            command.ExecuteNonQuery();
-        }
-
-        var diff = new JsonObject { ["op"] = "link", ["to"] = toId, ["rel"] = rel }.ToJsonString();
-        NoteAudit.Append(connection, transaction, fromId, "link", null, nowUtc, diff);
+        InsertLinkRow(connection, transaction, fromId, toId, rel, nowUtc);
         transaction.Commit();
     }
 

@@ -48,9 +48,11 @@ public class StdioRoundTripTests
         Assert.Contains(tools, tool => tool.Name == "artifacts_url");
         Assert.Contains(tools, tool => tool.Name == "notes_patch");
         Assert.Contains(tools, tool => tool.Name == "notes_links");
+        Assert.Contains(tools, tool => tool.Name == "notes_assemble");
 
         await AssertNotesRoundTrip(client, cts.Token);
         await AssertStructuredInputs(client, cts.Token);
+        await AssertAssembleIsAtomic(client, cts.Token);
         await AssertSkillRoundTrip(client, cts.Token);
         await AssertArtifactRoundTrip(client, cts.Token);
         await AssertValidationErrorCarriesSkillHint(client, cts.Token);
@@ -101,6 +103,32 @@ public class StdioRoundTripTests
         var text = Text(search);
         Assert.Contains("MEMP-901", text);     // object payload was stored + indexed
         Assert.Contains("structured", text);   // array tags were stored
+    }
+
+    private static async Task AssertAssembleIsAtomic(McpClient client, CancellationToken ct)
+    {
+        // MEMP-075: links bind as an array of objects; a missing target rolls back the whole assemble.
+        var bad = await client.CallToolAsync("notes_assemble", new Dictionary<string, object?>
+        {
+            ["domain"] = "memory-mcp", ["type"] = "backlog_item",
+            ["payload"] = new Dictionary<string, object?> { ["key"] = "MEMP-902", ["status"] = "ready" },
+            ["dedupKey"] = "MEMP-902",
+            ["links"] = new[] { new Dictionary<string, object?> { ["toId"] = "ghost", ["rel"] = "depends_on" } },
+        }, cancellationToken: ct);
+        Assert.True(bad.IsError is true, "assemble with a missing link target should error");
+
+        var search = await client.CallToolAsync("notes_search",
+            new Dictionary<string, object?> { ["domain"] = "memory-mcp", ["query"] = "902" }, cancellationToken: ct);
+        Assert.DoesNotContain("MEMP-902", Text(search)); // rolled back — the note was not created
+
+        // No links: the note is created normally.
+        var ok = await client.CallToolAsync("notes_assemble", new Dictionary<string, object?>
+        {
+            ["domain"] = "memory-mcp", ["type"] = "backlog_item", ["title"] = "Solo case",
+            ["payload"] = new Dictionary<string, object?> { ["key"] = "MEMP-903", ["status"] = "ready" },
+            ["dedupKey"] = "MEMP-903",
+        }, cancellationToken: ct);
+        Assert.True(ok.IsError is not true, "assemble without links should succeed: " + Text(ok));
     }
 
     private static async Task AssertSkillRoundTrip(McpClient client, CancellationToken ct)

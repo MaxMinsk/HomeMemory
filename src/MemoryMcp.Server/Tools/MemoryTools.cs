@@ -138,6 +138,30 @@ public sealed class MemoryTools
         return keys.Length == 0 ? string.Empty : $" Guidance available — call skill_get for: {string.Join(", ", keys)}.";
     }
 
+    /// <summary>Creates a note and its outgoing links atomically (all-or-nothing).</summary>
+    [McpServerTool(Name = "notes_assemble", Destructive = false, UseStructuredContent = true)]
+    [Description("Create (or upsert by dedupKey) a note AND its outgoing links in ONE transaction — all-or-nothing. If any link's target is missing or its rel invalid, nothing is created (no half-built case). `links` is an array of {toId, rel} with an active-voice lower_snake_case rel. payload/tags accept an object/array or a JSON string.")]
+    public AssembleResult NotesAssemble(
+        [Description("Namespace, e.g. memory-mcp")] string domain,
+        [Description("Schema type, e.g. backlog_item")] string type,
+        [Description("Human-readable title")] string? title = null,
+        [Description("Free-text body")] string? body = null,
+        [Description("Typed payload as a JSON object (a JSON string is also accepted)")] JsonElement? payload = null,
+        [Description("Tags as a JSON array (a JSON array string is also accepted)")] JsonElement? tags = null,
+        [Description("Stable upsert key (e.g. MEMP-001)")] string? dedupKey = null,
+        [Description("Outgoing links to create with the note: [{toId, rel}]")] AssembleLink[]? links = null,
+        [Description("Who is writing (provenance)")] string? sourceAgent = null)
+        => Translate(() =>
+        {
+            Guard().Authorize(domain);
+            foreach (var link in links ?? Array.Empty<AssembleLink>())
+            {
+                AuthorizeNote(link.ToId);
+            }
+
+            return _notes.Assemble(domain, type, title, body, JsonArg(payload), JsonArg(tags), dedupKey, links, sourceAgent ?? "mcp");
+        });
+
     /// <summary>Appends a schema-less free-text journal note (capture-first).</summary>
     [McpServerTool(Name = "notes_append_journal", Destructive = false)]
     [Description("Append a schema-less free-text journal note (capture-first; structure it later). A title is derived from the first line if you omit one, a stable dedupKey is assigned, and the note is tagged 'unstructured' so it can be found for later structuring.")]
@@ -388,6 +412,10 @@ public sealed class MemoryTools
             throw new McpException(exception.Message);
         }
         catch (ConcurrencyException exception)
+        {
+            throw new McpException(exception.Message);
+        }
+        catch (AssembleException exception)
         {
             throw new McpException(exception.Message);
         }
