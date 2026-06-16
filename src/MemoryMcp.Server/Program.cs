@@ -39,7 +39,12 @@ const string ServerInstructions =
     "writing a typed note, and skill_list(domain)/skill_get for conventions. " +
     "For a large/unknown note, read a slice not the whole body: notes_get(includeBody=false) to peek, then " +
     "notes_outline/notes_find/notes_read; fetch the full body only when you truly need it. " +
-    "READ FIRST: skill_get(domain=\"memory-mcp\", key=\"memory-authoring\") — the core authoring guide.";
+    "Use Memory as durable working memory, not only when asked: at the start of a related task search for " +
+    "relevant notes; during and after, save durable facts/decisions/preferences/project-state without waiting " +
+    "to be told — but never secrets, and ask before sensitive personal info. Prefer updating existing notes " +
+    "over duplicates, and mention briefly what you saved. " +
+    "READ FIRST: skill_get(domain=\"memory-mcp\", key=\"agent-memory-use\") for when to recall/save, and " +
+    "key=\"memory-authoring\" for how to write.";
 
 if (args.Length > 0 && (args[0] == "import-backlog" || args[0] == "export-backlog"))
 {
