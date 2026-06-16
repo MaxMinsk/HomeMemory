@@ -243,6 +243,24 @@ public class NotesReadMutateTests
     }
 
     [Fact]
+    public void Link_is_idempotent_and_validates_endpoints()
+    {
+        using var temp = new TempDatabase();
+        var (repo, factory) = NewRepo(temp);
+        var a = Seed(repo, "MEMP-200", "ready");
+        var b = Seed(repo, "MEMP-201", "ready");
+
+        repo.Link(a, b, "depends_on");
+        repo.Link(a, b, "depends_on"); // duplicate -> ignored (unique index)
+
+        using var c = factory.Create();
+        Assert.Equal(1L, Count(c, $"SELECT count(*) FROM note_links WHERE from_id = '{a}' AND to_id = '{b}' AND rel = 'depends_on';"));
+        Assert.Equal(1L, Count(c, $"SELECT count(*) FROM note_events WHERE note_id = '{a}' AND op = 'link';")); // one audit, not two
+
+        Assert.Throws<AssembleException>(() => repo.Link(a, "ghost", "depends_on")); // missing endpoint rejected
+    }
+
+    [Fact]
     public void Supersede_marks_old_and_links_new()
     {
         using var temp = new TempDatabase();

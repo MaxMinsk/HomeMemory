@@ -157,15 +157,21 @@ public sealed class NotesWriter
 
     private static void InsertLinkRow(SqliteConnection connection, SqliteTransaction transaction, string fromId, string toId, string rel, string nowUtc)
     {
+        int inserted;
         using (var command = connection.CreateCommand())
         {
             command.Transaction = transaction;
-            command.CommandText = "INSERT INTO note_links (from_id, to_id, rel, created_utc) VALUES ($f, $t, $r, $now);";
+            command.CommandText = "INSERT OR IGNORE INTO note_links (from_id, to_id, rel, created_utc) VALUES ($f, $t, $r, $now);";
             command.Parameters.AddWithValue("$f", fromId);
             command.Parameters.AddWithValue("$t", toId);
             command.Parameters.AddWithValue("$r", rel);
             command.Parameters.AddWithValue("$now", nowUtc);
-            command.ExecuteNonQuery();
+            inserted = command.ExecuteNonQuery();
+        }
+
+        if (inserted == 0)
+        {
+            return; // the link already existed (idempotent) — no new edge, no audit event
         }
 
         NoteAudit.Append(connection, transaction, fromId, "link", null, nowUtc,
@@ -246,6 +252,16 @@ public sealed class NotesWriter
         var nowUtc = NowUtc();
         using var connection = _connectionFactory.Create();
         using var transaction = connection.BeginTransaction();
+        if (!NoteExists(connection, transaction, fromId))
+        {
+            throw new AssembleException($"Link source '{fromId}' does not exist.");
+        }
+
+        if (!NoteExists(connection, transaction, toId))
+        {
+            throw new AssembleException($"Link target '{toId}' does not exist.");
+        }
+
         InsertLinkRow(connection, transaction, fromId, toId, rel, nowUtc);
         transaction.Commit();
     }

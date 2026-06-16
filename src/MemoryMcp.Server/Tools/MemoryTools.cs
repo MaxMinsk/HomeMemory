@@ -303,6 +303,7 @@ public sealed class MemoryTools
         => Translate(() =>
         {
             AuthorizeNote(fromId);
+            AuthorizeNoteIfExists(toId); // don't authorize-by-existence block cleaning a dangling edge, but do gate cross-domain
             return _notes.Unlink(fromId, toId, rel);
         });
 
@@ -398,7 +399,15 @@ public sealed class MemoryTools
 
     private ScopeGuard Guard() => new(_scope.Current);
 
+    // For mutations: the note must exist and be in scope. Missing -> error (no silent no-op / dangling edge).
     private void AuthorizeNote(string id)
+    {
+        var note = _notes.Get(id) ?? throw new McpException($"Note '{id}' not found.");
+        Guard().Authorize(note.Domain);
+    }
+
+    // Authorize a note's domain only if it still exists (e.g. unlink's target may be a removed note).
+    private void AuthorizeNoteIfExists(string id)
     {
         var note = _notes.Get(id);
         if (note is not null)

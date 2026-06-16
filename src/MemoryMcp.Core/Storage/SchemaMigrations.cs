@@ -19,5 +19,6 @@ public static class SchemaMigrations
         new Migration0006PendingActionDomain(),
         new Migration0007Tokens(),
         new Migration0008FtsPayload(),
+        new Migration0009LinkUnique(),
     };
 }
