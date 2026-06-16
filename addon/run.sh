@@ -9,11 +9,17 @@ export Logging__LogLevel__Default="$(bashio::config 'log_level')"
 if bashio::config.has_value 'bearer_token'; then
   export MEMORY_BEARER_TOKEN="$(bashio::config 'bearer_token')"
 else
-  bashio::log.warning "No bearer_token set — the HTTP endpoint is unauthenticated. Set one for remote access."
+  bashio::log.fatal "No bearer_token set. The HTTP endpoint refuses to start unauthenticated — set 'bearer_token' in the add-on options."
+  exit 1
 fi
 
 if bashio::config.has_value 'allowed_domains'; then
   export MEMORY_ALLOWED_DOMAINS="$(bashio::config 'allowed_domains')"
+fi
+
+# Optional dedicated key for signing artifact URLs (defaults to the bearer token if unset).
+if bashio::config.has_value 'artifact_signing_key'; then
+  export MEMORY_ARTIFACT_SIGNING_KEY="$(bashio::config 'artifact_signing_key')"
 fi
 
 # Public origin (e.g. https://memory.kazmin.tech) so artifacts_url returns absolute, shareable links.

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.17.0
+
+Sprint 10 — security/authorization hardening (from the Codex code review) + ambient memory.
+
+- **Auth is mandatory in HTTP mode** (MEMP-100): the server (and add-on) refuse to start without
+  `bearer_token` unless `ALLOW_UNAUTHENTICATED_HTTP=true` (local dev). Artifact URLs can be signed with a
+  dedicated `artifact_signing_key` (new add-on option); the built-in fallback secret can no longer key
+  real URLs.
+- **Confirmations are domain-scoped** (MEMP-098): a pending action records its target domain; a
+  restricted caller only lists/confirms/cancels tokens in its own domains (out-of-scope tokens look
+  unknown — no cross-domain leak).
+- **Viewer & artifact endpoints respect scope** (MEMP-099): `/api/search` restricts to the caller's
+  domains, `/api/notes/{id}` hides out-of-scope notes, and bearer access to `GET /artifacts/{id}` /
+  `PUT /artifacts/upload` is authorized by the artifact's domain; signed URLs remain capabilities.
+- **Ambient memory** (MEMP-105): `initialize` now instructs agents to use Memory as durable working
+  memory on their own (recall, capture, consolidate — never secrets), pointing at the new
+  `agent-memory-use` skill.
+
 ## 0.16.0
 
 Sprint 9 — atomic assembly & dedup hygiene.
