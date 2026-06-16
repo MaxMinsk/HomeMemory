@@ -6,6 +6,9 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using MemoryMcp.Core.Artifacts;
+using MemoryMcp.Core.Notes;
+using MemoryMcp.Core.Schemas;
+using MemoryMcp.Core.Storage;
 using MemoryMcp.Tests.Storage;
 using Xunit;
 
@@ -59,6 +62,43 @@ public class HttpUploadTests
         }
     }
 
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task Restricted_bearer_sees_only_its_domain_via_viewer_api()
+    {
+        using var temp = new TempDatabase();
+        using var blobDir = new TempDir();
+        const string token = "scoped-bearer-token";
+
+        // Seed two domains directly into the db file before the server starts.
+        var factory = new SqliteConnectionFactory(temp.FilePath);
+        new Migrator(factory, SchemaMigrations.All).Migrate();
+        var repo = new NotesRepository(factory, SchemaRegistry.FromEmbeddedResources());
+        var homeId = repo.Upsert("home", "backlog_item", "Home note", null, """{ "key": "MEMP-700", "status": "ready" }""", null, "MEMP-700", "t").Id;
+        var workId = repo.Upsert("work", "backlog_item", "Work note", null, """{ "key": "WORK-700", "status": "ready" }""", null, "WORK-700", "t").Id;
+
+        var port = FreePort();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        using var server = StartHttpServer(temp.FilePath, blobDir.Path, token, port, allowedDomains: "home");
+        try
+        {
+            using var http = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            await WaitForReady(http, cts.Token);
+
+            var search = await http.GetStringAsync("/api/search?status=active", cts.Token);
+            Assert.Contains("Home note", search, StringComparison.Ordinal);
+            Assert.DoesNotContain("Work note", search, StringComparison.Ordinal); // out-of-scope domain excluded
+
+            Assert.Equal(HttpStatusCode.OK, (await http.GetAsync($"/api/notes/{homeId}", cts.Token)).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync($"/api/notes/{workId}", cts.Token)).StatusCode);
+        }
+        finally
+        {
+            TryKill(server);
+        }
+    }
+
     private static async Task WaitForReady(HttpClient http, CancellationToken ct)
     {
         for (var attempt = 0; attempt < 120; attempt++)
@@ -82,7 +122,7 @@ public class HttpUploadTests
         throw new InvalidOperationException("HTTP server did not become ready in time.");
     }
 
-    private static Process StartHttpServer(string dbPath, string blobRoot, string token, int port)
+    private static Process StartHttpServer(string dbPath, string blobRoot, string token, int port, string? allowedDomains = null)
     {
         var info = new ProcessStartInfo("dotnet", LocateServerDll())
         {
@@ -95,6 +135,11 @@ public class HttpUploadTests
         info.Environment["MEMORY_BLOB_ROOT"] = blobRoot;
         info.Environment["MEMORY_BEARER_TOKEN"] = token;
         info.Environment["ASPNETCORE_URLS"] = $"http://127.0.0.1:{port}";
+        if (allowedDomains is not null)
+        {
+            info.Environment["MEMORY_ALLOWED_DOMAINS"] = allowedDomains;
+        }
+
         return Process.Start(info) ?? throw new InvalidOperationException("Failed to start server process.");
     }
 

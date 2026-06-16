@@ -102,6 +102,11 @@ if (transport == "http")
                 return;
             }
 
+            // A signed URL is a capability (already domain-bound); a bearer request carries the caller's
+            // scope so the endpoint can authorize the artifact's domain (MEMP-099).
+            context.Items[HttpScopeAccessor.ScopeKey] = hasBearer && allowedDomains.Length > 0
+                ? RequestScope.ForDomains(allowedDomains)
+                : RequestScope.Unrestricted;
             await next();
             return;
         }

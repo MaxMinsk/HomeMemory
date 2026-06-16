@@ -2,6 +2,7 @@ using System.Reflection;
 using MemoryMcp.Core.Artifacts;
 using MemoryMcp.Core.Diagnostics;
 using MemoryMcp.Core.Notes;
+using MemoryMcp.Core.Security;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -23,23 +24,33 @@ internal static class ViewerEndpoints
         app.MapGet("/api/stats", (DiagnosticsService diagnostics) => Results.Json(diagnostics.Snapshot()));
 
         app.MapGet("/api/search", (
-            NotesRepository notes,
+            NotesRepository notes, IScopeAccessor scope,
             string? q, string? domain, string? type, string? tags, string? filter, string? status, int? limit, int? offset) =>
         {
+            IReadOnlyCollection<string>? restrict;
+            try
+            {
+                restrict = new ScopeGuard(scope.Current).RestrictionForSearch(domain); // 403 if an explicit out-of-scope domain
+            }
+            catch (ScopeForbiddenException)
+            {
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            }
+
             var tagList = string.IsNullOrWhiteSpace(tags)
                 ? null
                 : tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             var page = notes.Search(q, domain, type, tagList, string.IsNullOrWhiteSpace(status) ? "active" : status,
-                limit is > 0 ? limit.Value : 50, offset ?? 0, restrictToDomains: null, filter: filter, includePayload: true);
+                limit is > 0 ? limit.Value : 50, offset ?? 0, restrictToDomains: restrict, filter: filter, includePayload: true);
             return Results.Json(page);
         });
 
-        app.MapGet("/api/notes/{id}", (string id, NotesRepository notes, ArtifactsService artifacts, ArtifactUrlSigner signer) =>
+        app.MapGet("/api/notes/{id}", (string id, NotesRepository notes, ArtifactsService artifacts, ArtifactUrlSigner signer, IScopeAccessor scope) =>
         {
             var note = notes.Get(id);
-            if (note is null)
+            if (note is null || !new ScopeGuard(scope.Current).IsAllowed(note.Domain))
             {
-                return Results.NotFound();
+                return Results.NotFound(); // out-of-scope notes are indistinguishable from missing
             }
 
             // Each attachment carries a short-lived signed URL; the bearer never goes into the link.
@@ -54,11 +65,24 @@ internal static class ViewerEndpoints
     // Artifact byte transfer (out-of-band, never through the model context): signed PUT upload + GET serve.
     private static void MapArtifactBytes(this IEndpointRouteBuilder app)
     {
+        app.MapArtifactUpload();
+        app.MapArtifactServe();
+    }
+
+    private static void MapArtifactUpload(this IEndpointRouteBuilder app)
+    {
         // Upload opaque bytes directly via a signed capability URL (from artifacts_request_upload). The
         // signature (verified in middleware) binds the destination, so we trust the query parameters here.
         // Bytes go straight to disk, never through the model context. Kestrel caps the body size.
-        app.MapPut("/artifacts/upload", async (HttpRequest request, ArtifactsService artifacts) =>
+        app.MapPut("/artifacts/upload", async (HttpRequest request, ArtifactsService artifacts, IScopeAccessor scope) =>
         {
+            var query = request.Query;
+            // Bearer requests must be in scope for the destination domain; a signed URL is already a capability.
+            if (!new ScopeGuard(scope.Current).IsAllowed(query["domain"].ToString()))
+            {
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            }
+
             using var buffer = new MemoryStream();
             await request.Body.CopyToAsync(buffer);
             var bytes = buffer.ToArray();
@@ -67,7 +91,6 @@ internal static class ViewerEndpoints
                 return Results.BadRequest("Empty upload body.");
             }
 
-            var query = request.Query;
             var contentType = string.IsNullOrEmpty(query["contentType"]) ? null : query["contentType"].ToString();
             var noteId = string.IsNullOrEmpty(query["noteId"]) ? null : query["noteId"].ToString();
             try
@@ -80,13 +103,17 @@ internal static class ViewerEndpoints
                 return Results.Problem(exception.Message, statusCode: StatusCodes.Status413PayloadTooLarge);
             }
         });
+    }
 
+    private static void MapArtifactServe(this IEndpointRouteBuilder app)
+    {
         // Serve an artifact's bytes to the browser (rendered HTML renders inline, md/text shows as text).
         // The bytes go to the human, never back through the model context. Auth: bearer header or ?t= token.
-        app.MapGet("/artifacts/{id}", (string id, ArtifactsService artifacts, BlobStore blobs) =>
+        app.MapGet("/artifacts/{id}", (string id, ArtifactsService artifacts, BlobStore blobs, IScopeAccessor scope) =>
         {
             var artifact = artifacts.Get(id);
-            if (artifact is null)
+            // Bearer requests must be in scope for the artifact's domain; a signed URL is already a capability.
+            if (artifact is null || !new ScopeGuard(scope.Current).IsAllowed(artifact.Domain))
             {
                 return Results.NotFound();
             }
