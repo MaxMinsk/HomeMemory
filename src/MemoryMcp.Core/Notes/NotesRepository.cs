@@ -64,6 +64,12 @@ public sealed class NotesRepository
     /// <inheritdoc cref="NotesReader.Links"/>
     public IReadOnlyList<LinkView> Links(string id) => _reader.Links(id);
 
+    /// <inheritdoc cref="NotesReader.Recall"/>
+    public RecallResult Recall(
+        string? query, string? domain, int limit, IReadOnlyCollection<string>? restrictToDomains,
+        bool includeLinks = true, int maxHops = 1)
+        => _reader.Recall(query, domain, limit, restrictToDomains, includeLinks, maxHops);
+
     /// <inheritdoc cref="NotesReader.Events"/>
     public IReadOnlyList<NoteEvent> Events(string id, int limit = 50) => _reader.Events(id, limit);
 

@@ -205,6 +205,49 @@ public sealed class NotesReader
         return counts;
     }
 
+    /// <summary>
+    /// Recalls a compact context block for a query: the primary search hits plus their one-hop linked
+    /// neighbors (both directions), all scope-restricted. Reuses FTS search + the link graph — no vectors.
+    /// </summary>
+    /// <param name="query">Full-text query (optional).</param>
+    /// <param name="domain">Optional domain filter.</param>
+    /// <param name="limit">Max primary hits (page size).</param>
+    /// <param name="restrictToDomains">Auth scope; restricts both hits and neighbors.</param>
+    /// <param name="includeLinks">When true, include one-hop linked neighbors of the hits.</param>
+    /// <param name="maxHops">Graph expansion depth; currently one hop (values &gt; 1 behave as 1).</param>
+    public RecallResult Recall(
+        string? query, string? domain, int limit, IReadOnlyCollection<string>? restrictToDomains,
+        bool includeLinks = true, int maxHops = 1)
+    {
+        var page = Search(query, domain, null, null, "active", limit, 0, restrictToDomains, null, includePayload: true);
+        var hits = page.Items;
+
+        var neighbors = new List<RecallNeighbor>();
+        if (includeLinks && maxHops >= 1 && hits.Count > 0)
+        {
+            var seen = new HashSet<string>(hits.Select(hit => hit.Id), StringComparer.Ordinal);
+            foreach (var hit in hits)
+            {
+                foreach (var link in Links(hit.Id))
+                {
+                    if (!seen.Add(link.NoteId))
+                    {
+                        continue; // already a hit or an earlier neighbor
+                    }
+
+                    if (restrictToDomains is not null && !restrictToDomains.Contains(link.Domain))
+                    {
+                        continue; // neighbor outside the caller's scope
+                    }
+
+                    neighbors.Add(new RecallNeighbor(link.NoteId, link.Title, link.Type, link.Domain, link.Rel, link.Direction, hit.Id));
+                }
+            }
+        }
+
+        return new RecallResult(query, hits, neighbors);
+    }
+
     /// <summary>Returns the note's links in both directions (each resolved to the note at the other end).</summary>
     /// <param name="id">The note id.</param>
     public IReadOnlyList<LinkView> Links(string id)
@@ -212,10 +255,10 @@ public sealed class NotesReader
         using var connection = _connectionFactory.Create();
         using var command = connection.CreateCommand();
         command.CommandText =
-            "SELECT 'out' AS dir, l.rel, l.to_id AS other, n.title, n.type FROM note_links l JOIN notes n ON n.id = l.to_id " +
+            "SELECT 'out' AS dir, l.rel, l.to_id AS other, n.title, n.type, n.domain FROM note_links l JOIN notes n ON n.id = l.to_id " +
             "WHERE l.from_id = $id AND n.deleted = 0 " +
             "UNION ALL " +
-            "SELECT 'in' AS dir, l.rel, l.from_id AS other, n.title, n.type FROM note_links l JOIN notes n ON n.id = l.from_id " +
+            "SELECT 'in' AS dir, l.rel, l.from_id AS other, n.title, n.type, n.domain FROM note_links l JOIN notes n ON n.id = l.from_id " +
             "WHERE l.to_id = $id AND n.deleted = 0 " +
             "ORDER BY dir, rel;";
         command.Parameters.AddWithValue("$id", id);
@@ -225,7 +268,7 @@ public sealed class NotesReader
         while (reader.Read())
         {
             links.Add(new LinkView(reader.GetString(0), reader.GetString(1), reader.GetString(2),
-                reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetString(4)));
+                reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetString(4), reader.GetString(5)));
         }
 
         return links;

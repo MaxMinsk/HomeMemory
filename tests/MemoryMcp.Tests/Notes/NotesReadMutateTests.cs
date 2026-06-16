@@ -339,6 +339,39 @@ public class NotesReadMutateTests
     }
 
     [Fact]
+    public void Recall_returns_hits_and_one_hop_neighbors()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        var a = Seed(repo, "MEMP-200", "ready", body: "findme alpha");
+        var b = Seed(repo, "MEMP-201", "ready", title: "Neighbor");
+        repo.Link(a, b, "depends_on");
+
+        var recall = repo.Recall("findme", "memory-mcp", 10, restrictToDomains: null);
+
+        Assert.Equal(a, Assert.Single(recall.Hits).Id);
+        var neighbor = Assert.Single(recall.Neighbors);
+        Assert.Equal(b, neighbor.Id);
+        Assert.Equal("depends_on", neighbor.Rel);
+        Assert.Equal(a, neighbor.FromId);
+    }
+
+    [Fact]
+    public void Recall_excludes_out_of_scope_neighbors()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        var a = Seed(repo, "MEMP-200", "ready", body: "findme");
+        var work = repo.Upsert("work", "backlog_item", "W", null, """{ "key": "WORK-200", "status": "ready" }""", null, "WORK-200", "t").Id;
+        repo.Link(a, work, "depends_on");
+
+        var recall = repo.Recall("findme", null, 10, restrictToDomains: new[] { "memory-mcp" });
+
+        Assert.Equal(a, Assert.Single(recall.Hits).Id); // only the in-scope hit
+        Assert.Empty(recall.Neighbors);                 // the 'work' neighbor is filtered out
+    }
+
+    [Fact]
     public void Patch_merges_payload_keeps_other_fields_and_bumps_revision()
     {
         using var temp = new TempDatabase();

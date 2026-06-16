@@ -49,6 +49,7 @@ public class StdioRoundTripTests
         Assert.Contains(tools, tool => tool.Name == "notes_patch");
         Assert.Contains(tools, tool => tool.Name == "notes_links");
         Assert.Contains(tools, tool => tool.Name == "notes_assemble");
+        Assert.Contains(tools, tool => tool.Name == "notes_recall");
 
         await AssertNotesRoundTrip(client, cts.Token);
         await AssertStructuredInputs(client, cts.Token);
@@ -82,6 +83,11 @@ public class StdioRoundTripTests
             new Dictionary<string, object?> { ["domain"] = "memory-mcp" }, cancellationToken: ct);
         Assert.True(search.IsError is not true, "notes_search reported an error");
         Assert.Contains("Round-trip demo", Text(search));
+
+        var recall = await client.CallToolAsync("notes_recall",
+            new Dictionary<string, object?> { ["query"] = "Round-trip", ["domain"] = "memory-mcp" }, cancellationToken: ct);
+        Assert.True(recall.IsError is not true, "notes_recall reported an error");
+        Assert.Contains("Round-trip demo", Text(recall));
     }
 
     private static async Task AssertStructuredInputs(McpClient client, CancellationToken ct)

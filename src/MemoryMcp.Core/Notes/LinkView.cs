@@ -6,4 +6,5 @@ namespace MemoryMcp.Core.Notes;
 /// <param name="NoteId">The note at the other end of the link.</param>
 /// <param name="Title">That note's title, if any.</param>
 /// <param name="Type">That note's type.</param>
-public sealed record LinkView(string Direction, string Rel, string NoteId, string? Title, string Type);
+/// <param name="Domain">That note's domain (for scope filtering / display).</param>
+public sealed record LinkView(string Direction, string Rel, string NoteId, string? Title, string Type, string Domain);

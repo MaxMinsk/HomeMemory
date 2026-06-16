@@ -57,6 +57,17 @@ public sealed class MemoryTools
         [Description("When true, each hit also includes its links (both directions), so you can render a graph without a notes_links call per row.")] bool includeLinks = false)
         => Translate(() => _notes.Search(query, domain, type, tags, status, limit, offset, Guard().RestrictionForSearch(domain), filter, includePayload, includeLinks));
 
+    /// <summary>Recalls a compact context block (hits + linked neighbors) for a query, scope-restricted.</summary>
+    [McpServerTool(Name = "notes_recall", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("Recall a prompt-ready context block for a query: the top matching notes (FTS, with payload) PLUS their one-hop linked neighbors (both directions), scope-restricted, with relation labels and source ids/revisions — a case's surrounding context in one call instead of search + many gets. Snippets only, never full bodies (use notes_read/notes_get for those).")]
+    public RecallResult NotesRecall(
+        [Description("Full-text query")] string query,
+        [Description("Domain filter (optional)")] string? domain = null,
+        [Description("Max primary hits (default 10)")] int limit = 10,
+        [Description("Include one-hop linked neighbors of the hits (default true)")] bool includeLinks = true,
+        [Description("Graph expansion depth (currently one hop)")] int maxHops = 1)
+        => Translate(() => _notes.Recall(query, domain, limit, Guard().RestrictionForSearch(domain), includeLinks, maxHops));
+
     /// <summary>Gets a note (envelope + payload + size metadata) by id, if it is in scope.</summary>
     [McpServerTool(Name = "notes_get", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
     [Description("Get a note (envelope + payload) by id, plus size metadata (bodyChars, attachmentCount, linkCount). By default the full body is returned. For a large note, pass includeBody=false to peek (no body) or bodyMaxChars to cap it — check `truncated`/`bodyChars` and use notes_read/notes_outline to read the rest.")]
