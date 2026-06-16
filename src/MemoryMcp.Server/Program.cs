@@ -43,8 +43,9 @@ const string ServerInstructions =
     "relevant notes; during and after, save durable facts/decisions/preferences/project-state without waiting " +
     "to be told — but never secrets, and ask before sensitive personal info. Prefer updating existing notes " +
     "over duplicates, and mention briefly what you saved. " +
-    "READ FIRST: skill_get(domain=\"memory-mcp\", key=\"agent-memory-use\") for when to recall/save, and " +
-    "key=\"memory-authoring\" for how to write.";
+    "The 'commons' domain is shared and readable by every agent (even a domain-scoped one); it holds the core " +
+    "rules/skills. READ FIRST: skill_list(domain=\"commons\"), then skill_get(domain=\"commons\", " +
+    "key=\"agent-memory-use\") for when to recall/save and key=\"memory-authoring\" for how to write.";
 
 if (args.Length > 0 && (args[0] == "import-backlog" || args[0] == "export-backlog"))
 {

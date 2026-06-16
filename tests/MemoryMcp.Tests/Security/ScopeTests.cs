@@ -36,10 +36,28 @@ public class ScopeTests
         var guard = new ScopeGuard(RequestScope.ForDomains(new[] { "kitchen" }));
 
         Assert.Null(guard.RestrictionForSearch("kitchen"));                 // in-scope explicit -> no extra restriction
+        Assert.Null(guard.RestrictionForSearch("commons"));                 // commons is readable by everyone
         Assert.Throws<ScopeForbiddenException>(() => guard.RestrictionForSearch("work"));
-        var implicitRestriction = guard.RestrictionForSearch(null);        // no filter -> restrict to allowed set
+        var implicitRestriction = guard.RestrictionForSearch(null);        // no filter -> allowed set PLUS commons
         Assert.NotNull(implicitRestriction);
-        Assert.Equal(new[] { "kitchen" }, implicitRestriction!);
+        Assert.Equal(new[] { "kitchen", "commons" }, implicitRestriction!);
+    }
+
+    [Fact]
+    public void Commons_domain_is_readable_by_all_but_writable_only_in_scope()
+    {
+        var guard = new ScopeGuard(RequestScope.ForDomains(new[] { "kitchen" }));
+
+        Assert.True(guard.IsAllowed("commons"));   // read: allowed for any scope
+        Assert.True(guard.IsAllowed("Commons"));   // case-insensitive
+        Assert.Throws<ScopeForbiddenException>(() => guard.Authorize("commons")); // write: not in scope -> denied
+        Assert.NotNull(guard.WriteRestriction());
+        Assert.DoesNotContain("commons", guard.WriteRestriction()!);              // commons excluded from write scope
+        Assert.Contains("kitchen", guard.WriteRestriction()!);
+
+        var root = new ScopeGuard(RequestScope.Unrestricted);
+        root.Authorize("commons");                 // root may write commons (no throw)
+        Assert.Null(root.WriteRestriction());      // unrestricted -> no write restriction
     }
 
     [Fact]
