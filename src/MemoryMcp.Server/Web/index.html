@@ -28,7 +28,8 @@
   .k { color:var(--muted); }
   .meta { margin:3px 0; }
   .lbl { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; margin-right:6px; }
-  .tag { display:inline-block; background:#1f3556; color:#9cc4ff; border-radius:4px; padding:0 7px; font-size:12px; margin:0 5px 3px 0; }
+  .tag { display:inline-block; background:#1f3556; color:#9cc4ff; border-radius:4px; padding:0 7px; font-size:12px; margin:0 5px 3px 0; cursor:pointer; }
+  .tag:hover { background:#2a4d82; color:#cfe1ff; }
   a { color:var(--accent); }
   .empty { color:var(--muted); padding:40px; text-align:center; }
 </style>
@@ -70,8 +71,16 @@ async function api(path) {
   if (!r.ok) throw new Error(r.status + ' ' + (await r.text()).slice(0,200));
   return r.json();
 }
-function esc(s){ return (s==null?'':String(s)).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function esc(s){ return (s==null?'':String(s)).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function logout(){ localStorage.removeItem('memtoken'); location.hash=''; location.reload(); }
+
+// Click any tag chip (list or detail) to filter the search by that tag. Capture phase so it wins
+// over the surrounding list item's open handler before that fires.
+function tagSearch(tag){ $('#tag').value = tag; $('#left').scrollTop = 0; search(); }
+document.addEventListener('click', e => {
+  const chip = e.target.closest('.tag');
+  if (chip && chip.dataset.tag) { e.stopPropagation(); tagSearch(chip.dataset.tag); }
+}, true);
 
 const FIELDS = [['q','#q'],['type','#type'],['domain','#domain'],['status','#status'],['tag','#tag']];
 function writeHash(){
@@ -90,8 +99,9 @@ async function loadStats() {
   try {
     const s = await api('/api/stats');
     const archived = (s.notesByStatus && s.notesByStatus.archived) || 0;
+    const dbMb = (Number(s.dbSizeBytes||0)/1048576).toFixed(1);
     $('#stats').textContent = `${s.noteCount} active · ` + Object.entries(s.notesByType).map(([k,v])=>`${k} ${v}`).join('  ') +
-      `  · ${s.attachmentCount} attach` + (archived ? `  · ${archived} archived` : '');
+      `  · ${s.attachmentCount} attach` + (archived ? `  · ${archived} archived` : '') + `  · db ${dbMb} MB`;
     const fill = (id, counts) => { const sel=$(id); Object.keys(counts).sort().forEach(k => { const o=document.createElement('option'); o.value=k; o.textContent=`${k} (${counts[k]})`; sel.appendChild(o); }); };
     fill('#type', s.notesByType);
     fill('#domain', s.notesByDomain || {});
@@ -102,7 +112,7 @@ function itemHtml(it){
   let tags = []; try { tags = it.tagsJson ? JSON.parse(it.tagsJson) : []; } catch {}
   return `<div class="item" onclick="open_('${it.id}')"><div class="t">${esc(it.title)||'<i>untitled</i>'}</div>` +
     `<div class="m"><span class="badge">${esc(it.type)}</span><span class="badge">${esc(it.domain)}</span>${esc(it.status||'')}</div>` +
-    (tags.length ? `<div>${tags.map(t=>`<span class="tag">${esc(t)}</span>`).join('')}</div>` : '') + `</div>`;
+    (tags.length ? `<div>${tags.map(t=>`<span class="tag" data-tag="${esc(t)}" title="filter by this tag">${esc(t)}</span>`).join('')}</div>` : '') + `</div>`;
 }
 
 async function search(reset=true) {
@@ -141,7 +151,7 @@ async function open_(id) {
       `<div class="meta"><span class="lbl">domain</span>${esc(n.domain)}` +
       `&nbsp;&nbsp;<span class="lbl">type</span>${esc(n.type)}` +
       `&nbsp;&nbsp;<span class="lbl">status</span>${esc(n.status)}</div>` +
-      `<div class="meta"><span class="lbl">tags</span>${tags.length ? tags.map(t=>`<span class="tag">${esc(t)}</span>`).join('') : '<i class="k">none</i>'}</div>` +
+      `<div class="meta"><span class="lbl">tags</span>${tags.length ? tags.map(t=>`<span class="tag" data-tag="${esc(t)}" title="filter by this tag">${esc(t)}</span>`).join('') : '<i class="k">none</i>'}</div>` +
       `<p class="k">key: ${esc(n.dedupKey||'—')} · updated: ${esc(n.updatedUtc)} · by: ${esc(n.sourceAgent||'—')}</p>` +
       (payload ? `<h3>payload</h3><pre>${esc(payload)}</pre>` : '') +
       (n.body ? `<h3>body</h3><pre>${esc(n.body)}</pre>` : '') +

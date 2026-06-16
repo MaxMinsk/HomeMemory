@@ -54,7 +54,9 @@ public class StdioRoundTripTests
         Assert.Contains(tools, tool => tool.Name == "notes_related");
         Assert.Contains(tools, tool => tool.Name == "notes_get_by_key");
         Assert.Contains(tools, tool => tool.Name == "artifacts_find_text");
+        Assert.Contains(tools, tool => tool.Name == "memory_capabilities");
 
+        await AssertCapabilities(client, cts.Token);
         await AssertNotesRoundTrip(client, cts.Token);
         await AssertStructuredInputs(client, cts.Token);
         await AssertAssembleIsAtomic(client, cts.Token);
@@ -72,6 +74,16 @@ public class StdioRoundTripTests
         }, cancellationToken: ct);
         Assert.True(put.IsError is not true, "artifacts_put reported an error");
         Assert.Contains("blob://", Text(put));
+    }
+
+    private static async Task AssertCapabilities(McpClient client, CancellationToken ct)
+    {
+        // The runtime contract advertises the known types + the (stdio = unrestricted) scope.
+        var caps = await client.CallToolAsync("memory_capabilities", new Dictionary<string, object?>(), cancellationToken: ct);
+        Assert.True(caps.IsError is not true, "memory_capabilities reported an error: " + Text(caps));
+        var text = Text(caps);
+        Assert.Contains("backlog_item", text); // a known built-in type is listed
+        Assert.Contains("commons", text);      // commons domain surfaced
     }
 
     private static async Task AssertNotesRoundTrip(McpClient client, CancellationToken ct)

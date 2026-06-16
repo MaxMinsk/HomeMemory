@@ -3,6 +3,7 @@ using MemoryMcp.Core.Artifacts;
 using MemoryMcp.Core.Diagnostics;
 using MemoryMcp.Core.Notes;
 using MemoryMcp.Core.Schemas;
+using MemoryMcp.Core.Security;
 using MemoryMcp.Core.Storage;
 using MemoryMcp.Tests.Storage;
 using Xunit;
@@ -102,5 +103,60 @@ public class JournalAndDiagnosticsTests
 
         Assert.Equal(1_000_000, status.BlobQuotaBytes);
         Assert.Matches(@"^\d+\.\d+\.\d+", status.ServerVersion); // semver from the assembly
+    }
+
+    [Fact]
+    public void Diagnostics_reports_on_disk_db_size()
+    {
+        using var temp = new TempDatabase();
+        var factory = new SqliteConnectionFactory(temp.FilePath);
+        new Migrator(factory, SchemaMigrations.All).Migrate();
+        var registry = SchemaRegistry.FromEmbeddedResources();
+        new NotesRepository(factory, registry)
+            .Upsert("memory-mcp", "backlog_item", "T", null, """{ "key": "MEMP-301", "status": "ready" }""", null, "MEMP-301", "me");
+
+        var status = new DiagnosticsService(factory, registry).Snapshot();
+
+        Assert.True(status.DbSizeBytes > 0, "a migrated database with a row should have a non-zero on-disk size");
+    }
+
+    [Fact]
+    public void Capabilities_report_types_and_scope_for_a_restricted_token()
+    {
+        using var temp = new TempDatabase();
+        using var dir = new TempDir();
+        var factory = new SqliteConnectionFactory(temp.FilePath);
+        var migrator = new Migrator(factory, SchemaMigrations.All);
+        migrator.Migrate();
+        var registry = SchemaRegistry.FromEmbeddedResources();
+        var diagnostics = new DiagnosticsService(factory, registry, new BlobStore(dir.Path, 1_000_000));
+
+        var caps = diagnostics.Capabilities(RequestScope.ForDomains(new[] { "kitchen" }));
+
+        Assert.Matches(@"^\d+\.\d+\.\d+", caps.ServerVersion);
+        Assert.Equal(migrator.LatestVersion, caps.SchemaVersion);
+        Assert.Equal("commons", caps.CommonsDomain);
+        Assert.Equal(1_000_000, caps.BlobQuotaBytes);
+        Assert.Contains(caps.Types, t => t.Type == "backlog_item" && t.Builtin && t.LatestVersion >= 1);
+
+        Assert.False(caps.Scope.Unrestricted);
+        Assert.Contains("kitchen", caps.Scope.ReadableDomains);
+        Assert.Contains("commons", caps.Scope.ReadableDomains);     // commons is world-readable
+        Assert.Contains("kitchen", caps.Scope.WritableDomains);
+        Assert.DoesNotContain("commons", caps.Scope.WritableDomains); // read-shared, not write-shared
+    }
+
+    [Fact]
+    public void Capabilities_marks_an_unrestricted_scope()
+    {
+        using var temp = new TempDatabase();
+        var factory = new SqliteConnectionFactory(temp.FilePath);
+        new Migrator(factory, SchemaMigrations.All).Migrate();
+        var diagnostics = new DiagnosticsService(factory, SchemaRegistry.FromEmbeddedResources());
+
+        var caps = diagnostics.Capabilities(RequestScope.Unrestricted);
+
+        Assert.True(caps.Scope.Unrestricted);
+        Assert.Empty(caps.Scope.WritableDomains); // unrestricted => explicit lists are empty; the flag carries it
     }
 }

@@ -244,8 +244,8 @@ static void Bootstrap(IServiceProvider services)
     var stats = services.GetRequiredService<DiagnosticsService>().Snapshot();
     var byType = string.Join(", ", stats.NotesByType.Select(pair => $"{pair.Key}={pair.Value}"));
     services.GetRequiredService<ILoggerFactory>().CreateLogger("MemoryMcp.Stats").LogInformation(
-        "Memory stats: schema v{Schema}, {Notes} notes ({ByType}), {Attachments} attachments, {Bytes} blob bytes.",
-        stats.SchemaVersion, stats.NoteCount, byType, stats.AttachmentCount, stats.BlobBytes);
+        "Memory stats: schema v{Schema}, {Notes} notes ({ByType}), {Attachments} attachments, {Bytes} blob bytes, db {DbMb:0.##} MB.",
+        stats.SchemaVersion, stats.NoteCount, byType, stats.AttachmentCount, stats.BlobBytes, stats.DbSizeBytes / 1048576.0);
 }
 
 // Admin maintenance subcommands (run via the binary, not model-facing): `gc-blobs [--apply]`,

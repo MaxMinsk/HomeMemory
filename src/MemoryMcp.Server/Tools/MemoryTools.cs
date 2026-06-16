@@ -400,8 +400,13 @@ public sealed class MemoryTools
 
     /// <summary>Returns server/database diagnostics.</summary>
     [McpServerTool(Name = "status", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
-    [Description("Server and database diagnostics: server build version, schema version, registered schemas, note counts by type/domain/status, attachments, blob bytes + quota, pending confirmations. Check serverVersion to confirm which build prod is running.")]
+    [Description("Server and database diagnostics: server build version, schema version, registered schemas, note counts by type/domain/status, attachments, blob bytes + quota, on-disk DB size (dbSizeBytes), pending confirmations. Check serverVersion to confirm which build prod is running.")]
     public StatusReport Status() => _diagnostics.Snapshot();
+
+    /// <summary>Returns the runtime contract for the caller's scope (version, known types, domain access).</summary>
+    [McpServerTool(Name = "memory_capabilities", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("Runtime contract — call on connect to discover what this build supports instead of guessing from a stale tool list: server build version, schema version, contract version, the note types this build knows (latest schema version + whether built-in), your token's domain scope (readable/writable + commons), search backend and blob quota.")]
+    public CapabilitiesReport Capabilities() => _diagnostics.Capabilities(_scope.Current);
 
     /// <summary>Lists domains (namespaces) with their note counts.</summary>
     [McpServerTool(Name = "domains_list", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]

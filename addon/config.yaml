@@ -1,5 +1,5 @@
 name: Memory MCP
-version: "0.23.0"
+version: "0.24.0"
 slug: memory_mcp
 description: Shared memory / notes / skills data-plane (MCP) for Home Assistant agents.
 url: https://github.com/MaxMinsk/HomeMemory/tree/main/addon
@@ -9,6 +9,10 @@ arch:
 startup: services
 boot: auto
 init: false
+# Cold backup: the Supervisor stops the add-on for the duration of a backup so the SQLite
+# database (WAL mode) and the blob store under /data are captured as a consistent snapshot,
+# rather than hot-copied while connections are open. Brief downtime during backups only.
+backup: cold
 image: ghcr.io/maxminsk/homememory
 webui: "http://[HOST]:[PORT:8099]/ui"
 ports:

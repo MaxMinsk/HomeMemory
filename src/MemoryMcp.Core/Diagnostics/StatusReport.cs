@@ -13,8 +13,10 @@ namespace MemoryMcp.Core.Diagnostics;
 /// <param name="SearchBackend">A description of the search backend in use.</param>
 /// <param name="ServerVersion">The running server build version (matches the add-on release).</param>
 /// <param name="BlobQuotaBytes">The configured blob-store byte quota (0 = unlimited).</param>
+/// <param name="DbSizeBytes">On-disk database size in bytes: the main file plus the WAL/SHM sidecars when present.</param>
 public sealed record StatusReport(
     int SchemaVersion, IReadOnlyList<string> RegisteredSchemas, long NoteCount,
     IReadOnlyDictionary<string, long> NotesByType, IReadOnlyDictionary<string, long> NotesByDomain,
     IReadOnlyDictionary<string, long> NotesByStatus, long AttachmentCount, long BlobBytes,
-    long PendingActionsCount, string SearchBackend, string ServerVersion, long BlobQuotaBytes);
+    long PendingActionsCount, string SearchBackend, string ServerVersion, long BlobQuotaBytes,
+    long DbSizeBytes);

@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.24.0
+
+Sprint 17 — discoverability, observability and operations.
+
+- **`memory_capabilities`** (MEMP-124): a runtime-contract tool an agent can call on connect — server
+  build version, schema version, a contract version, the note types this build knows (latest schema
+  version + whether built-in), and the caller's domain scope (readable/writable + commons). No more
+  guessing capabilities from a tool list cached at an older session.
+- **DB size in stats** (MEMP-128): `status` now reports `dbSizeBytes` (main file + WAL/SHM sidecars),
+  the viewer shows `db <n> MB`, and the startup log line includes the database size.
+- **Clickable tags in the viewer** (MEMP-129): tag chips (in the list and the detail pane) are now
+  clickable — a click filters the search by that tag.
+- **Consistent backups** (MEMP-127): the add-on declares `backup: cold`, so Home Assistant stops it for
+  the duration of a backup and captures the WAL-mode SQLite DB + blob store under `/data` as a
+  consistent snapshot instead of a hot copy.
+- **README refresh** (MEMP-125): documents the current feature set, env vars, add-on options and CLIs.
+
 ## 0.23.0
 
 Sprint 16 — agent ergonomics (from the kitchen agent's recipe-render workflow, MEMP-123).
