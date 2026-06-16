@@ -99,6 +99,24 @@ public class HttpUploadTests
         }
     }
 
+    [Fact]
+    [Trait("Category", "Integration")]
+    public void Http_mode_refuses_to_start_without_a_bearer_token()
+    {
+        using var temp = new TempDatabase();
+        using var blobDir = new TempDir();
+        using var server = StartHttpServer(temp.FilePath, blobDir.Path, "unused", FreePort(), withBearer: false);
+        try
+        {
+            Assert.True(server.WaitForExit(20000), "server should fail closed (exit) without a bearer token");
+            Assert.NotEqual(0, server.ExitCode);
+        }
+        finally
+        {
+            TryKill(server);
+        }
+    }
+
     private static async Task WaitForReady(HttpClient http, CancellationToken ct)
     {
         for (var attempt = 0; attempt < 120; attempt++)
@@ -122,7 +140,7 @@ public class HttpUploadTests
         throw new InvalidOperationException("HTTP server did not become ready in time.");
     }
 
-    private static Process StartHttpServer(string dbPath, string blobRoot, string token, int port, string? allowedDomains = null)
+    private static Process StartHttpServer(string dbPath, string blobRoot, string token, int port, string? allowedDomains = null, bool withBearer = true)
     {
         var info = new ProcessStartInfo("dotnet", LocateServerDll())
         {
@@ -133,8 +151,17 @@ public class HttpUploadTests
         info.Environment["MEMORY_TRANSPORT"] = "http";
         info.Environment["MEMORY_DB_PATH"] = dbPath;
         info.Environment["MEMORY_BLOB_ROOT"] = blobRoot;
-        info.Environment["MEMORY_BEARER_TOKEN"] = token;
         info.Environment["ASPNETCORE_URLS"] = $"http://127.0.0.1:{port}";
+        if (withBearer)
+        {
+            info.Environment["MEMORY_BEARER_TOKEN"] = token;
+        }
+        else
+        {
+            info.Environment.Remove("MEMORY_BEARER_TOKEN");           // ensure no inherited token
+            info.Environment.Remove("ALLOW_UNAUTHENTICATED_HTTP");
+        }
+
         if (allowedDomains is not null)
         {
             info.Environment["MEMORY_ALLOWED_DOMAINS"] = allowedDomains;

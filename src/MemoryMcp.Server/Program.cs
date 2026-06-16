@@ -61,6 +61,17 @@ if (args.Length > 0 && (args[0] == "gc-blobs" || args[0] == "normalize-identifie
 
 if (transport == "http")
 {
+    // Fail closed: HTTP mode must be authenticated (it sits behind HA/tunnels). Without a bearer, /mcp,
+    // viewer APIs and artifact signing would be public/predictable — refuse to start unless explicitly
+    // opted out for local dev (MEMP-100).
+    if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("MEMORY_BEARER_TOKEN"))
+        && !string.Equals(Environment.GetEnvironmentVariable("ALLOW_UNAUTHENTICATED_HTTP"), "true", StringComparison.OrdinalIgnoreCase))
+    {
+        throw new InvalidOperationException(
+            "Refusing to start HTTP mode without MEMORY_BEARER_TOKEN. Set a bearer token, " +
+            "or set ALLOW_UNAUTHENTICATED_HTTP=true for local dev only.");
+    }
+
     var builder = WebApplication.CreateBuilder(args);
     SuppressExpectedErrorLogs(builder.Services);
     RegisterServices(builder.Services, dbPath);
@@ -198,8 +209,12 @@ static void RegisterServices(IServiceCollection services, string dbPath)
     services.AddSingleton(BuildBlobStore(dbPath));
     services.AddSingleton<ArtifactsService>();
     services.AddSingleton(new ArtifactIngestOptions(Environment.GetEnvironmentVariable("MEMORY_INGEST_ROOT")));
+    // Prefer a dedicated signing key; fall back to the bearer token. (In HTTP mode a bearer is required —
+    // see the fail-closed check — so the predictable built-in fallback never keys real artifact URLs.)
     services.AddSingleton(provider => new ArtifactUrlSigner(
-        Environment.GetEnvironmentVariable("MEMORY_BEARER_TOKEN"), provider.GetRequiredService<TimeProvider>(),
+        Environment.GetEnvironmentVariable("MEMORY_ARTIFACT_SIGNING_KEY")
+            ?? Environment.GetEnvironmentVariable("MEMORY_BEARER_TOKEN"),
+        provider.GetRequiredService<TimeProvider>(),
         Environment.GetEnvironmentVariable("MEMORY_PUBLIC_BASE_URL")));
     services.AddSingleton<DiagnosticsService>();
 }
