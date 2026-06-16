@@ -18,5 +18,6 @@ public static class SchemaMigrations
         new Migration0005FtsDedupKey(),
         new Migration0006PendingActionDomain(),
         new Migration0007Tokens(),
+        new Migration0008FtsPayload(),
     };
 }

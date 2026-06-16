@@ -125,6 +125,17 @@ public class NotesReadMutateTests
     }
 
     [Fact]
+    public void Search_finds_text_in_payload()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        // The searchable text lives only in the payload (no title/body); FTS now covers payload (MEMP-120).
+        repo.Upsert("memory-mcp", "fact", null, null, """{ "statement": "uniquepayloadword about a pipe" }""", null, "F-1", "me");
+
+        Assert.Single(repo.Search(query: "uniquepayloadword").Items);
+    }
+
+    [Fact]
     public void Search_finds_note_by_its_dedup_key()
     {
         using var temp = new TempDatabase();
