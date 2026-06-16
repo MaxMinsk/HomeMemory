@@ -1,3 +1,4 @@
+using System.Text.Json;
 using MemoryMcp.Core.Naming;
 using MemoryMcp.Core.Query;
 using MemoryMcp.Core.Storage;
@@ -246,6 +247,96 @@ public sealed class NotesReader
         }
 
         return new RecallResult(query, hits, neighbors);
+    }
+
+    /// <summary>
+    /// Returns notes related to <paramref name="id"/> by shared tags (most overlap first), scope-restricted.
+    /// A linking/dedup suggestion — it never creates links. Empty if the note has no tags.
+    /// </summary>
+    /// <param name="id">The source note id.</param>
+    /// <param name="limit">Max candidates (clamped to [1, 100]).</param>
+    /// <param name="restrictToDomains">Auth scope; null = unrestricted.</param>
+    public IReadOnlyList<RelatedNote> Related(string id, int limit, IReadOnlyCollection<string>? restrictToDomains)
+    {
+        var source = Get(id);
+        var tags = ParseTags(source?.TagsJson);
+        if (tags.Count == 0)
+        {
+            return Array.Empty<RelatedNote>();
+        }
+
+        using var connection = _connectionFactory.Create();
+        using var command = connection.CreateCommand();
+        var filters = new List<string> { "n.deleted = 0", "n.status = 'active'", "n.id <> $id" };
+        command.Parameters.AddWithValue("$id", id);
+        filters.Add(InClause(command, "je.value", "$tag", tags));
+        AppendScopeIn(command, filters, "n.domain", restrictToDomains);
+
+        command.CommandText =
+            "SELECT n.id, n.title, n.type, n.domain, group_concat(je.value) AS shared " +
+            "FROM notes n, json_each(n.tags_json) je " +
+            $"WHERE {string.Join(" AND ", filters)} " +
+            "GROUP BY n.id, n.title, n.type, n.domain ORDER BY count(*) DESC, n.updated_utc DESC LIMIT $limit;";
+        command.Parameters.AddWithValue("$limit", Math.Clamp(limit, 1, 100));
+
+        var related = new List<RelatedNote>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            var shared = reader.GetString(4).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            related.Add(new RelatedNote(reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1),
+                reader.GetString(2), reader.GetString(3), shared));
+        }
+
+        return related;
+    }
+
+    private static List<string> ParseTags(string? tagsJson)
+    {
+        if (string.IsNullOrWhiteSpace(tagsJson))
+        {
+            return new List<string>();
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(tagsJson) ?? new List<string>();
+        }
+        catch (JsonException)
+        {
+            return new List<string>();
+        }
+    }
+
+    // Builds "<column> IN ($p0,$p1,...)" binding each value; assumes a non-empty list.
+    private static string InClause(SqliteCommand command, string column, string prefix, IReadOnlyList<string> values)
+    {
+        var placeholders = new List<string>();
+        for (var i = 0; i < values.Count; i++)
+        {
+            var parameter = $"{prefix}{i}";
+            placeholders.Add(parameter);
+            command.Parameters.AddWithValue(parameter, values[i]);
+        }
+
+        return $"{column} IN ({string.Join(", ", placeholders)})";
+    }
+
+    // Appends an optional domain-scope restriction (null = none, empty = match nothing).
+    private static void AppendScopeIn(SqliteCommand command, List<string> filters, string column, IReadOnlyCollection<string>? restrict)
+    {
+        if (restrict is null)
+        {
+            return;
+        }
+
+        if (restrict.Count == 0)
+        {
+            filters.Add("0");
+            return;
+        }
+
+        filters.Add(InClause(command, column, "$rd", restrict.ToList()));
     }
 
     /// <summary>Returns the note's links in both directions (each resolved to the note at the other end).</summary>

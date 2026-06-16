@@ -271,6 +271,19 @@ public sealed class MemoryTools
             return _notes.Restore(id);
         });
 
+    /// <summary>Suggests notes related to a given note by shared tags (scope-restricted).</summary>
+    [McpServerTool(Name = "notes_related", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("Find notes related to a given note by shared tags (most overlap first), scope-restricted — a linking/dedup suggestion. Returns each candidate's id/title/type/domain and the shared tags. Creating a link stays explicit (notes_link / notes_assemble).")]
+    public IReadOnlyList<RelatedNote> NotesRelated(
+        [Description("Note id")] string id,
+        [Description("Max candidates (default 10)")] int limit = 10)
+    {
+        var note = _notes.Get(id);
+        return note is not null && Guard().IsAllowed(note.Domain)
+            ? _notes.Related(id, limit, Guard().RestrictionForSearch(null))
+            : Array.Empty<RelatedNote>();
+    }
+
     /// <summary>Lists a note's links in both directions (each resolved to the note at the other end).</summary>
     [McpServerTool(Name = "notes_links", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
     [Description("List a note's links (both directions): each entry has direction (out/in), rel, and the other note's id/title/type.")]

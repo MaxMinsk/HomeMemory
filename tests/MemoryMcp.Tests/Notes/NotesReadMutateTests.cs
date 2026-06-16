@@ -339,6 +339,35 @@ public class NotesReadMutateTests
     }
 
     [Fact]
+    public void Related_ranks_candidates_by_shared_tag_count()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        var a = Seed(repo, "MEMP-200", "ready", tags: """["topic:x", "topic:y"]""");
+        var b = Seed(repo, "MEMP-201", "ready", tags: """["topic:x", "topic:y"]""");   // 2 shared
+        var c = Seed(repo, "MEMP-202", "ready", tags: """["topic:x"]""");               // 1 shared
+        Seed(repo, "MEMP-203", "ready", tags: """["topic:z"]""");                       // 0 shared
+
+        var related = repo.Related(a, 10, restrictToDomains: null);
+
+        Assert.Equal(2, related.Count);          // self and the zero-overlap note excluded
+        Assert.Equal(b, related[0].Id);          // most shared tags first
+        Assert.Equal(c, related[1].Id);
+        Assert.Equal(2, related[0].SharedTags.Count);
+        Assert.Contains("topic:x", related[0].SharedTags);
+    }
+
+    [Fact]
+    public void Related_is_empty_when_the_note_has_no_tags()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        var id = Seed(repo, "MEMP-200", "ready");
+
+        Assert.Empty(repo.Related(id, 10, restrictToDomains: null));
+    }
+
+    [Fact]
     public void Recall_returns_hits_and_one_hop_neighbors()
     {
         using var temp = new TempDatabase();
