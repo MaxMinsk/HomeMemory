@@ -250,6 +250,60 @@ public sealed class NotesReader
     }
 
     /// <summary>
+    /// Lists the most-recently-updated notes (or most-used when <paramref name="byUsage"/>), scope-restricted,
+    /// with payload — so an agent can see what's already there and avoid duplicates. Snippet/score are null.
+    /// </summary>
+    /// <param name="domain">Optional domain filter.</param>
+    /// <param name="type">Optional type filter.</param>
+    /// <param name="limit">Max results (clamped to [1, 100]).</param>
+    /// <param name="restrictToDomains">Auth scope; null = unrestricted.</param>
+    /// <param name="byUsage">Sort by access count/recency (from note_usage) instead of last update.</param>
+    public IReadOnlyList<SearchResult> Recent(string? domain, string? type, int limit, IReadOnlyCollection<string>? restrictToDomains, bool byUsage)
+    {
+        domain = Identifiers.NormalizeOptional(domain);
+        type = Identifiers.NormalizeOptional(type);
+        limit = Math.Clamp(limit, 1, MaxLimit);
+
+        using var connection = _connectionFactory.Create();
+        using var command = connection.CreateCommand();
+        var filters = new List<string> { "n.deleted = 0", "n.status = 'active'" };
+        if (domain is not null)
+        {
+            filters.Add("n.domain = $domain");
+            command.Parameters.AddWithValue("$domain", domain);
+        }
+
+        if (type is not null)
+        {
+            filters.Add("n.type = $type");
+            command.Parameters.AddWithValue("$type", type);
+        }
+
+        AppendScopeIn(command, filters, "n.domain", restrictToDomains);
+        var order = byUsage
+            ? "ORDER BY COALESCE(u.retrieval_count, 0) DESC, COALESCE(u.last_accessed_utc, n.updated_utc) DESC"
+            : "ORDER BY n.updated_utc DESC";
+        command.CommandText =
+            "SELECT n.id, n.title, n.type, n.domain, n.status, n.payload_json, n.tags_json, n.dedup_key, n.updated_utc " +
+            "FROM notes n LEFT JOIN note_usage u ON u.note_id = n.id " +
+            $"WHERE {string.Join(" AND ", filters)} {order} LIMIT $limit;";
+        command.Parameters.AddWithValue("$limit", limit);
+
+        var results = new List<SearchResult>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            results.Add(new SearchResult(
+                reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1), null,
+                reader.GetString(2), reader.GetString(3), 0.0, reader.GetString(4),
+                reader.IsDBNull(5) ? null : reader.GetString(5), reader.IsDBNull(6) ? null : reader.GetString(6),
+                reader.IsDBNull(7) ? null : reader.GetString(7), reader.GetString(8)));
+        }
+
+        return results;
+    }
+
+    /// <summary>
     /// Returns notes related to <paramref name="id"/> by shared tags (most overlap first), scope-restricted.
     /// A linking/dedup suggestion — it never creates links. Empty if the note has no tags.
     /// </summary>

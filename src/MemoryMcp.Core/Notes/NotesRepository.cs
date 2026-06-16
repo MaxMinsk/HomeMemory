@@ -74,6 +74,10 @@ public sealed class NotesRepository
     public IReadOnlyList<RelatedNote> Related(string id, int limit, IReadOnlyCollection<string>? restrictToDomains)
         => _reader.Related(id, limit, restrictToDomains);
 
+    /// <inheritdoc cref="NotesReader.Recent"/>
+    public IReadOnlyList<SearchResult> Recent(string? domain, string? type, int limit, IReadOnlyCollection<string>? restrictToDomains, bool byUsage)
+        => _reader.Recent(domain, type, limit, restrictToDomains, byUsage);
+
     /// <inheritdoc cref="NotesReader.Events"/>
     public IReadOnlyList<NoteEvent> Events(string id, int limit = 50) => _reader.Events(id, limit);
 

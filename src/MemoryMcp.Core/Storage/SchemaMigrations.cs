@@ -20,5 +20,6 @@ public static class SchemaMigrations
         new Migration0007Tokens(),
         new Migration0008FtsPayload(),
         new Migration0009LinkUnique(),
+        new Migration0010NoteUsage(),
     };
 }

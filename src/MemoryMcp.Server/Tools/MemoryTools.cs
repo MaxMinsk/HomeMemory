@@ -68,6 +68,17 @@ public sealed class MemoryTools
         [Description("Graph expansion depth (currently one hop)")] int maxHops = 1)
         => Translate(() => _notes.Recall(query, domain, limit, Guard().RestrictionForSearch(domain), includeLinks, maxHops));
 
+    /// <summary>Lists the most-recently-updated (or most-used) notes in scope.</summary>
+    [McpServerTool(Name = "notes_recent", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("List the most-recently-updated notes (or most-used with sort=used), scope-restricted, with payload — to see what's already in memory and avoid duplicates before writing. Compact (no snippet/score). Filter by domain/type.")]
+    public IReadOnlyList<SearchResult> NotesRecent(
+        [Description("Domain filter (optional)")] string? domain = null,
+        [Description("Type filter (optional)")] string? type = null,
+        [Description("Max results (default 20)")] int limit = 20,
+        [Description("Sort: 'updated' (default) or 'used' (by access count/recency)")] string? sort = null)
+        => Translate(() => _notes.Recent(domain, type, limit, Guard().RestrictionForSearch(domain),
+            string.Equals(sort, "used", StringComparison.OrdinalIgnoreCase)));
+
     /// <summary>Gets a note (envelope + payload + size metadata) by id, if it is in scope.</summary>
     [McpServerTool(Name = "notes_get", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
     [Description("Get a note (envelope + payload) by id, plus size metadata (bodyChars, attachmentCount, linkCount). By default the full body is returned. For a large note, pass includeBody=false to peek (no body) or bodyMaxChars to cap it — check `truncated`/`bodyChars` and use notes_read/notes_outline to read the rest.")]
@@ -77,7 +88,13 @@ public sealed class MemoryTools
         [Description("Cap the returned body to this many characters (optional; default = full body). Sets truncated=true when it cuts.")] int? bodyMaxChars = null)
     {
         var view = _notes.GetView(id, includeBody, bodyMaxChars);
-        return view is not null && Guard().IsAllowed(view.Domain) ? view : null;
+        if (view is null || !Guard().IsAllowed(view.Domain))
+        {
+            return null;
+        }
+
+        RecordUsage(id);
+        return view;
     }
 
     /// <summary>Reads a windowed slice of a note's body, if it is in scope.</summary>
@@ -89,7 +106,13 @@ public sealed class MemoryTools
         [Description("Max characters to return (default 4000, clamped to 20000)")] int limitChars = NotesReader.DefaultReadChars)
     {
         var note = _notes.Get(id);
-        return note is not null && Guard().IsAllowed(note.Domain) ? _notes.ReadBody(id, offset, limitChars) : null;
+        if (note is null || !Guard().IsAllowed(note.Domain))
+        {
+            return null;
+        }
+
+        RecordUsage(id);
+        return _notes.ReadBody(id, offset, limitChars);
     }
 
     /// <summary>Returns the Markdown heading map of a note's body (for section reads), if it is in scope.</summary>
@@ -398,6 +421,19 @@ public sealed class MemoryTools
     }
 
     private ScopeGuard Guard() => new(_scope.Current);
+
+    // Best-effort access signal for recency/most-used discovery; never let it break a read (MEMP-116).
+    private void RecordUsage(string id)
+    {
+        try
+        {
+            new UsageStore(_connectionFactory).Record(id);
+        }
+        catch (Microsoft.Data.Sqlite.SqliteException)
+        {
+            // usage tracking is non-critical
+        }
+    }
 
     // For mutations: the note must exist and be in scope. Missing -> error (no silent no-op / dangling edge).
     private void AuthorizeNote(string id)
