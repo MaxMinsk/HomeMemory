@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.18.0
+
+Sprint 11 — agentic recall (from the A-MEM / memory-frameworks reviews; practical subset).
+
+- **`notes_recall`** (MEMP-112): a prompt-ready context block for a query — top FTS hits (with payload)
+  plus their one-hop linked neighbors (both directions), scope-restricted, with relation labels and
+  source ids. A case's surrounding context in one call instead of search + many gets. Snippets only,
+  no vectors. (`notes_links` now also reports each link's domain.)
+- **`notes_related`** (MEMP-113): notes sharing tags with a given note, ranked by overlap — a
+  linking/dedup suggestion (linking stays explicit).
+- **Agentic memory types** (MEMP-106/114): built-in schemas `preference`, `decision`, `project_state`,
+  `fact` (with `as_of`/`confidence`/`valid_from`/`valid_to`/`supersedes` for ADD-only temporal facts),
+  and `episode`.
+
 ## 0.17.0
 
 Sprint 10 — security/authorization hardening (from the Codex code review) + ambient memory.
