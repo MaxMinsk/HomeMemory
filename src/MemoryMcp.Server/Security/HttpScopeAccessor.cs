@@ -16,7 +16,11 @@ public sealed class HttpScopeAccessor : IScopeAccessor
     public HttpScopeAccessor(IHttpContextAccessor httpContextAccessor) =>
         _httpContextAccessor = httpContextAccessor;
 
+    // Fail closed (MEMP-102): if the auth middleware did not stash a scope, deny everything rather than
+    // defaulting to unrestricted — a future route that forgets the middleware must not leak data.
+    private static readonly RequestScope DenyAll = RequestScope.ForDomains(Array.Empty<string>());
+
     /// <inheritdoc />
     public RequestScope Current =>
-        _httpContextAccessor.HttpContext?.Items[ScopeKey] as RequestScope ?? RequestScope.Unrestricted;
+        _httpContextAccessor.HttpContext?.Items[ScopeKey] as RequestScope ?? DenyAll;
 }
