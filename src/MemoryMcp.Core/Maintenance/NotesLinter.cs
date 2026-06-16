@@ -36,6 +36,11 @@ public sealed class NotesLinter
         findings.AddRange(NoteRule(connection, domain, restrictToDomains,
             "(title IS NULL OR trim(title) = '') AND type <> 'journal'",
             "no_title", "info", "Note has no title."));
+        findings.AddRange(NoteRule(connection, domain, restrictToDomains,
+            "title IS NOT NULL AND trim(title) <> '' AND EXISTS (SELECT 1 FROM notes dup " +
+            "WHERE dup.deleted = 0 AND dup.status = 'active' AND dup.id <> notes.id " +
+            "AND dup.domain = notes.domain AND dup.type = notes.type AND lower(dup.title) = lower(notes.title))",
+            "duplicate", "warn", "Another active note shares this (domain, type, title)."));
         findings.AddRange(BrokenLinks(connection, domain, restrictToDomains));
 
         return findings.Count <= limit ? findings : findings.GetRange(0, limit);

@@ -349,7 +349,7 @@ public sealed class MemoryTools
 
     /// <summary>Scans notes for data-quality issues (read-only), within the caller's scope.</summary>
     [McpServerTool(Name = "notes_lint", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
-    [Description("Scan notes for data-quality issues (no_tags, no_dedup_key, no_title, broken_link) and return findings (noteId/title/domain/type/rule/severity/message). Pass a domain to focus. Read-only — it suggests fixes, changes nothing.")]
+    [Description("Scan notes for data-quality issues (no_tags, no_dedup_key, no_title, duplicate, broken_link) and return findings (noteId/title/domain/type/rule/severity/message). 'duplicate' = another active note shares the same domain/type/title. Pass a domain to focus. Read-only — it suggests fixes, changes nothing.")]
     public IReadOnlyList<LintFinding> NotesLint(
         [Description("Domain to focus on (optional; default = all in scope)")] string? domain = null,
         [Description("Max findings (default 200, max 1000)")] int limit = 200)

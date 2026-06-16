@@ -26,6 +26,21 @@ public class NotesLinterTests
     }
 
     [Fact]
+    public void Flags_duplicate_notes_sharing_domain_type_title()
+    {
+        using var temp = new TempDatabase();
+        var (repo, factory) = NewRepo(temp);
+        repo.Upsert("home", "backlog_item", "Same Title", null, """{ "key": "MEMP-201", "status": "ready" }""", """["t"]""", "MEMP-201", "me");
+        repo.Upsert("home", "backlog_item", "Same Title", null, """{ "key": "MEMP-202", "status": "ready" }""", """["t"]""", "MEMP-202", "me");
+        repo.Upsert("home", "backlog_item", "Unique", null, """{ "key": "MEMP-203", "status": "ready" }""", """["t"]""", "MEMP-203", "me");
+
+        var dups = new NotesLinter(factory).Lint(domain: null, restrictToDomains: null).Where(f => f.Rule == "duplicate").ToList();
+
+        Assert.Equal(2, dups.Count); // both same-title notes, not the unique one
+        Assert.All(dups, f => Assert.Equal("Same Title", f.Title));
+    }
+
+    [Fact]
     public void Clean_note_produces_no_findings()
     {
         using var temp = new TempDatabase();
