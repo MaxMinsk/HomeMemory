@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.20.0
+
+Sprint 13 — shared commons + searchable payload.
+
+- **`commons` domain** (MEMP-119): a shared domain readable by EVERY agent (even a domain-scoped token),
+  writable only by an admin/root token. It holds the core memory rules/skills (`memory-authoring`,
+  `agent-memory-use`, `tag-unification`) so a kitchen- or home-scoped agent can still read them. The
+  server's onboarding instructions now point at the commons skills.
+- **Payload is full-text searchable** (MEMP-120): `notes_search` now indexes `payload` too, so values in a
+  note's typed payload (e.g. `russian_name`/`english_name`) are found by text search — not only by the
+  exact filter DSL. (title/body/tags/dedup_key remain indexed.)
+
 ## 0.19.0
 
 Sprint 12 — per-agent tokens + scope hardening.
