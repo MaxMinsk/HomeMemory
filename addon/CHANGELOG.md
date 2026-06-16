@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.25.0
+
+Sprint 18 — memory hygiene + viewer polish.
+
+- **Lint for rot and leaks** (MEMP-108): `notes_lint` gains two rules — `stale_unstructured`
+  (notes tagged `unstructured` and untouched for 30+ days, a review queue so autonomous appends
+  don't quietly rot) and `possible_secret` (heuristic scan of body/payload for embedded
+  credentials — AWS/GitHub/Slack tokens, private-key blocks, JWTs, `password:`/`api_key=` style
+  assignments). The matched secret is never echoed back; only the note id + heuristic name.
+- **Backlinks in the viewer** (MEMP-097): the note detail pane now groups links into labelled
+  **outgoing** and **incoming (backlinks)** sections instead of one mixed list.
+- **CI off Node 20** (MEMP-130): bumped `actions/checkout`→v6 and `actions/setup-dotnet`→v5 so CI
+  runs on the supported Node.js 24 runtime (no functional change).
+
 ## 0.24.0
 
 Sprint 17 — discoverability, observability and operations.

@@ -83,6 +83,57 @@ public class NotesLinterTests
         Assert.Empty(new NotesLinter(factory).Lint(domain: null, restrictToDomains: Array.Empty<string>()));
     }
 
+    [Fact]
+    public void Flags_unstructured_note_left_past_the_review_window()
+    {
+        using var temp = new TempDatabase();
+        var (repo, factory) = NewRepo(temp);
+        var stale = repo.AppendJournal("home", "rough note kept unstructured", sourceAgent: "me"); // tagged 'unstructured'
+        repo.AppendJournal("home", "fresh note, just added", sourceAgent: "me");                    // also unstructured, but recent
+        BackdateNote(factory, stale, "2026-01-01T00:00:00.0000000Z");                                // 40+ days before "now"
+
+        var findings = new NotesLinter(factory).Lint(domain: null, restrictToDomains: null);
+
+        var hit = Assert.Single(findings, f => f.Rule == "stale_unstructured");
+        Assert.Equal(stale, hit.NoteId); // only the backdated one, not the fresh note
+    }
+
+    [Theory]
+    [InlineData("aws creds AKIAIOSFODNN7EXAMPLE in here")]
+    [InlineData("token=ghp_abcdefgh1234567890ABCDEFGHIJKLMNOP")]
+    [InlineData("api_key: sk-supersecretvalue12345")]
+    [InlineData("-----BEGIN RSA PRIVATE KEY-----")]
+    public void Flags_possible_secret_in_body(string body)
+    {
+        using var temp = new TempDatabase();
+        var (repo, factory) = NewRepo(temp);
+        repo.AppendJournal("home", body, sourceAgent: "me");
+
+        var hit = Assert.Single(new NotesLinter(factory).Lint(domain: null, restrictToDomains: null), f => f.Rule == "possible_secret");
+        Assert.DoesNotContain("AKIA", hit.Message, StringComparison.Ordinal); // the secret value is never echoed
+    }
+
+    [Fact]
+    public void Ordinary_body_is_not_flagged_as_a_secret()
+    {
+        using var temp = new TempDatabase();
+        var (repo, factory) = NewRepo(temp);
+        repo.Upsert("home", "backlog_item", "Tidy", "buy mackerel and smoke it on Sunday",
+            """{ "key": "MEMP-204", "status": "ready" }""", """["t"]""", "MEMP-204", "me");
+
+        Assert.DoesNotContain(new NotesLinter(factory).Lint(domain: null, restrictToDomains: null), f => f.Rule == "possible_secret");
+    }
+
+    private static void BackdateNote(SqliteConnectionFactory factory, string id, string utc)
+    {
+        using var connection = factory.Create();
+        using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE notes SET updated_utc = $u WHERE id = $id;";
+        command.Parameters.AddWithValue("$u", utc);
+        command.Parameters.AddWithValue("$id", id);
+        command.ExecuteNonQuery();
+    }
+
     private static (NotesRepository Repo, SqliteConnectionFactory Factory) NewRepo(TempDatabase temp)
     {
         var factory = new SqliteConnectionFactory(temp.FilePath);

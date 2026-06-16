@@ -145,7 +145,10 @@ async function open_(id) {
     let payload = ''; if (n.payloadJson) { try { payload = JSON.stringify(JSON.parse(n.payloadJson), null, 2); } catch { payload = n.payloadJson; } }
     const tags = n.tagsJson ? JSON.parse(n.tagsJson) : [];
     const atts = (d.attachments||[]).map(a => `<li><a href="${esc(a.url)}" target="_blank">${esc(a.filename||a.sha256.slice(0,12))}</a> <span class="k">${esc(a.contentType||'')} · ${a.sizeBytes}b</span></li>`).join('');
-    const links = (d.links||[]).map(l => `<li><span class="k">${l.direction==='out'?'→':'←'} ${esc(l.rel)}</span> <a href="#" onclick="open_('${l.noteId}');return false">${esc(l.title)||esc(l.noteId.slice(0,8))}</a> <span class="k">(${esc(l.type)})</span></li>`).join('');
+    const linkLi = l => `<li><span class="k">${l.direction==='out'?'→':'←'} ${esc(l.rel)}</span> <a href="#" onclick="open_('${l.noteId}');return false">${esc(l.title)||esc(l.noteId.slice(0,8))}</a> <span class="k">(${esc(l.type)})</span></li>`;
+    const outs = (d.links||[]).filter(l => l.direction === 'out');
+    const ins  = (d.links||[]).filter(l => l.direction === 'in');
+    const linkSection = (label, arr) => arr.length ? `<h3>${label}</h3><ul>${arr.map(linkLi).join('')}</ul>` : '';
     $('#detail').innerHTML =
       `<h2>${esc(n.title)||'<i>untitled</i>'}</h2>` +
       `<div class="meta"><span class="lbl">domain</span>${esc(n.domain)}` +
@@ -155,7 +158,8 @@ async function open_(id) {
       `<p class="k">key: ${esc(n.dedupKey||'—')} · updated: ${esc(n.updatedUtc)} · by: ${esc(n.sourceAgent||'—')}</p>` +
       (payload ? `<h3>payload</h3><pre>${esc(payload)}</pre>` : '') +
       (n.body ? `<h3>body</h3><pre>${esc(n.body)}</pre>` : '') +
-      (links ? `<h3>links</h3><ul>${links}</ul>` : '') +
+      linkSection('outgoing links', outs) +
+      linkSection('incoming links (backlinks)', ins) +
       (atts ? `<h3>attachments</h3><ul>${atts}</ul>` : '');
     $('#detail').dataset.sel = id; writeHash();
   } catch(e){ $('#detail').innerHTML = '<div class="empty">'+esc(e.message)+'</div>'; }
