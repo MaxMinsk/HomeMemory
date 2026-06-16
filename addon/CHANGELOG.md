@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.22.0
+
+Sprint 15 — graph integrity + recency/usage discovery.
+
+- **Graph integrity** (MEMP-101): links are now unique per `(from, to, rel)` (idempotent linking, no
+  duplicate edges); `notes_link`/assemble validate both endpoints exist; a mutation on a missing note
+  errors instead of silently no-op'ing; `notes_unlink` authorizes the target's domain too.
+- **`notes_recent`** (MEMP-107): list the most-recently-updated (or most-used) notes in scope, with
+  payload — to see what's already in memory and avoid duplicates before writing.
+- **Usage signals** (MEMP-116): a `note_usage` table records last-accessed/retrieval-count on explicit
+  reads (`notes_get`/`notes_read`), powering `notes_recent sort=used`.
+
 ## 0.21.0
 
 - **Evolve built-in types** (MEMP-121): an agent can now author a higher version of a built-in type
