@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.19.0
+
+Sprint 12 — per-agent tokens + scope hardening.
+
+- **Multiple bearer tokens, each scoped to domains** (MEMP-032): generate a token for one domain, several,
+  or `*` (all), so different agents get different access. Manage from the add-on's shell:
+  `tokens add <label> <domains|*>` (prints the raw token once), `tokens list`, `tokens revoke <id>`.
+  Only the token hash is stored. The existing `bearer_token` stays the root token — nothing to change for
+  current setups.
+- **Fail-closed scope** (MEMP-102, part): if a request reaches a handler without a resolved scope, access
+  is denied (was: unrestricted) — defense in depth.
+
 ## 0.18.0
 
 Sprint 11 — agentic recall (from the A-MEM / memory-frameworks reviews; practical subset).
