@@ -2,7 +2,7 @@
 
 A thin, reliable [MCP](https://modelcontextprotocol.io) server for personal memory, notes and skills — shared by multiple agents (a Home Assistant agent, a kitchen/cook agent, Claude Code, a future web UI) over the Model Context Protocol. It stores notes, enforces their schemas, and **hosts the skills that teach every agent how to write each note type the same way** — so different agents keep recipes, backlog items and measurements consistent. The server itself never runs an LLM: the reasoning (what to record, how to phrase it) happens in the agents, *guided by* the schemas and skills they fetch from the server.
 
-> **Status:** in production as a Home Assistant add-on. Dogfoods its own backlog (stored as memory) alongside recipes, notes and file artifacts for the household agents.
+> **Status:** in production as a Home Assistant add-on — a 40+ tool MCP surface over a single SQLite store, shared by several agents (a Home agent, a kitchen/cook agent, Claude Code). It dogfoods its own backlog as memory alongside recipes, notes and file artifacts. See [`addon/CHANGELOG.md`](addon/CHANGELOG.md) for the current release and history.
 
 ## What it does
 
@@ -18,6 +18,20 @@ A thin, reliable [MCP](https://modelcontextprotocol.io) server for personal memo
 - **Transports** — stdio (local agents) and streamable HTTP at `/mcp`.
 
 See [`AGENTS.md`](AGENTS.md) for conventions and the architectural principles that must hold, and [`docs/decisions/`](docs/decisions/) for the architecture decision records.
+
+## Tool surface
+
+The MCP surface (call `memory_capabilities` / `status` to see what a given build exposes):
+
+| Area | Tools |
+|---|---|
+| **Write notes** | `notes_upsert` · `notes_assemble` (note + links, atomic) · `notes_append_journal` · `notes_patch` · `notes_supersede` · `notes_archive` · `notes_restore` |
+| **Read notes** | `notes_get` · `notes_get_by_key` · `notes_read` (sliced) · `notes_outline` · `notes_find` · `notes_search` (FTS + filter DSL) · `notes_recent` · `notes_history` · `notes_history_event` · `notes_lint` |
+| **Recall & graph** | `notes_recall` (FTS + 1-hop neighbors) · `notes_related` (shared tags) · `notes_link` · `notes_unlink` · `notes_links` |
+| **Destructive (two-phase)** | `notes_confirm` · `notes_cancel` · `pending_actions_list` |
+| **Schemas & skills** | `schema_list_types` · `schema_get` · `schema_upsert` · `skill_list` · `skill_get` · `skill_upsert` |
+| **Artifacts (CAS)** | `artifacts_put` · `artifacts_get` · `artifacts_list` · `artifacts_url` (signed) · `artifacts_request_upload` · `artifacts_find_text` · `artifacts_delete` (two-phase) |
+| **Server** | `status` · `memory_capabilities` · `domains_list` · `tags_list` |
 
 ## Layout
 
