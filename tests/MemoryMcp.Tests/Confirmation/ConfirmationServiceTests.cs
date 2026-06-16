@@ -22,9 +22,10 @@ public class ConfirmationServiceTests
 
         var pending = confirm.Request("archive", id, null, null, "tester");
         Assert.Equal("pending", pending.Status);
+        Assert.Equal("memory-mcp", pending.TargetDomain); // bound to the target's domain
         Assert.Equal("active", notes.Get(id)!.Status); // not yet archived
 
-        var result = confirm.Confirm(pending.Token, "tester");
+        var result = confirm.Confirm(pending.Token, null, "tester");
         Assert.True(result.Executed);
         Assert.Equal("archived", notes.Get(id)!.Status);
     }
@@ -37,8 +38,8 @@ public class ConfirmationServiceTests
         var id = notes.Upsert("memory-mcp", "backlog_item", "T", null, Payload, null, "MEMP-100", "t").Id;
         var pending = confirm.Request("archive", id, null, null, "t");
 
-        confirm.Confirm(pending.Token, "t");
-        var second = Assert.Throws<ConfirmationException>(() => confirm.Confirm(pending.Token, "t"));
+        confirm.Confirm(pending.Token, null, "t");
+        var second = Assert.Throws<ConfirmationException>(() => confirm.Confirm(pending.Token, null, "t"));
         Assert.Contains("already executed", second.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -50,8 +51,8 @@ public class ConfirmationServiceTests
         var id = notes.Upsert("memory-mcp", "backlog_item", "T", null, Payload, null, "MEMP-100", "t").Id;
         var pending = confirm.Request("archive", id, null, null, "t");
 
-        confirm.Cancel(pending.Token, "t");
-        Assert.Throws<ConfirmationException>(() => confirm.Confirm(pending.Token, "t"));
+        confirm.Cancel(pending.Token, null, "t");
+        Assert.Throws<ConfirmationException>(() => confirm.Confirm(pending.Token, null, "t"));
         Assert.Equal("active", notes.Get(id)!.Status); // never archived
     }
 
@@ -64,7 +65,7 @@ public class ConfirmationServiceTests
         var newId = notes.Upsert("memory-mcp", "backlog_item", "B", null, """{ "key": "MEMP-101", "status": "ready" }""", null, "MEMP-101", "t").Id;
 
         var pending = confirm.Request("supersede", oldId, newId, null, "t");
-        confirm.Confirm(pending.Token, "t");
+        confirm.Confirm(pending.Token, null, "t");
 
         Assert.Equal("superseded", notes.Get(oldId)!.Status);
     }
@@ -74,8 +75,32 @@ public class ConfirmationServiceTests
     {
         using var temp = new TempDatabase();
         var (confirm, _) = NewServices(temp);
-        var ex = Assert.Throws<ConfirmationException>(() => confirm.Confirm("nope", "t"));
+        var ex = Assert.Throws<ConfirmationException>(() => confirm.Confirm("nope", null, "t"));
         Assert.Contains("Unknown", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Out_of_scope_caller_cannot_confirm_or_list_another_domains_token()
+    {
+        using var temp = new TempDatabase();
+        var (confirm, notes) = NewServices(temp);
+        var id = notes.Upsert("home", "backlog_item", "T", null, Payload, null, "MEMP-100", "t").Id;
+        var pending = confirm.Request("archive", id, null, null, "t");
+        var otherScope = new[] { "work" }; // caller restricted to a different domain
+
+        // Out-of-scope confirm is rejected and looks like an unknown token (no existence leak).
+        var ex = Assert.Throws<ConfirmationException>(() => confirm.Confirm(pending.Token, otherScope, "t"));
+        Assert.Contains("Unknown", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("active", notes.Get(id)!.Status); // not archived
+
+        // And it does not appear in that caller's pending list.
+        Assert.Empty(confirm.ListPending(otherScope));
+        Assert.Single(confirm.ListPending(new[] { "home" }));        // in-scope caller sees it
+        Assert.Single(confirm.ListPending());                        // unrestricted sees it
+
+        // In-scope caller can confirm it.
+        Assert.True(confirm.Confirm(pending.Token, new[] { "home" }, "t").Executed);
+        Assert.Equal("archived", notes.Get(id)!.Status);
     }
 
     [Theory]
@@ -112,7 +137,7 @@ public class ConfirmationServiceTests
         var pending = confirm.Request("artifact_delete", a.Id, null, null, "t");
         Assert.NotNull(artifacts.Get(a.Id));   // not deleted yet — two-phase
 
-        Assert.True(confirm.Confirm(pending.Token, "t").Executed);
+        Assert.True(confirm.Confirm(pending.Token, null, "t").Executed);
         Assert.Null(artifacts.Get(a.Id));      // gone
         Assert.False(blobs.Exists(a.Sha256));  // blob GC'd
     }

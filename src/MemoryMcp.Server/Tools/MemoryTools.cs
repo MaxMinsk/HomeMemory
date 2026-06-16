@@ -224,13 +224,13 @@ public sealed class MemoryTools
     [McpServerTool(Name = "notes_confirm", Destructive = true, UseStructuredContent = true)]
     [Description("Confirm and execute a destructive action requested earlier (archive / supersede / artifact delete) by its token. A token executes at most once.")]
     public ConfirmationResult NotesConfirm([Description("Confirmation token from notes_archive/notes_supersede")] string token)
-        => Translate(() => _confirmations.Confirm(token, null));
+        => Translate(() => _confirmations.Confirm(token, Guard().RestrictionForSearch(null), null));
 
     /// <summary>Cancels a pending destructive action so it can never execute.</summary>
     [McpServerTool(Name = "notes_cancel", Idempotent = true, UseStructuredContent = true)]
     [Description("Cancel a pending destructive action by its token so it can never execute.")]
     public ConfirmationResult NotesCancel([Description("Confirmation token")] string token)
-        => Translate(() => _confirmations.Cancel(token, null));
+        => Translate(() => _confirmations.Cancel(token, Guard().RestrictionForSearch(null), null));
 
     /// <summary>Partially updates a note by id (merge), with optional optimistic-concurrency check.</summary>
     [McpServerTool(Name = "notes_patch", Destructive = false, UseStructuredContent = true)]
@@ -358,7 +358,7 @@ public sealed class MemoryTools
     /// <summary>Lists unresolved destructive-action confirmations.</summary>
     [McpServerTool(Name = "pending_actions_list", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
     [Description("List unresolved destructive-action confirmations (so their tokens aren't lost). Resolve via notes_confirm / notes_cancel.")]
-    public IReadOnlyList<PendingAction> PendingActionsList() => _confirmations.ListPending();
+    public IReadOnlyList<PendingAction> PendingActionsList() => _confirmations.ListPending(Guard().RestrictionForSearch(null));
 
     // Accepts a tool argument that may be a structured object/array OR a JSON string, and returns the JSON
     // text either way (so agents can pass `{...}`/`[...]` directly instead of double-serializing). MEMP-072.

@@ -51,25 +51,14 @@ public sealed class ConfirmationService
             throw new ConfirmationException("supersede requires the replacement note id (secondId).");
         }
 
-        if (string.Equals(action, "artifact_delete", StringComparison.Ordinal))
-        {
-            if (_artifacts?.Get(targetId) is null)
-            {
-                throw new ConfirmationException($"Target artifact '{targetId}' does not exist.");
-            }
-        }
-        else if (_notes.Get(targetId) is null)
-        {
-            throw new ConfirmationException($"Target note '{targetId}' does not exist.");
-        }
-
+        var targetDomain = ResolveTargetDomain(action, targetId);
         var token = Guid.NewGuid().ToString("N");
         var nowUtc = NowUtc();
         using var connection = _connectionFactory.Create();
         using var command = connection.CreateCommand();
         command.CommandText =
-            "INSERT INTO pending_actions (token, action, target_id, second_id, summary, requested_by, status, created_utc) " +
-            "VALUES ($tok, $a, $t, $s, $sum, $by, 'pending', $now);";
+            "INSERT INTO pending_actions (token, action, target_id, second_id, summary, requested_by, status, created_utc, target_domain) " +
+            "VALUES ($tok, $a, $t, $s, $sum, $by, 'pending', $now, $td);";
         command.Parameters.AddWithValue("$tok", token);
         command.Parameters.AddWithValue("$a", action);
         command.Parameters.AddWithValue("$t", targetId);
@@ -77,18 +66,35 @@ public sealed class ConfirmationService
         command.Parameters.AddWithValue("$sum", (object?)summary ?? DBNull.Value);
         command.Parameters.AddWithValue("$by", (object?)requestedBy ?? DBNull.Value);
         command.Parameters.AddWithValue("$now", nowUtc);
+        command.Parameters.AddWithValue("$td", (object?)targetDomain ?? DBNull.Value);
         command.ExecuteNonQuery();
 
-        return new PendingAction(token, action, targetId, secondId, summary, "pending", nowUtc);
+        return new PendingAction(token, action, targetId, secondId, summary, "pending", nowUtc, targetDomain);
     }
 
-    /// <summary>Confirms and executes a pending action exactly once.</summary>
-    public ConfirmationResult Confirm(string token, string? resolvedBy)
+    // The domain the action touches (so a confirmation can be scoped). Throws if the target is missing.
+    private string ResolveTargetDomain(string action, string targetId)
+    {
+        if (string.Equals(action, "artifact_delete", StringComparison.Ordinal))
+        {
+            return (_artifacts?.Get(targetId))?.Domain
+                ?? throw new ConfirmationException($"Target artifact '{targetId}' does not exist.");
+        }
+
+        return _notes.Get(targetId)?.Domain
+            ?? throw new ConfirmationException($"Target note '{targetId}' does not exist.");
+    }
+
+    /// <summary>Confirms and executes a pending action exactly once, if it is in the caller's scope.</summary>
+    /// <param name="token">The confirmation token.</param>
+    /// <param name="restrictToDomains">Caller's allowed domains; null = unrestricted (trusted/local).</param>
+    /// <param name="resolvedBy">Who confirmed (provenance).</param>
+    public ConfirmationResult Confirm(string token, IReadOnlyCollection<string>? restrictToDomains, string? resolvedBy)
     {
         PendingRow row;
         using (var connection = _connectionFactory.Create())
         {
-            row = Resolve(connection, token, "executed", resolvedBy); // CAS flip; throws if not pending
+            row = Resolve(connection, token, "executed", restrictToDomains, resolvedBy); // CAS flip; throws if not pending/out of scope
         }
 
         // We now exclusively own the action — run it (idempotent ops; a no-op returns false).
@@ -106,14 +112,16 @@ public sealed class ConfirmationService
         return new ConfirmationResult(token, row.Action, executed, detail);
     }
 
-    /// <summary>Lists unresolved pending actions (newest first) so confirmation tokens aren't lost.</summary>
-    public IReadOnlyList<PendingAction> ListPending()
+    /// <summary>Lists unresolved pending actions in scope (newest first) so confirmation tokens aren't lost.</summary>
+    /// <param name="restrictToDomains">Caller's allowed domains; null = unrestricted (all pending).</param>
+    public IReadOnlyList<PendingAction> ListPending(IReadOnlyCollection<string>? restrictToDomains = null)
     {
         using var connection = _connectionFactory.Create();
         using var command = connection.CreateCommand();
+        var scope = AppendDomainScope(command, restrictToDomains);
         command.CommandText =
-            "SELECT token, action, target_id, second_id, summary, status, created_utc " +
-            "FROM pending_actions WHERE status = 'pending' ORDER BY created_utc DESC;";
+            "SELECT token, action, target_id, second_id, summary, status, created_utc, target_domain " +
+            "FROM pending_actions WHERE status = 'pending'" + scope + " ORDER BY created_utc DESC;";
 
         var rows = new List<PendingAction>();
         using var reader = command.ExecuteReader();
@@ -123,24 +131,59 @@ public sealed class ConfirmationService
                 reader.GetString(0), reader.GetString(1), reader.GetString(2),
                 reader.IsDBNull(3) ? null : reader.GetString(3),
                 reader.IsDBNull(4) ? null : reader.GetString(4),
-                reader.GetString(5), reader.GetString(6)));
+                reader.GetString(5), reader.GetString(6),
+                reader.IsDBNull(7) ? null : reader.GetString(7)));
         }
 
         return rows;
     }
 
-    /// <summary>Cancels a pending action so it can never execute.</summary>
-    public ConfirmationResult Cancel(string token, string? resolvedBy)
+    /// <summary>Cancels a pending action so it can never execute, if it is in the caller's scope.</summary>
+    public ConfirmationResult Cancel(string token, IReadOnlyCollection<string>? restrictToDomains, string? resolvedBy)
     {
         using var connection = _connectionFactory.Create();
-        var row = Resolve(connection, token, "cancelled", resolvedBy);
+        var row = Resolve(connection, token, "cancelled", restrictToDomains, resolvedBy);
         return new ConfirmationResult(token, row.Action, false, $"{row.Action} for {row.TargetId} cancelled");
     }
 
-    // Compare-and-swap: flip pending -> newStatus only if still pending, then return the row we won.
-    private PendingRow Resolve(SqliteConnection connection, string token, string newStatus, string? resolvedBy)
+    // Builds an optional " AND target_domain IN (...)" clause; null = no restriction, empty = match nothing.
+    private static string AppendDomainScope(SqliteCommand command, IReadOnlyCollection<string>? restrict)
+    {
+        if (restrict is null)
+        {
+            return string.Empty;
+        }
+
+        if (restrict.Count == 0)
+        {
+            return " AND 0";
+        }
+
+        var placeholders = new List<string>();
+        var index = 0;
+        foreach (var domain in restrict)
+        {
+            var parameter = $"$sd{index++}";
+            placeholders.Add(parameter);
+            command.Parameters.AddWithValue(parameter, domain);
+        }
+
+        return $" AND target_domain IN ({string.Join(", ", placeholders)})";
+    }
+
+    // Compare-and-swap: flip pending -> newStatus only if still pending AND in scope, then return the row we won.
+    private PendingRow Resolve(SqliteConnection connection, string token, string newStatus, IReadOnlyCollection<string>? restrict, string? resolvedBy)
     {
         using var transaction = connection.BeginTransaction();
+
+        // Scope gate first: a restricted caller may only resolve tokens whose target domain is in scope.
+        // Out-of-scope and unknown tokens are reported identically, so existence isn't leaked across domains.
+        if (restrict is not null && !IsInScope(connection, transaction, token, restrict))
+        {
+            transaction.Rollback();
+            throw new ConfirmationException($"Unknown confirmation token '{token}'.");
+        }
+
         using (var update = connection.CreateCommand())
         {
             update.Transaction = transaction;
@@ -171,6 +214,18 @@ public sealed class ConfirmationService
             transaction.Commit();
             return row;
         }
+    }
+
+    // True if the token's target domain is within the caller's allowed set. A missing token or a legacy
+    // null-domain row is out of scope for a restricted caller (only an unrestricted caller resolves those).
+    private static bool IsInScope(SqliteConnection connection, SqliteTransaction transaction, string token, IReadOnlyCollection<string> restrict)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT target_domain FROM pending_actions WHERE token = $tok;";
+        command.Parameters.AddWithValue("$tok", token);
+        using var reader = command.ExecuteReader();
+        return reader.Read() && !reader.IsDBNull(0) && restrict.Contains(reader.GetString(0));
     }
 
     private static string DescribeUnavailable(SqliteConnection connection, SqliteTransaction transaction, string token)
