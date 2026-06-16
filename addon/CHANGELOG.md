@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.16.0
+
+Sprint 9 — atomic assembly & dedup hygiene.
+
+- **`notes_assemble`** (MEMP-075): create (or dedup-upsert) a note AND its outgoing links in one
+  transaction — all-or-nothing. If any link's target is missing or its rel invalid, nothing is
+  persisted (no half-built case). payload/tags accept an object/array or a JSON string.
+- **Duplicate detection** (MEMP-027): `notes_lint` gains a read-only `duplicate` rule that flags active
+  notes sharing the same `(domain, type, title)`.
+
 ## 0.15.0
 
 Sprint 8 — agent ergonomics & test hardening.
