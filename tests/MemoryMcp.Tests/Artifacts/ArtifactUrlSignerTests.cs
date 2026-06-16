@@ -44,8 +44,19 @@ public class ArtifactUrlSignerTests
         var signer = new ArtifactUrlSigner("secret", clock);
         var (exp, sig) = Parse(signer.BuildPath("abc"));
 
-        clock.Advance(TimeSpan.FromHours(2)); // TTL is 1h
+        clock.Advance(TimeSpan.FromHours(25)); // read TTL is 1 day
         Assert.False(signer.Verify("abc", exp, sig));
+    }
+
+    [Fact]
+    public void Read_link_still_valid_after_an_hour_default_is_a_day()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 6, 15, 0, 0, 0, TimeSpan.Zero));
+        var signer = new ArtifactUrlSigner("secret", clock);
+        var (exp, sig) = Parse(signer.BuildPath("abc")); // default read TTL
+
+        clock.Advance(TimeSpan.FromHours(6)); // a recipe link must outlive a cooking session
+        Assert.True(signer.Verify("abc", exp, sig));
     }
 
     [Fact]

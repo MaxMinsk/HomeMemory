@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.29.0
+
+Sprint 22 — artifact link lifetime fix (MEMP-132).
+
+- **Read/browser artifact links now default to 1 day** (was 1 hour). The viewer's per-attachment
+  links (and the signer's `BuildPath` default) used a 1-hour TTL, so a recipe link opened from the
+  viewer died within the hour instead of lasting the day we intended. `artifacts_url` was already 1 day;
+  this aligns the viewer path with it. Upload (write-capability) URLs deliberately stay short (1 hour).
+  Both still clamp to a 7-day max.
+
 ## 0.28.0
 
 Sprint 21 — self-organizing memory: reviewable evolution suggestions (MEMP-115).

@@ -11,7 +11,10 @@ namespace MemoryMcp.Core.Artifacts;
 /// </summary>
 public sealed class ArtifactUrlSigner
 {
-    private const int DefaultTtlSeconds = 3600;
+    // Browser/read links default to a day (a recipe link should survive a cooking session, not an hour);
+    // write-capability (upload) URLs stay short. Both still clamp to [60s, MaxTtlSeconds].
+    private const int DefaultReadTtlSeconds = 24 * 3600;
+    private const int DefaultUploadTtlSeconds = 3600;
     private const int MaxTtlSeconds = 7 * 24 * 3600;
     private readonly byte[] _key;
     private readonly TimeProvider _clock;
@@ -26,8 +29,8 @@ public sealed class ArtifactUrlSigner
         _baseUrl = string.IsNullOrWhiteSpace(baseUrl) ? null : baseUrl.TrimEnd('/');
     }
 
-    /// <summary>Builds a signed same-origin path for an artifact id (default 1h TTL; used by the viewer).</summary>
-    public string BuildPath(string id, int ttlSeconds = DefaultTtlSeconds)
+    /// <summary>Builds a signed same-origin path for an artifact id (default 1 day TTL; used by the viewer).</summary>
+    public string BuildPath(string id, int ttlSeconds = DefaultReadTtlSeconds)
     {
         var expiry = _clock.GetUtcNow().ToUnixTimeSeconds() + Math.Clamp(ttlSeconds, 60, MaxTtlSeconds);
         return $"/artifacts/{id}?exp={expiry}&sig={Sign(id, expiry)}";
@@ -58,7 +61,7 @@ public sealed class ArtifactUrlSigner
     /// so the client cannot change the destination domain/filename/etc. Bytes are PUT directly to the
     /// server, never through the model context.
     /// </summary>
-    public string BuildUploadUrl(string domain, string filename, string? contentType, string? noteId, int ttlSeconds = DefaultTtlSeconds)
+    public string BuildUploadUrl(string domain, string filename, string? contentType, string? noteId, int ttlSeconds = DefaultUploadTtlSeconds)
     {
         var expiry = _clock.GetUtcNow().ToUnixTimeSeconds() + Math.Clamp(ttlSeconds, 60, MaxTtlSeconds);
         var query =
