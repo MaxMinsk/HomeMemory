@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.28.0
+
+Sprint 21 — self-organizing memory: reviewable evolution suggestions (MEMP-115).
+
+- **`memory_evolution_suggestion` note type** (new built-in schema): a curator agent proposes an
+  improvement to an existing note — `target_id`, `kind` (retag/summarize/link/dedup/restructure/
+  correct), `proposed_patch`, `proposed_links`, `evidence_ids`, `rationale`, `confidence`, `status`.
+  The server never auto-applies it: a human/agent reviews and applies via `notes_patch`/`notes_link`,
+  all in the note's event log. Memory is self-organizing but not self-authorizing.
+- **Curator skill** `agent-memory-enrichment` (authored in the `commons` domain): when/how to enrich
+  memory without silently mutating it, and how to review/apply the queue.
+- **Initialize guidance** now points agents at the suggestion flow + the curator skill.
+
 ## 0.27.0
 
 Sprint 20 — memory inbox + schema provenance.

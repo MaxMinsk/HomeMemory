@@ -45,7 +45,11 @@ const string ServerInstructions =
     "over duplicates, and mention briefly what you saved. " +
     "The 'commons' domain is shared and readable by every agent (even a domain-scoped one); it holds the core " +
     "rules/skills. READ FIRST: skill_list(domain=\"commons\"), then skill_get(domain=\"commons\", " +
-    "key=\"agent-memory-use\") for when to recall/save and key=\"memory-authoring\" for how to write.";
+    "key=\"agent-memory-use\") for when to recall/save and key=\"memory-authoring\" for how to write. " +
+    "Memory is self-organizing but not self-authorizing: to improve another note (retag/summary/links/dedup), " +
+    "do NOT silently mutate it — write a memory_evolution_suggestion note (target_id, proposed_patch/links, " +
+    "rationale, status=open); a human/agent reviews and applies it via notes_patch/notes_link. " +
+    "See skill_get(domain=\"commons\", key=\"agent-memory-enrichment\").";
 
 if (args.Length > 0 && (args[0] == "import-backlog" || args[0] == "export-backlog"))
 {

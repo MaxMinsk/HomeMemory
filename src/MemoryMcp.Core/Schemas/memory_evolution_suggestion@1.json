@@ -1,0 +1,43 @@
+{
+  "$id": "memory_evolution_suggestion@1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["target_id", "rationale", "status"],
+  "additionalProperties": false,
+  "properties": {
+    "target_id": { "type": "string", "description": "Id of the note this suggestion is about." },
+    "kind": {
+      "enum": ["retag", "summarize", "link", "dedup", "restructure", "correct", "other"],
+      "description": "What kind of improvement is proposed."
+    },
+    "proposed_patch": {
+      "type": "object",
+      "description": "Proposed field changes (e.g. title/tags/payload.*) to apply via notes_patch. A PROPOSAL only — never applied automatically by the server."
+    },
+    "proposed_links": {
+      "type": "array",
+      "description": "Links the curator proposes adding (apply via notes_link after review).",
+      "items": {
+        "type": "object",
+        "required": ["to_id", "rel"],
+        "additionalProperties": false,
+        "properties": {
+          "to_id": { "type": "string" },
+          "rel": { "type": "string", "description": "Active-voice lower_snake_case relation, e.g. relates_to, supersedes." }
+        }
+      }
+    },
+    "evidence_ids": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Note/artifact ids that justify the suggestion."
+    },
+    "rationale": { "type": "string", "description": "Why this change improves the memory." },
+    "confidence": { "enum": ["low", "medium", "high"] },
+    "status": {
+      "enum": ["open", "applied", "rejected"],
+      "description": "Review state: 'open' until a human/agent applies or rejects it. The server never auto-applies."
+    },
+    "proposed_by": { "type": "string", "description": "The curator agent that proposed this suggestion." }
+  }
+}

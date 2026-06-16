@@ -68,6 +68,7 @@ public class SchemaRegistryAndValidatorTests
     [InlineData("project_state", """{ "project": "memory-mcp", "state": "v0.17.0 in prod", "open_issues": ["scope stats"] }""")]
     [InlineData("fact", """{ "statement": "pipe is 32mm plastic", "source": "site visit", "as_of": "2026-06-16", "confidence": "medium" }""")]
     [InlineData("episode", """{ "summary": "sent easement letter", "occurred_utc": "2026-06-16", "participants": ["neighbour"] }""")]
+    [InlineData("memory_evolution_suggestion", """{ "target_id": "n1", "kind": "retag", "proposed_patch": { "tags": ["cuisine:georgian"] }, "proposed_links": [ { "to_id": "n2", "rel": "relates_to" } ], "rationale": "tag by cuisine for discovery", "confidence": "medium", "status": "open" }""")]
     public void Valid_agentic_memory_types_pass(string type, string payload)
     {
         var registry = SchemaRegistry.FromEmbeddedResources();
@@ -84,6 +85,8 @@ public class SchemaRegistryAndValidatorTests
     [InlineData("fact", """{ "statement": "x", "confidence": "certain" }""")]          // bad confidence enum
     [InlineData("fact", """{ "subject": "x" }""")]                                     // missing statement
     [InlineData("episode", """{ "summary": "x", "extra": true }""")]                   // additionalProperties
+    [InlineData("memory_evolution_suggestion", """{ "rationale": "x", "status": "open" }""")]                  // missing target_id
+    [InlineData("memory_evolution_suggestion", """{ "target_id": "n1", "rationale": "x", "status": "maybe" }""")] // bad status enum
     public void Invalid_agentic_memory_types_are_rejected(string type, string payload)
     {
         var result = new SchemaValidator(SchemaRegistry.FromEmbeddedResources()).Validate(type, payload);
