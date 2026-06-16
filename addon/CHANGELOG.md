@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.21.0
+
+- **Evolve built-in types** (MEMP-121): an agent can now author a higher version of a built-in type
+  (e.g. `recipe@2`) via `schema_upsert` — the shipped version (`recipe@1`) stays immutable, the new
+  version becomes the latest so new writes validate against it, and existing notes keep their version.
+  (Previously the whole built-in type was read-only, so a kitchen agent couldn't extend the recipe schema.)
+  Note: `type` is the discriminator and the version is a separate field, so the viewer still shows one
+  `recipe` type, not two.
+
 ## 0.20.0
 
 Sprint 13 — shared commons + searchable payload.
