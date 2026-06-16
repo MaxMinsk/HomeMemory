@@ -1,8 +1,10 @@
 using System.Reflection;
 using MemoryMcp.Core.Artifacts;
 using MemoryMcp.Core.Diagnostics;
+using MemoryMcp.Core.Maintenance;
 using MemoryMcp.Core.Notes;
 using MemoryMcp.Core.Security;
+using MemoryMcp.Core.Storage;
 using MemoryMcp.Server.Security;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -23,6 +25,7 @@ internal static class ViewerEndpoints
         app.MapGet("/ui", () => Results.Content(IndexHtml(), "text/html; charset=utf-8"));
 
         app.MapGet("/api/stats", (DiagnosticsService diagnostics) => Results.Json(diagnostics.Snapshot()));
+        app.MapLint();
 
         app.MapGet("/api/search", (
             NotesRepository notes, RequestAuthorizer authz,
@@ -61,6 +64,28 @@ internal static class ViewerEndpoints
         });
 
         app.MapArtifactBytes();
+    }
+
+    // Memory inbox (MEMP-110): the read-only review queue — lint findings (unstructured/stale/secret/
+    // no-tags/duplicate/broken-link) the owner should triage. Mutating fixes go through the MCP tools
+    // (two-phase for destructive ones), not this read-only API.
+    private static void MapLint(this IEndpointRouteBuilder app)
+    {
+        app.MapGet("/api/lint", (RequestAuthorizer authz, ISqliteConnectionFactory factory, TimeProvider clock, string? domain, int? limit) =>
+        {
+            IReadOnlyCollection<string>? restrict;
+            try
+            {
+                restrict = authz.ReadRestriction(domain);
+            }
+            catch (ScopeForbiddenException)
+            {
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            }
+
+            var findings = new NotesLinter(factory, clock).Lint(domain, restrict, limit is > 0 ? limit.Value : 200);
+            return Results.Json(findings);
+        });
     }
 
     // Artifact byte transfer (out-of-band, never through the model context): signed PUT upload + GET serve.

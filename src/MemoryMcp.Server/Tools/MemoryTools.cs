@@ -391,13 +391,20 @@ public sealed class MemoryTools
     /// <summary>Adds or updates an agent-authored note type's JSON Schema.</summary>
     [McpServerTool(Name = "schema_upsert", Destructive = false, Idempotent = true, UseStructuredContent = true)]
     [Description("Register or update a note type's JSON Schema (draft 2020-12). The document's \"$id\" must be \"type@version\". Built-in types are read-only; a version already used by notes can't change (bump the version). Returns the stored type@version.")]
-    public string SchemaUpsert([Description("A complete JSON Schema document (a JSON object; a JSON string is also accepted) with $id = type@version")] JsonElement schema)
+    public string SchemaUpsert(
+        [Description("A complete JSON Schema document (a JSON object; a JSON string is also accepted) with $id = type@version")] JsonElement schema,
+        [Description("Who is authoring (recorded as provenance for audit; see schema_provenance)")] string? sourceAgent = null)
         => Translate(() =>
         {
             var schemaJson = JsonArg(schema) ?? throw new McpException("A schema document is required.");
-            var definition = _schemas.Upsert(_connectionFactory, schemaJson);
+            var definition = _schemas.Upsert(_connectionFactory, schemaJson, sourceAgent);
             return $"{definition.Type}@{definition.Version}";
         });
+
+    /// <summary>Lists schema authoring provenance (who registered each type@version, and when).</summary>
+    [McpServerTool(Name = "schema_provenance", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("List schema authoring provenance for audit: each registered type@version with its author and last-write time. Built-ins show author 'system'; agent-authored schemas show the sourceAgent passed to schema_upsert (null for legacy ones). Schema authoring itself is not domain-restricted — this is visibility, not a gate.")]
+    public IReadOnlyList<SchemaProvenance> SchemaProvenanceList() => SchemaRegistry.Provenance(_connectionFactory);
 
     /// <summary>Returns server/database diagnostics.</summary>
     [McpServerTool(Name = "status", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]

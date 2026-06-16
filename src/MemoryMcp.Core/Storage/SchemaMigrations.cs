@@ -21,5 +21,6 @@ public static class SchemaMigrations
         new Migration0008FtsPayload(),
         new Migration0009LinkUnique(),
         new Migration0010NoteUsage(),
+        new Migration0011SchemaProvenance(),
     };
 }

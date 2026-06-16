@@ -115,6 +115,24 @@ public class SchemaAuthoringTests
         Assert.True(new SchemaValidator(reloaded).Validate("spice", """{ "name": "cumin" }""").IsValid);
     }
 
+    [Fact]
+    public void Provenance_records_system_for_builtins_and_the_author_for_agent_schemas()
+    {
+        using var temp = new TempDatabase();
+        var (registry, factory) = New(temp); // SyncToDatabase already persisted the built-ins
+
+        registry.Upsert(factory, SpiceSchema, author: "kitchen-agent");
+
+        var provenance = SchemaRegistry.Provenance(factory);
+
+        var builtin = Assert.Single(provenance, p => p.Type == "backlog_item" && p.Version == 1);
+        Assert.Equal("system", builtin.Author); // shipped built-ins are authored by the system
+
+        var agent = Assert.Single(provenance, p => p.Type == "spice" && p.Version == 1);
+        Assert.Equal("kitchen-agent", agent.Author);          // agent-authored carries the sourceAgent
+        Assert.False(string.IsNullOrEmpty(agent.UpdatedUtc));  // and a write timestamp
+    }
+
     private static (SchemaRegistry Registry, SqliteConnectionFactory Factory) New(TempDatabase temp)
     {
         var factory = new SqliteConnectionFactory(temp.FilePath);

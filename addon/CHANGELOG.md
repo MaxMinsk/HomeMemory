@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.27.0
+
+Sprint 20 — memory inbox + schema provenance.
+
+- **Memory inbox** (MEMP-110): a read-only **Inbox** in the viewer surfaces the review queue —
+  `notes_lint` findings (unstructured / stale / possible-secret / no-tags / duplicate / broken-link)
+  grouped by rule, each row opening the note. Backed by a new scope-enforced `GET /api/lint`. Mutating
+  fixes still go through the MCP tools (two-phase for destructive ones) — the viewer stays read-only.
+- **Schema authoring provenance** (MEMP-122): the `schemas` table now records `author` + `updated_utc`
+  (migration 0011). `schema_upsert` takes an optional `sourceAgent`; built-ins are authored by `system`.
+  A new read tool `schema_provenance` lists who registered each `type@version`. Authoring itself stays
+  open and unrestricted — this is audit visibility, not a gate.
+
 ## 0.26.0
 
 Sprint 19 — centralized scope authorization (internal; no behavior change).

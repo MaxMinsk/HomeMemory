@@ -117,8 +117,9 @@ public sealed class SchemaRegistry
     /// </summary>
     /// <param name="connectionFactory">Database to persist to and to check note usage against.</param>
     /// <param name="json">The JSON Schema document.</param>
+    /// <param name="author">Who is authoring (provenance, recorded for audit; optional).</param>
     /// <returns>The stored definition.</returns>
-    public SchemaDefinition Upsert(ISqliteConnectionFactory connectionFactory, string json)
+    public SchemaDefinition Upsert(ISqliteConnectionFactory connectionFactory, string json, string? author = null)
     {
         if (string.IsNullOrWhiteSpace(json))
         {
@@ -160,13 +161,34 @@ public sealed class SchemaRegistry
         }
 
         var definition = new SchemaDefinition(type, version, json, compiled);
-        Persist(connectionFactory, definition);
+        Persist(connectionFactory, definition, author);
         lock (_gate)
         {
             Index(definition);
         }
 
         return definition;
+    }
+
+    /// <summary>Schema authoring provenance for audit (MEMP-122): every registered schema with its author and last-write time.</summary>
+    /// <param name="connectionFactory">Database to read from.</param>
+    public static IReadOnlyList<SchemaProvenance> Provenance(ISqliteConnectionFactory connectionFactory)
+    {
+        using var connection = connectionFactory.Create();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT type, version, author, updated_utc FROM schemas ORDER BY type, version;";
+
+        var list = new List<SchemaProvenance>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            list.Add(new SchemaProvenance(
+                reader.GetString(0), reader.GetInt32(1),
+                reader.IsDBNull(2) ? null : reader.GetString(2),
+                reader.IsDBNull(3) ? null : reader.GetString(3)));
+        }
+
+        return list;
     }
 
     /// <summary>Idempotently upserts every built-in schema into the <c>schemas</c> table.</summary>
@@ -186,8 +208,9 @@ public sealed class SchemaRegistry
             using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText =
-                "INSERT INTO schemas (type, version, json_schema) VALUES ($t, $v, $j) " +
-                "ON CONFLICT(type, version) DO UPDATE SET json_schema = excluded.json_schema;";
+                "INSERT INTO schemas (type, version, json_schema, author, updated_utc) " +
+                "VALUES ($t, $v, $j, 'system', strftime('%Y-%m-%dT%H:%M:%fZ','now')) " +
+                "ON CONFLICT(type, version) DO UPDATE SET json_schema = excluded.json_schema, author = 'system';";
             command.Parameters.AddWithValue("$t", definition.Type);
             command.Parameters.AddWithValue("$v", definition.Version);
             command.Parameters.AddWithValue("$j", definition.Json);
@@ -197,16 +220,19 @@ public sealed class SchemaRegistry
         transaction.Commit();
     }
 
-    private static void Persist(ISqliteConnectionFactory connectionFactory, SchemaDefinition definition)
+    private static void Persist(ISqliteConnectionFactory connectionFactory, SchemaDefinition definition, string? author)
     {
         using var connection = connectionFactory.Create();
         using var command = connection.CreateCommand();
         command.CommandText =
-            "INSERT INTO schemas (type, version, json_schema) VALUES ($t, $v, $j) " +
-            "ON CONFLICT(type, version) DO UPDATE SET json_schema = excluded.json_schema;";
+            "INSERT INTO schemas (type, version, json_schema, author, updated_utc) " +
+            "VALUES ($t, $v, $j, $a, strftime('%Y-%m-%dT%H:%M:%fZ','now')) " +
+            "ON CONFLICT(type, version) DO UPDATE SET json_schema = excluded.json_schema, " +
+            "author = excluded.author, updated_utc = excluded.updated_utc;";
         command.Parameters.AddWithValue("$t", definition.Type);
         command.Parameters.AddWithValue("$v", definition.Version);
         command.Parameters.AddWithValue("$j", definition.Json);
+        command.Parameters.AddWithValue("$a", (object?)author ?? DBNull.Value);
         command.ExecuteNonQuery();
     }
 
