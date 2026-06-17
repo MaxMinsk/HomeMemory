@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.41.0
+
+Sprint 34 — retrieval & ops polish (MEMP-104, MEMP-038, MEMP-109, MEMP-037).
+
+- **Large notes are windowed in the database now** (MEMP-104): `notes_read` slices a note's body with SQLite
+  `substr`/`length`, so a multi-megabyte body is never loaded into memory just to return a few kilobytes. The
+  partial-read contract is unchanged; offsets/lengths are Unicode code points.
+- **Admin scoped-purge** (MEMP-038): a root-only `POST /api/admin/scoped-purge` + viewer "Scoped purge" form
+  (dry-run, then Apply) that permanently deletes notes matching a **domain and/or source agent**, plus their
+  satellite rows (events, usage, links, attachments, pending actions), in one transaction — so it reclaims space
+  (unlike soft delete). It refuses an unscoped purge (at least one of domain/source-agent is required); the FTS
+  index stays in sync via its delete trigger, and orphaned attachment blobs are reclaimed by the gc-blobs pass.
+- **Return ergonomics** (MEMP-109): `notes_append_journal` now returns the **created note's envelope** (id,
+  derived title, assigned dedupKey, typed tags) instead of a bare id, so a capture needs no follow-up get. And
+  `notes_get`/`notes_get_by_key`/`notes_append_journal` now include the payload and tags **already parsed**
+  (typed `payload` object + `tags` array) alongside the raw JSON strings, so callers needn't re-parse.
+- **Recency-decay ranking** (MEMP-037): `notes_search sort="recency"` orders by **type-aware recency** —
+  freshest-relative-to-its-type first, with per-type half-lives (episode/journal fade in days; recipe/reference/
+  skill are effectively timeless). So a week-old journal sinks below a year-old recipe.
+
 ## 0.40.0
 
 Sprint 33 — domain → project consolidation (MEMP-148).
