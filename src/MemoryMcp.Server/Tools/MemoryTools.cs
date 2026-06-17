@@ -179,12 +179,13 @@ public sealed class MemoryTools
         [Description("Typed payload as a JSON object (a JSON string is also accepted)")] JsonElement? payload = null,
         [Description("Tags as a JSON array (a JSON array string is also accepted)")] JsonElement? tags = null,
         [Description("Stable upsert key (e.g. MEMP-001)")] string? dedupKey = null,
-        [Description("Who is writing (provenance)")] string? sourceAgent = null)
+        [Description("Who is writing (provenance)")] string? sourceAgent = null,
+        [Description("Project within the domain (sub-axis, e.g. unity-solitaire). Filter with the DSL field `project`. Organizational only — scope stays at the domain.")] string? project = null)
     {
         try
         {
             _authz.AuthorizeWrite(domain);
-            return _notes.Upsert(domain, type, title, body, JsonArg(payload), JsonArg(tags), dedupKey, sourceAgent ?? "mcp");
+            return _notes.Upsert(domain, type, title, body, JsonArg(payload), JsonArg(tags), dedupKey, sourceAgent ?? "mcp", project);
         }
         catch (NoteValidationException exception)
         {
@@ -445,7 +446,8 @@ public sealed class MemoryTools
             return null;
         }
 
-        var rules = _notes.Search(null, domain, "memory_rule", null, "active", 100, 0, _authz.ReadRestriction(domain), null, includePayload: true).Items;
+        var ruleFilter = string.IsNullOrWhiteSpace(project) ? null : $"project == '{project}' OR project is null";
+        var rules = _notes.Search(null, domain, "memory_rule", null, "active", 100, 0, _authz.ReadRestriction(domain), ruleFilter, includePayload: true).Items;
         return new DomainManifest(domain, _notes.CountByTypeInDomain(domain), _skills.List(domain, null, project), rules);
     }
 

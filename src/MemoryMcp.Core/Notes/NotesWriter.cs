@@ -43,14 +43,16 @@ public sealed class NotesWriter
     /// <param name="tagsJson">Tags as a JSON array string.</param>
     /// <param name="dedupKey">Stable key for upsert; when null, always inserts.</param>
     /// <param name="sourceAgent">Provenance: who is writing.</param>
+    /// <param name="project">Optional project sub-axis within the domain; null leaves it unchanged on update.</param>
     /// <returns>The note id and whether it was created.</returns>
     public UpsertResult Upsert(
         string domain, string type, string? title, string? body,
-        string? payloadJson, string? tagsJson, string? dedupKey, string? sourceAgent)
+        string? payloadJson, string? tagsJson, string? dedupKey, string? sourceAgent, string? project = null)
     {
         domain = Identifiers.Normalize(domain);
         type = Identifiers.Normalize(type);
         tagsJson = Identifiers.NormalizeTags(tagsJson);
+        project = Identifiers.NormalizeOptional(project);
 
         var validation = _validator.Validate(type, payloadJson ?? "{}");
         if (!validation.IsValid)
@@ -63,7 +65,7 @@ public sealed class NotesWriter
 
         using var connection = _connectionFactory.Create();
         using var transaction = connection.BeginTransaction();
-        var (id, created) = PersistNote(connection, transaction, domain, type, title, body, payloadJson, tagsJson, dedupKey, sourceAgent, schemaVer, nowUtc);
+        var (id, created) = PersistNote(connection, transaction, domain, type, title, body, payloadJson, tagsJson, dedupKey, sourceAgent, schemaVer, nowUtc, project);
         transaction.Commit();
         return new UpsertResult(id, created, nowUtc, type, dedupKey);
     }
@@ -73,7 +75,7 @@ public sealed class NotesWriter
     private static (string Id, bool Created) PersistNote(
         SqliteConnection connection, SqliteTransaction transaction,
         string domain, string type, string? title, string? body,
-        string? payloadJson, string? tagsJson, string? dedupKey, string? sourceAgent, int schemaVer, string nowUtc)
+        string? payloadJson, string? tagsJson, string? dedupKey, string? sourceAgent, int schemaVer, string nowUtc, string? project = null)
     {
         var existing = dedupKey is null ? null : FindByDedup(connection, transaction, domain, type, dedupKey);
 
@@ -84,14 +86,14 @@ public sealed class NotesWriter
         {
             id = Guid.NewGuid().ToString("N");
             created = true;
-            Insert(connection, transaction, id, domain, type, title, body, payloadJson, tagsJson, dedupKey, sourceAgent, schemaVer, nowUtc);
+            Insert(connection, transaction, id, domain, type, title, body, payloadJson, tagsJson, dedupKey, sourceAgent, schemaVer, nowUtc, project);
         }
         else
         {
             id = existing.Id;
             created = false;
             before = NoteAudit.Snapshot(existing.Title, existing.Body, existing.PayloadJson, existing.TagsJson, existing.Status, existing.SchemaVer);
-            Update(connection, transaction, id, title, body, payloadJson, tagsJson, sourceAgent, schemaVer, nowUtc);
+            Update(connection, transaction, id, title, body, payloadJson, tagsJson, sourceAgent, schemaVer, nowUtc, project);
         }
 
         var after = NoteAudit.Snapshot(title, body, payloadJson, tagsJson, existing?.Status ?? "active", schemaVer);
@@ -543,16 +545,17 @@ public sealed class NotesWriter
     private static void Insert(
         SqliteConnection connection, SqliteTransaction transaction, string id, string domain, string type,
         string? title, string? body, string? payloadJson, string? tagsJson, string? dedupKey, string? sourceAgent,
-        int schemaVer, string nowUtc)
+        int schemaVer, string nowUtc, string? project = null)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText =
-            "INSERT INTO notes (id, domain, type, title, body, payload_json, tags_json, dedup_key, status, " +
+            "INSERT INTO notes (id, domain, project, type, title, body, payload_json, tags_json, dedup_key, status, " +
             "created_utc, updated_utc, source_agent, schema_ver, deleted) " +
-            "VALUES ($id, $d, $ty, $title, $body, $payload, $tags, $dedup, 'active', $now, $now, $agent, $ver, 0);";
+            "VALUES ($id, $d, $proj, $ty, $title, $body, $payload, $tags, $dedup, 'active', $now, $now, $agent, $ver, 0);";
         command.Parameters.AddWithValue("$id", id);
         command.Parameters.AddWithValue("$d", domain);
+        AddNullable(command, "$proj", project);
         command.Parameters.AddWithValue("$ty", type);
         AddNullable(command, "$title", title);
         AddNullable(command, "$body", body);
@@ -567,18 +570,20 @@ public sealed class NotesWriter
 
     private static void Update(
         SqliteConnection connection, SqliteTransaction transaction, string id,
-        string? title, string? body, string? payloadJson, string? tagsJson, string? sourceAgent, int schemaVer, string nowUtc)
+        string? title, string? body, string? payloadJson, string? tagsJson, string? sourceAgent, int schemaVer, string nowUtc, string? project = null)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
+        // COALESCE keeps the existing project when the caller doesn't supply one (a plain re-upsert won't null it).
         command.CommandText =
             "UPDATE notes SET title = $title, body = $body, payload_json = $payload, tags_json = $tags, " +
-            "source_agent = $agent, schema_ver = $ver, updated_utc = $now WHERE id = $id;";
+            "source_agent = $agent, schema_ver = $ver, updated_utc = $now, project = COALESCE($proj, project) WHERE id = $id;";
         AddNullable(command, "$title", title);
         AddNullable(command, "$body", body);
         AddNullable(command, "$payload", payloadJson);
         AddNullable(command, "$tags", tagsJson);
         AddNullable(command, "$agent", sourceAgent);
+        AddNullable(command, "$proj", project);
         command.Parameters.AddWithValue("$ver", schemaVer);
         command.Parameters.AddWithValue("$now", nowUtc);
         command.Parameters.AddWithValue("$id", id);

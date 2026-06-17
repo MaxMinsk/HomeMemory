@@ -112,6 +112,19 @@ public class NotesRepositoryTests
     }
 
     [Fact]
+    public void Search_filters_by_the_project_envelope_axis()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        repo.Upsert("development", "backlog_item", "U", null, """{ "key": "MEMP-970", "status": "ready" }""", null, "MEMP-970", "me", project: "unity-solitaire");
+        repo.Upsert("development", "backlog_item", "M", null, """{ "key": "MEMP-971", "status": "ready" }""", null, "MEMP-971", "me", project: "memory-mcp");
+
+        var page = repo.Search(domain: "development", filter: "project == 'unity-solitaire'", includePayload: true);
+
+        Assert.Equal("U", Assert.Single(page.Items).Title);
+    }
+
+    [Fact]
     public void Search_rejects_an_unsortable_or_injected_field()
     {
         using var temp = new TempDatabase();

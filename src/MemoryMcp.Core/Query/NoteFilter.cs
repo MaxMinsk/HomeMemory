@@ -26,7 +26,7 @@ public static class NoteFilter
 {
     private static readonly HashSet<string> EnvelopeColumns = new(StringComparer.Ordinal)
     {
-        "id", "domain", "type", "title", "body", "status", "dedup_key",
+        "id", "domain", "project", "type", "title", "body", "status", "dedup_key",
         "source_agent", "schema_ver", "created_utc", "updated_utc", "deleted",
     };
 

@@ -720,7 +720,7 @@ public sealed class NotesReader
             return;
         }
 
-        filters.Add(compiledFilter.Sql);
+        filters.Add($"({compiledFilter.Sql})"); // group so a DSL clause with OR binds correctly when AND-joined
         foreach (var parameter in compiledFilter.Parameters)
         {
             command.Parameters.AddWithValue(parameter.Name, parameter.Value);

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.37.0
+
+Sprint 30 — project envelope axis (MEMP-146).
+
+- **`project` is now a first-class envelope axis** on notes: `notes_upsert` takes `project`, the filter DSL
+  has a `project` field, and `memory_context`/`domain_manifest` filter rules by project (the project's rules
+  plus the domain-general ones). Works for any type — including `memory_rule`, whose payload can't carry it.
+  Migration 0012 adds the column + index and backfills from `payload.project`. Skills also carry the envelope
+  project. Project is organizational; scope stays at the domain level (per-project token isolation is out of
+  scope by decision). This completes the `development`-domain-with-projects model for clean multi-project work.
+- Fix: a filter-DSL clause containing `OR` is now parenthesized when combined with the structured
+  (domain/type/status) filters — previously the `OR` could mis-bind. (Latent; surfaced building the project filter.)
+
 ## 0.36.0
 
 Sprint 29 — project-scoped skills (multi-project foundation, MEMP-147).

@@ -40,7 +40,7 @@ public sealed class SkillsService
         // Project is encoded in the dedup key (skill@1 payload forbids extra fields), so a project-specific
         // skill and the domain-general one of the same key coexist as distinct notes.
         var dedupKey = hasProject ? Qualify(project!, key) : key;
-        _notes.Upsert(domain, SkillType, title, body, JsonSerializer.Serialize(payload), null, dedupKey, sourceAgent ?? "skill-author");
+        _notes.Upsert(domain, SkillType, title, body, JsonSerializer.Serialize(payload), null, dedupKey, sourceAgent ?? "skill-author", hasProject ? project : null);
         return new Skill(key, title, targetType, version, summary, body, hasProject ? project : null);
     }
 

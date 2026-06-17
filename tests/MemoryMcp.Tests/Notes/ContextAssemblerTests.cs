@@ -59,6 +59,24 @@ public class ContextAssemblerTests
         Assert.Contains(block!.Warnings, w => w.Contains("outdated", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public void Assemble_includes_project_and_general_rules_but_not_other_projects()
+    {
+        using var temp = new TempDatabase();
+        var (repo, skills) = New(temp);
+        repo.Upsert("development", "memory_rule", "General", null, """{ "description": "g" }""", null, "rule-g", "me");
+        repo.Upsert("development", "memory_rule", "Unity", null, """{ "description": "u" }""", null, "rule-u", "me", project: "unity-solitaire");
+        repo.Upsert("development", "memory_rule", "Other", null, """{ "description": "o" }""", null, "rule-o", "me", project: "other");
+
+        var block = new ContextAssembler(repo, skills).Assemble("x", "development", 5, includeLinks: false, RequestScope.Unrestricted, project: "unity-solitaire");
+
+        Assert.NotNull(block);
+        var titles = block!.Rules.Select(r => r.Title).ToList();
+        Assert.Contains("Unity", titles);       // project-specific
+        Assert.Contains("General", titles);     // domain-general (project null)
+        Assert.DoesNotContain("Other", titles); // another project's rule is excluded
+    }
+
     private static (NotesRepository Repo, SkillsService Skills) New(TempDatabase temp)
     {
         var factory = new SqliteConnectionFactory(temp.FilePath);

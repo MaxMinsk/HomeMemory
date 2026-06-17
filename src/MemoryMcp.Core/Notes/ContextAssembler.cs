@@ -45,12 +45,15 @@ public sealed class ContextAssembler
             ? new[] { domain }
             : new[] { domain, ScopeGuard.CommonsDomain };
 
+        // When a project is given, load that project's rules plus the domain-general ones (project IS NULL).
+        var ruleFilter = string.IsNullOrWhiteSpace(project) ? null : $"project == '{project}' OR project is null";
+
         var rules = new List<SearchResult>();
         var skills = new List<Skill>();
         foreach (var scoped in domains)
         {
             var restrict = guard.RestrictionForSearch(scoped);
-            rules.AddRange(_notes.Search(null, scoped, "memory_rule", null, "active", 50, 0, restrict, includePayload: true).Items
+            rules.AddRange(_notes.Search(null, scoped, "memory_rule", null, "active", 50, 0, restrict, ruleFilter, includePayload: true).Items
                 .Where(rule => !string.Equals(Field(rule.PayloadJson, "status"), "deprecated", StringComparison.Ordinal)));
             // Project overrides apply within the task's own domain; commons stays general.
             skills.AddRange(_skills.List(scoped, null, string.Equals(scoped, domain, StringComparison.Ordinal) ? project : null));
