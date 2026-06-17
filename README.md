@@ -8,7 +8,7 @@ A thin, reliable [MCP](https://modelcontextprotocol.io) server for personal memo
 
 - **Notes** — one relational envelope (`id, domain, type, title, body, payload_json, tags, dedup_key, status, …`) plus a typed `payload_json` validated by a JSON Schema registry. `domain` is a namespace (home / kitchen / memory-mcp / …); `type` is the schema discriminator (`backlog_item`, `recipe`, `fact`, …). See [ADR 0002](docs/decisions/0002-single-table-envelope-payload.md).
 - **Schemas + skills, server-hosted** — the schema is the hard contract (enforced on write); the skill is the soft craft (naming, units, how to render) served to agents on demand. Built-in types are **evolvable**: an agent can `schema_upsert` a higher version (e.g. `recipe@2`); the shipped version stays immutable and the new one becomes latest.
-- **Search & recall** — FTS5/BM25 full-text over title/body/tags/dedup_key/**payload**, a structured filter DSL (`payload.status in ('ready','next') AND payload.sprint is null`), plus agentic recall: `notes_recall` (FTS hits + 1-hop graph neighbors) and `notes_related` (shared-tag suggestions).
+- **Search & recall** — FTS5/BM25 full-text over title/body/tags/dedup_key/**payload**, a structured filter DSL (`payload.status in ('ready','next') AND payload.sprint is null`), and `sort` by any payload/envelope field (e.g. top-N by `payload.spice_level`). Plus agentic recall: `notes_recall` (FTS hits + 1-hop graph neighbors), `notes_related` (shared tags), and `memory_context` (a task's rules + skills + recall assembled in one call).
 - **Graph** — typed, idempotent links between notes (`depends_on`, `addresses`, `supersedes`, …), queryable in both directions.
 - **Safety** — append-only event log, soft-delete only (no hard delete in the tool surface), and two-phase confirmation for destructive operations (`archive`/`delete`/`unlink` return a pending action that a separate `confirm` must commit).
 - **Artifacts** — content-addressed blob store (CAS) for rendered HTML/markdown/files; bytes move out-of-band via short-lived **signed capability URLs**, never through the model context. Orphan blobs are garbage-collected.
@@ -26,12 +26,12 @@ The MCP surface (call `memory_capabilities` / `status` to see what a given build
 | Area | Tools |
 |---|---|
 | **Write notes** | `notes_upsert` · `notes_assemble` (note + links, atomic) · `notes_append_journal` · `notes_patch` · `notes_supersede` · `notes_archive` · `notes_restore` |
-| **Read notes** | `notes_get` · `notes_get_by_key` · `notes_read` (sliced) · `notes_outline` · `notes_find` · `notes_search` (FTS + filter DSL) · `notes_recent` · `notes_history` · `notes_history_event` · `notes_lint` |
-| **Recall & graph** | `notes_recall` (FTS + 1-hop neighbors) · `notes_related` (shared tags) · `notes_link` · `notes_unlink` · `notes_links` |
+| **Read notes** | `notes_get` · `notes_get_by_key` · `notes_read` (sliced) · `notes_outline` · `notes_find` · `notes_search` (FTS + filter DSL + `sort` by any field) · `notes_recent` · `notes_history` · `notes_history_event` · `notes_lint` |
+| **Recall & graph** | `memory_context` (layered: rules + skills + recall) · `notes_recall` (FTS + 1-hop neighbors) · `notes_related` (shared tags) · `notes_link` · `notes_unlink` · `notes_links` |
 | **Destructive (two-phase)** | `notes_confirm` · `notes_cancel` · `pending_actions_list` |
-| **Schemas & skills** | `schema_list_types` · `schema_get` · `schema_upsert` · `skill_list` · `skill_get` · `skill_upsert` |
+| **Schemas & skills** | `schema_list_types` · `schema_get` · `schema_upsert` · `schema_provenance` · `skill_list` · `skill_get` · `skill_upsert` |
 | **Artifacts (CAS)** | `artifacts_put` · `artifacts_get` · `artifacts_list` · `artifacts_url` (signed) · `artifacts_request_upload` · `artifacts_find_text` · `artifacts_delete` (two-phase) |
-| **Server** | `status` · `memory_capabilities` · `domains_list` · `tags_list` |
+| **Server & discovery** | `status` · `memory_capabilities` · `domain_manifest` · `domains_list` · `tags_list` |
 
 ## Layout
 

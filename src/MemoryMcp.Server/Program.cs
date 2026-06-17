@@ -36,7 +36,9 @@ const string ServerInstructions =
     "upserts; put structure in payload, free prose in body, facets in tags. Bytes go through artifacts, " +
     "never the model context. Relate notes with notes_link (active-voice lower_snake_case rel). " +
     "To start: call status (notesByType/notesByDomain), schema_list_types + schema_get(type) before " +
-    "writing a typed note, and skill_list(domain)/skill_get for conventions. " +
+    "writing a typed note, and skill_list(domain)/skill_get for conventions. For a task in a domain, " +
+    "memory_context(query, domain) loads its rules + skills + relevant notes in one call (and domain_manifest " +
+    "for a plain overview). " +
     "For a large/unknown note, read a slice not the whole body: notes_get(includeBody=false) to peek, then " +
     "notes_outline/notes_find/notes_read; fetch the full body only when you truly need it. " +
     "Use Memory as durable working memory, not only when asked: at the start of a related task search for " +

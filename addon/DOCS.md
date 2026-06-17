@@ -35,8 +35,20 @@ dotnet MemoryMcp.Server.dll tokens revoke <id>
 A minimal web viewer is served at **`/ui`** (also the add-on's "Open Web UI" button). Open it, paste
 the bearer token once (kept in the browser), then browse: filter notes by type/domain/tag or full-text,
 and open a note to see its structured payload, body and attachments. Tag chips are clickable — a click
-filters the search by that tag. It is read-only and backed by a small JSON API (`/api/stats`,
-`/api/search`, `/api/notes/{id}`) that requires the same bearer as `/mcp`.
+filters the search by that tag. The **Inbox** button shows the review queue (open suggestions + lint
+findings). It is read-only except for two reviewed-action surfaces backed by the same bearer as `/mcp`.
+
+### Admin panel (root token)
+
+With the **admin** button (signed in with the root, all-domains token) you can run maintenance from the
+UI — no container shell needed: **normalize-identifiers** (lowercase legacy domain/type/tags), **gc-blobs**
+(delete orphan blobs), each dry-run first then Apply; and **token management** (list / create / revoke
+per-agent tokens — the raw token is shown once). A domain-scoped token sees these as forbidden.
+
+### Health
+
+An unauthenticated `GET /health` returns `200 {"status":"ok"}` when the database answers (else `503`). The
+add-on registers it as the Supervisor **watchdog**, so Home Assistant restarts the add-on if it stops responding.
 
 ## Stats
 
