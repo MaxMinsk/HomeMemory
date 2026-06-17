@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.31.0
+
+Sprint 24 — owner maintenance from the UI + operator manual.
+
+- **Admin panel in the viewer** (MEMP-140): the add-on container has no shell, so the maintenance CLIs
+  were unreachable. The viewer now has an **admin** button with dry-run→Apply for **normalize-identifiers**
+  (lowercase legacy domain/type/tags, e.g. `Home`→`home`) and **gc-blobs** (delete orphan blobs), backed by
+  **root-only** endpoints `POST /api/admin/normalize-identifiers` and `/gc-blobs` (a domain-scoped token gets
+  403). Each returns the same report the CLI prints. Token management from the UI is a follow-up (MEMP-141).
+- **Operator manual** (MEMP-134): a new `commons` skill `memory-mcp-operator` — which tool when, reading
+  large notes, safe writes (optimistic concurrency), the two-phase destructive flow, artifacts, and context
+  hygiene. (Runtime skill; not part of the image.)
+
 ## 0.30.0
 
 Sprint 23 — one-click review of evolution suggestions (MEMP-133).

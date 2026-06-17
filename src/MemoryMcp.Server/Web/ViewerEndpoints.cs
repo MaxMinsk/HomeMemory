@@ -27,6 +27,7 @@ internal static class ViewerEndpoints
         app.MapGet("/api/stats", (DiagnosticsService diagnostics) => Results.Json(diagnostics.Snapshot()));
         app.MapLint();
         app.MapSuggestionActions();
+        app.MapAdminActions();
 
         app.MapGet("/api/search", (
             NotesRepository notes, RequestAuthorizer authz,
@@ -66,6 +67,21 @@ internal static class ViewerEndpoints
 
         app.MapArtifactBytes();
     }
+
+    // Owner maintenance actions (MEMP-140): the CLI ops (normalize-identifiers, gc-blobs) exposed as
+    // ROOT-ONLY endpoints so the owner can run them from the UI (the add-on container has no shell).
+    // Dry-run by default (?apply=true to write); each returns the same report the CLI prints.
+    private static void MapAdminActions(this IEndpointRouteBuilder app)
+    {
+        app.MapPost("/api/admin/normalize-identifiers", (RequestAuthorizer authz, ISqliteConnectionFactory factory, bool? apply) =>
+            RequireRoot(authz) ?? Results.Json(IdentifierBackfill.Run(factory, apply ?? false)));
+        app.MapPost("/api/admin/gc-blobs", (RequestAuthorizer authz, ISqliteConnectionFactory factory, BlobStore blobs, bool? apply) =>
+            RequireRoot(authz) ?? Results.Json(BlobReconciler.Reconcile(factory, blobs, apply ?? false)));
+    }
+
+    // Maintenance is global and mutating — only the unrestricted (root/all-domains) token may run it.
+    private static IResult? RequireRoot(RequestAuthorizer authz) =>
+        authz.Scope.IsUnrestricted ? null : Results.StatusCode(StatusCodes.Status403Forbidden);
 
     // Review actions for memory_evolution_suggestion notes (MEMP-133): the only write path in the viewer.
     // Apply maps proposed_patch/proposed_links onto the target (scope-checked, optimistic concurrency, all
