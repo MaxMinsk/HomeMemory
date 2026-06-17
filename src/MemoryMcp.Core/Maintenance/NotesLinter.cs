@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using MemoryMcp.Core.Naming;
 using MemoryMcp.Core.Storage;
@@ -68,6 +69,11 @@ public sealed class NotesLinter
             "AND dup.domain = notes.domain AND dup.type = notes.type AND lower(dup.title) = lower(notes.title))",
             "duplicate", "warn", "Another active note shares this (domain, type, title)."));
         findings.AddRange(StaleUnstructured(connection, domain, restrictToDomains));
+        findings.AddRange(StaleUnverified(connection, domain, restrictToDomains));
+        findings.AddRange(NoteRule(connection, domain, restrictToDomains,
+            "body IS NOT NULL AND length(body) > 4000 AND body NOT LIKE '#%' " +
+            "AND body NOT LIKE '%' || char(10) || '#%' AND json_extract(payload_json, '$.summary') IS NULL",
+            "oversized_no_summary", "info", "Large body with no heading or summary — add an outline/summary so it's skimmable."));
         findings.AddRange(BrokenLinks(connection, domain, restrictToDomains));
         findings.AddRange(PossibleSecrets(connection, domain, restrictToDomains));
 
@@ -103,6 +109,66 @@ public sealed class NotesLinter
         }
 
         return findings;
+    }
+
+    // Notes that opted into verification (payload.stale_after_days) but haven't been verified within that
+    // window — authoritative memory (e.g. memory_rule) rots like a failing test. Dates parsed in C# to avoid
+    // SQLite date-format pitfalls; baseline = last_verified_at, else created_utc.
+    private List<LintFinding> StaleUnverified(SqliteConnection connection, string? domain, IReadOnlyCollection<string>? restrict)
+    {
+        var now = _timeProvider.GetUtcNow();
+        using var command = connection.CreateCommand();
+        var filters = new List<string>
+        {
+            "deleted = 0", "status = 'active'", "json_extract(payload_json, '$.stale_after_days') IS NOT NULL",
+        };
+        BindScope(command, filters, "domain", domain, restrict);
+        command.CommandText = $"SELECT id, title, domain, type, payload_json, created_utc FROM notes WHERE {string.Join(" AND ", filters)} LIMIT 500;";
+
+        var findings = new List<LintFinding>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            if (!IsStale(reader.IsDBNull(4) ? null : reader.GetString(4), reader.GetString(5), now, out var days))
+            {
+                continue;
+            }
+
+            findings.Add(new LintFinding(
+                reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1),
+                reader.GetString(2), reader.GetString(3), "stale_unverified", "warn",
+                $"Not verified in over {days} days — re-confirm and bump last_verified_at, or deprecate it."));
+        }
+
+        return findings;
+    }
+
+    private static bool IsStale(string? payloadJson, string createdUtc, DateTimeOffset now, out int staleAfterDays)
+    {
+        staleAfterDays = 0;
+        if (string.IsNullOrEmpty(payloadJson))
+        {
+            return false;
+        }
+
+        using var document = JsonDocument.Parse(payloadJson);
+        var root = document.RootElement;
+        if (!root.TryGetProperty("stale_after_days", out var sad) || sad.ValueKind != JsonValueKind.Number
+            || !sad.TryGetInt32(out staleAfterDays) || staleAfterDays <= 0)
+        {
+            return false;
+        }
+
+        var baseline = root.TryGetProperty("last_verified_at", out var lv) && lv.ValueKind == JsonValueKind.String
+            ? lv.GetString() : createdUtc;
+        const DateTimeStyles styles = DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal;
+        if (!DateTimeOffset.TryParse(baseline, CultureInfo.InvariantCulture, styles, out var since)
+            && !DateTimeOffset.TryParse(createdUtc, CultureInfo.InvariantCulture, styles, out since))
+        {
+            return false;
+        }
+
+        return (now - since).TotalDays > staleAfterDays;
     }
 
     // Heuristic scan of body + payload for embedded credentials. Reports WHICH note and WHICH heuristic,

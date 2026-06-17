@@ -4,6 +4,7 @@ using MemoryMcp.Core.Schemas;
 using MemoryMcp.Core.Storage;
 using MemoryMcp.Tests.Storage;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace MemoryMcp.Tests.Maintenance;
@@ -122,6 +123,39 @@ public class NotesLinterTests
             """{ "key": "MEMP-204", "status": "ready" }""", """["t"]""", "MEMP-204", "me");
 
         Assert.DoesNotContain(new NotesLinter(factory).Lint(domain: null, restrictToDomains: null), f => f.Rule == "possible_secret");
+    }
+
+    [Fact]
+    public void Flags_a_note_not_verified_within_its_window()
+    {
+        using var temp = new TempDatabase();
+        var (repo, factory) = NewRepo(temp);
+        repo.Upsert("memory-mcp", "memory_rule", "Old rule", null,
+            """{ "description": "x", "stale_after_days": 30, "last_verified_at": "2026-01-01" }""", """["r"]""", "rule-old", "me");
+        repo.Upsert("memory-mcp", "memory_rule", "Fresh rule", null,
+            """{ "description": "y", "stale_after_days": 30, "last_verified_at": "2026-06-10" }""", """["r"]""", "rule-fresh", "me");
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 6, 17, 0, 0, 0, TimeSpan.Zero));
+
+        var stale = new NotesLinter(factory, clock).Lint(domain: null, restrictToDomains: null)
+            .Where(f => f.Rule == "stale_unverified").ToList();
+
+        var hit = Assert.Single(stale);
+        Assert.Equal("Old rule", hit.Title); // 167 days > 30; the fresh one (7 days) is not flagged
+    }
+
+    [Fact]
+    public void Flags_oversized_note_without_a_heading_or_summary()
+    {
+        using var temp = new TempDatabase();
+        var (repo, factory) = NewRepo(temp);
+        repo.Upsert("memory-mcp", "backlog_item", "Big blob", new string('x', 5000), """{ "key": "MEMP-950", "status": "ready" }""", """["t"]""", "MEMP-950", "me");
+        repo.Upsert("memory-mcp", "backlog_item", "Big structured", "# Heading\n" + new string('y', 5000), """{ "key": "MEMP-951", "status": "ready" }""", """["t"]""", "MEMP-951", "me");
+
+        var hits = new NotesLinter(factory).Lint(domain: null, restrictToDomains: null)
+            .Where(f => f.Rule == "oversized_no_summary").ToList();
+
+        var hit = Assert.Single(hits);
+        Assert.Equal("Big blob", hit.Title); // the one starting with '# Heading' is exempt
     }
 
     private static void BackdateNote(SqliteConnectionFactory factory, string id, string utc)
