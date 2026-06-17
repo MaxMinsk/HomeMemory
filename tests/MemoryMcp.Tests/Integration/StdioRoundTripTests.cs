@@ -168,7 +168,12 @@ public class StdioRoundTripTests
         var get = await client.CallToolAsync("skill_get",
             new Dictionary<string, object?> { ["domain"] = "memory-mcp", ["key"] = "backlog-mgmt" }, cancellationToken: ct);
         Assert.True(get.IsError is not true, "skill_get reported an error");
-        Assert.Contains("MEMP-NNN", Text(get));
+        var skill = Text(get);
+        Assert.Contains("MEMP-NNN", skill);
+        // Structured output must emit null fields (not omit them), or strict clients reject the required-but-absent
+        // field. This skill has no summary/project, so both keys must still be present as null.
+        Assert.Contains("\"summary\"", skill);
+        Assert.Contains("\"project\"", skill);
     }
 
     private static async Task AssertValidationErrorCarriesSkillHint(McpClient client, CancellationToken ct)

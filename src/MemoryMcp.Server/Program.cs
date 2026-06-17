@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using MemoryMcp.Core.Artifacts;
 using MemoryMcp.Core.Backlog;
 using MemoryMcp.Core.Confirmation;
@@ -97,7 +98,7 @@ if (transport == "http")
     builder.Services.AddSingleton<IScopeAccessor, HttpScopeAccessor>();
     builder.Services.AddMcpServer(options => options.ServerInstructions = ServerInstructions)
         .WithHttpTransport(options => options.Stateless = true)
-        .WithTools<MemoryTools>().WithTools<SkillTools>().WithTools<ArtifactTools>();
+        .WithTools<MemoryTools>(StructuredToolJson()).WithTools<SkillTools>(StructuredToolJson()).WithTools<ArtifactTools>(StructuredToolJson());
 
     var app = builder.Build();
     Bootstrap(app.Services);
@@ -165,7 +166,7 @@ else
     builder.Services.AddSingleton<IScopeAccessor, TrustedScopeAccessor>(); // local stdio is trusted
     builder.Services.AddMcpServer(options => options.ServerInstructions = ServerInstructions)
         .WithStdioServerTransport()
-        .WithTools<MemoryTools>().WithTools<SkillTools>().WithTools<ArtifactTools>();
+        .WithTools<MemoryTools>(StructuredToolJson()).WithTools<SkillTools>(StructuredToolJson()).WithTools<ArtifactTools>(StructuredToolJson());
 
     var app = builder.Build();
     Bootstrap(app.Services);
@@ -211,6 +212,13 @@ static BlobStore BuildBlobStore(string dbPath)
         : 1L * 1024 * 1024 * 1024;
     return new BlobStore(root, quota);
 }
+
+// Strict MCP clients (e.g. Cursor) validate structured tool output against its schema, which the SDK marks
+// all-properties-required. The SDK's default serializer omits nulls, so a required nullable field goes missing
+// and validation fails. Emit nulls explicitly (the schema's nullable type accepts null). Clone the SDK
+// defaults to keep its converters.
+static JsonSerializerOptions StructuredToolJson() =>
+    new(ModelContextProtocol.McpJsonUtilities.DefaultOptions) { DefaultIgnoreCondition = JsonIgnoreCondition.Never };
 
 static void RegisterServices(IServiceCollection services, string dbPath)
 {

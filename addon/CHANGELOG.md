@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.38.0
+
+Hotfix — structured tool output for strict MCP clients (MEMP-149).
+
+- **Tool output now emits null fields instead of omitting them.** The SDK marks every structured-output
+  property `required` in the tool schema, but its default serializer omitted nulls — so a required nullable
+  field (e.g. a skill's `targetType`/`summary`, a search hit's `snippet`) went missing and **strict clients
+  (Cursor) rejected the response**, breaking `skill_get`, `domain_manifest`, `notes_search`, etc. (Claude Code
+  is lenient, so it worked there and the issue slipped past CI.) Fixed by serializing tool output with
+  `DefaultIgnoreCondition = Never` (cloned from the SDK defaults to keep its converters), for both transports.
+
 ## 0.37.0
 
 Sprint 30 — project envelope axis (MEMP-146).
