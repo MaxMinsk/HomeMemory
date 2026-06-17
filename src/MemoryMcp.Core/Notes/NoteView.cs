@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace MemoryMcp.Core.Notes;
 
 /// <summary>
@@ -26,11 +28,14 @@ namespace MemoryMcp.Core.Notes;
 /// <param name="AttachmentCount">Number of artifacts attached to this note.</param>
 /// <param name="LinkCount">Number of links touching this note (both directions).</param>
 /// <param name="Project">Optional project sub-axis within the domain (null = none).</param>
+/// <param name="Payload">The payload already parsed to JSON (null when absent/unparseable) — so a caller needn't re-parse <see cref="PayloadJson"/>.</param>
+/// <param name="Tags">The tags already parsed to an array (null when absent/unparseable) — so a caller needn't re-parse <see cref="TagsJson"/>.</param>
 public sealed record NoteView(
     string Id, string Domain, string Type, string? Title, string? Body,
     string? PayloadJson, string? TagsJson, string? DedupKey, string Status,
     string CreatedUtc, string UpdatedUtc, string? SourceAgent, int SchemaVer, bool Deleted,
-    int BodyChars, bool Truncated, int AttachmentCount, int LinkCount, string? Project = null)
+    int BodyChars, bool Truncated, int AttachmentCount, int LinkCount, string? Project = null,
+    JsonElement? Payload = null, IReadOnlyList<string>? Tags = null)
 {
     /// <summary>Builds a view from a full note, applying the requested body windowing and the counts.</summary>
     public static NoteView From(Note note, bool includeBody, int? bodyMaxChars, int attachmentCount, int linkCount)
@@ -60,6 +65,44 @@ public sealed record NoteView(
             note.Id, note.Domain, note.Type, note.Title, body,
             note.PayloadJson, note.TagsJson, note.DedupKey, note.Status,
             note.CreatedUtc, note.UpdatedUtc, note.SourceAgent, note.SchemaVer, note.Deleted,
-            bodyChars, truncated, attachmentCount, linkCount, note.Project);
+            bodyChars, truncated, attachmentCount, linkCount, note.Project,
+            ParseObject(note.PayloadJson), ParseTags(note.TagsJson));
+    }
+
+    // Parses the payload to a detached JsonElement (Clone survives the JsonDocument disposal); null if absent/invalid.
+    private static JsonElement? ParseObject(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            return document.RootElement.Clone();
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    // Parses the tags JSON array to a string list; null if absent/invalid.
+    private static IReadOnlyList<string>? ParseTags(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(json);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 }

@@ -228,10 +228,10 @@ public sealed class MemoryTools
             return _notes.Assemble(domain, type, title, body, JsonArg(payload), JsonArg(tags), dedupKey, links, sourceAgent ?? "mcp");
         });
 
-    /// <summary>Appends a schema-less free-text journal note (capture-first).</summary>
-    [McpServerTool(Name = "notes_append_journal", Destructive = false)]
-    [Description("Append a schema-less free-text journal note (capture-first; structure it later). A title is derived from the first line if you omit one, a stable dedupKey is assigned, and the note is tagged 'unstructured' so it can be found for later structuring.")]
-    public string NotesAppendJournal(
+    /// <summary>Appends a schema-less free-text journal note (capture-first) and returns its envelope.</summary>
+    [McpServerTool(Name = "notes_append_journal", Destructive = false, UseStructuredContent = true)]
+    [Description("Append a schema-less free-text journal note (capture-first; structure it later). A title is derived from the first line if you omit one, a stable dedupKey is assigned, and the note is tagged 'unstructured' so it can be found for later structuring. Returns the created note's envelope (id, derived title, assigned dedupKey, typed tags) so you needn't follow up with a get.")]
+    public NoteView? NotesAppendJournal(
         [Description("Namespace, e.g. kitchen")] string domain,
         [Description("Raw free-text content")] string text,
         [Description("Optional title (default: derived from the first line)")] string? title = null,
@@ -240,7 +240,8 @@ public sealed class MemoryTools
         => Translate(() =>
         {
             _authz.AuthorizeWrite(domain);
-            return _notes.AppendJournal(domain, text, title, tags, sourceAgent ?? "mcp");
+            var id = _notes.AppendJournal(domain, text, title, tags, sourceAgent ?? "mcp");
+            return _notes.GetView(id);
         });
 
     /// <summary>Creates a directed link from one note to another (both must be in scope).</summary>

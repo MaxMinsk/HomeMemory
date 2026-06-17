@@ -62,6 +62,7 @@ public class StdioRoundTripTests
         await AssertCapabilities(client, cts.Token);
         await AssertNotesRoundTrip(client, cts.Token);
         await AssertStructuredInputs(client, cts.Token);
+        await AssertReturnErgonomics(client, cts.Token);
         await AssertAssembleIsAtomic(client, cts.Token);
         await AssertSkillRoundTrip(client, cts.Token);
         await AssertArtifactRoundTrip(client, cts.Token);
@@ -128,6 +129,31 @@ public class StdioRoundTripTests
         var text = Text(search);
         Assert.Contains("MEMP-901", text);     // object payload was stored + indexed
         Assert.Contains("structured", text);   // array tags were stored
+    }
+
+    private static async Task AssertReturnErgonomics(McpClient client, CancellationToken ct)
+    {
+        // MEMP-109a: append_journal returns the created note's envelope (id + assigned dedupKey + typed tags),
+        // so the caller needn't follow up with a get.
+        var journal = await client.CallToolAsync("notes_append_journal", new Dictionary<string, object?>
+        {
+            ["domain"] = "memory-mcp", ["text"] = "Captured thought about caching", ["tags"] = "[\"idea\"]",
+        }, cancellationToken: ct);
+        Assert.True(journal.IsError is not true, "notes_append_journal reported an error: " + Text(journal));
+        var envelope = Text(journal);
+        Assert.Contains("journal-", envelope);        // the assigned dedupKey is echoed
+        Assert.Contains("unstructured", envelope);    // typed tags include the auto-added marker
+
+        // MEMP-109b: read responses carry the payload/tags already parsed (typed), not just JSON strings.
+        var get = await client.CallToolAsync("notes_get_by_key", new Dictionary<string, object?>
+        {
+            ["domain"] = "memory-mcp", ["type"] = "backlog_item", ["dedupKey"] = "MEMP-901",
+        }, cancellationToken: ct);
+        Assert.True(get.IsError is not true, "notes_get_by_key reported an error: " + Text(get));
+        var view = Text(get);
+        Assert.Contains("\"payload\"", view);         // typed payload object (alongside payloadJson)
+        Assert.Contains("\"tags\"", view);            // typed tags array (alongside tagsJson)
+        Assert.Contains("from-test", view);           // a tag value from the structured upsert
     }
 
     private static async Task AssertAssembleIsAtomic(McpClient client, CancellationToken ct)
