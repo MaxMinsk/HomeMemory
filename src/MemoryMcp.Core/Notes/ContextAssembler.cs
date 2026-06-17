@@ -31,7 +31,8 @@ public sealed class ContextAssembler
     /// <param name="limit">Max recall hits.</param>
     /// <param name="includeLinks">Include one-hop neighbors in the recall.</param>
     /// <param name="scope">The caller's request scope.</param>
-    public ContextBlock? Assemble(string query, string domain, int limit, bool includeLinks, RequestScope scope)
+    /// <param name="project">Optional project: its skills override the domain-general ones of the same key.</param>
+    public ContextBlock? Assemble(string query, string domain, int limit, bool includeLinks, RequestScope scope, string? project = null)
     {
         var guard = new ScopeGuard(scope);
         if (!guard.IsAllowed(domain))
@@ -51,7 +52,8 @@ public sealed class ContextAssembler
             var restrict = guard.RestrictionForSearch(scoped);
             rules.AddRange(_notes.Search(null, scoped, "memory_rule", null, "active", 50, 0, restrict, includePayload: true).Items
                 .Where(rule => !string.Equals(Field(rule.PayloadJson, "status"), "deprecated", StringComparison.Ordinal)));
-            skills.AddRange(_skills.List(scoped, null));
+            // Project overrides apply within the task's own domain; commons stays general.
+            skills.AddRange(_skills.List(scoped, null, string.Equals(scoped, domain, StringComparison.Ordinal) ? project : null));
         }
 
         // Dedupe skills by key when merging the domain with commons (the domain's wins, listed first).

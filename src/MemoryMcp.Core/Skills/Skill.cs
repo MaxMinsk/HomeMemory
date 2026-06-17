@@ -9,4 +9,5 @@ namespace MemoryMcp.Core.Skills;
 /// <param name="Version">Author-managed version (bumped on meaningful change).</param>
 /// <param name="Summary">One-line description of what the skill teaches.</param>
 /// <param name="Body">The skill content (markdown); null in list results.</param>
-public sealed record Skill(string Key, string? Title, string? TargetType, int Version, string? Summary, string? Body);
+/// <param name="Project">Project this skill is specific to (overrides the domain-general one with the same key); null = general.</param>
+public sealed record Skill(string Key, string? Title, string? TargetType, int Version, string? Summary, string? Body, string? Project = null);

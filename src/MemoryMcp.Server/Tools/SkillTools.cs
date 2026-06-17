@@ -34,28 +34,31 @@ public sealed class SkillTools
         [Description("Note type this skill guides, e.g. recipe (optional)")] string? targetType = null,
         [Description("Version; bump on meaningful change (default 1)")] int version = 1,
         [Description("One-line description of what the skill teaches")] string? summary = null,
-        [Description("Who is writing (provenance)")] string? sourceAgent = null)
+        [Description("Who is writing (provenance)")] string? sourceAgent = null,
+        [Description("Project this skill is specific to (overrides the domain-general one of the same key); omit for a general skill")] string? project = null)
         => Translate(() =>
         {
             _authz.AuthorizeWrite(domain);
-            return _skills.Upsert(domain, key, title, body, targetType, version, summary, sourceAgent);
+            return _skills.Upsert(domain, key, title, body, targetType, version, summary, sourceAgent, project);
         });
 
     /// <summary>Lists skills (metadata only) in a domain, optionally for a specific target type.</summary>
     [McpServerTool(Name = "skill_list", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
-    [Description("List available skills (metadata, no body), optionally only those that guide a given note type. Call skill_get for the full text.")]
+    [Description("List available skills (metadata, no body), optionally only those that guide a given note type. Pass a project to get its overrides (a project-specific skill replaces the domain-general one of the same key). Call skill_get for the full text.")]
     public IReadOnlyList<Skill> SkillList(
         [Description("Namespace, e.g. memory-mcp")] string domain,
-        [Description("Only skills guiding this note type (optional)")] string? targetType = null)
-        => _authz.CanRead(domain) ? _skills.List(domain, targetType) : Array.Empty<Skill>();
+        [Description("Only skills guiding this note type (optional)")] string? targetType = null,
+        [Description("Resolve for this project (project-specific skills override domain-general ones)")] string? project = null)
+        => _authz.CanRead(domain) ? _skills.List(domain, targetType, project) : Array.Empty<Skill>();
 
     /// <summary>Returns the full skill (including body) by key, if in scope.</summary>
     [McpServerTool(Name = "skill_get", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
-    [Description("Get a full skill (including its guidance body) by key.")]
+    [Description("Get a full skill (including its guidance body) by key. Pass a project to prefer its project-specific override, falling back to the domain-general skill.")]
     public Skill? SkillGet(
         [Description("Namespace, e.g. memory-mcp")] string domain,
-        [Description("Skill key, e.g. recipe-authoring")] string key)
-        => _authz.CanRead(domain) ? _skills.Get(domain, key) : null;
+        [Description("Skill key, e.g. recipe-authoring")] string key,
+        [Description("Prefer this project's override of the key (falls back to the general skill)")] string? project = null)
+        => _authz.CanRead(domain) ? _skills.Get(domain, key, project) : null;
 
     private static T Translate<T>(Func<T> action)
     {

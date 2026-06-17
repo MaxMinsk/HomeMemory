@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.36.0
+
+Sprint 29 — project-scoped skills (multi-project foundation, MEMP-147).
+
+- **Skills can be project-specific and override the domain-general one** of the same key. A domain (e.g.
+  `development`) can host several projects (`memory-mcp`, `unity-solitaire`); `skill_upsert(domain, key, …,
+  project="unity-solitaire")` stores an override that wins for that project. Resolution precedence is
+  **project → domain-general → commons**. `skill_get`, `skill_list`, `memory_context` and `domain_manifest`
+  all take an optional `project`. (Project is encoded in a qualified dedup key, so no schema change.)
+- Project notes already work today via `payload.project` + the filter DSL — so a project's task notes need
+  nothing new. The full `project` envelope axis (uniform filtering, rules-by-project) and migrating the
+  existing `memory-mcp` data into a `development` domain are tracked separately (MEMP-146 / MEMP-148) and are
+  not required to start a new project.
+- commons `memory-mcp-operator` skill → v3 with a Projects section.
+
 ## 0.35.0
 
 Sprint 28 — polish & ops (batched).

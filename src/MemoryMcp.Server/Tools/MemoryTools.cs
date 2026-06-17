@@ -75,10 +75,11 @@ public sealed class MemoryTools
     [Description("Assemble a prompt-ready context block for a task in a domain, in one call: the active rules in force (memory_rule from the domain + commons, most important first), the guiding skills, and a recall of notes relevant to the query (FTS hits + one-hop neighbors). Includes an advisory-policy reminder (memory is advisory; the live user/data wins). Use at the start of a task instead of separate skill_list/search/recall calls. Null if the domain is out of scope.")]
     public ContextBlock? MemoryContext(
         [Description("The task query to recall relevant notes for")] string query,
-        [Description("Namespace, e.g. kitchen")] string domain,
+        [Description("Namespace, e.g. development or kitchen")] string domain,
         [Description("Max recall hits (default 10)")] int limit = 10,
-        [Description("Include one-hop linked neighbors of the recall hits (default true)")] bool includeLinks = true)
-        => Translate(() => new ContextAssembler(_notes, _skills).Assemble(query, domain, limit, includeLinks, _authz.Scope));
+        [Description("Include one-hop linked neighbors of the recall hits (default true)")] bool includeLinks = true,
+        [Description("Project within the domain: its skills override the domain-general ones of the same key")] string? project = null)
+        => Translate(() => new ContextAssembler(_notes, _skills).Assemble(query, domain, limit, includeLinks, _authz.Scope, project));
 
     /// <summary>Lists the most-recently-updated (or most-used) notes in scope.</summary>
     [McpServerTool(Name = "notes_recent", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
@@ -434,8 +435,10 @@ public sealed class MemoryTools
 
     /// <summary>Returns a compact orientation for a domain: note types, skills, and active rules.</summary>
     [McpServerTool(Name = "domain_manifest", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
-    [Description("Domain orientation in one call: note counts by type, the domain's skills (metadata), and its active memory_rule notes (the rules in force, with payload). Use when entering a domain instead of dumping everything. Null if the domain is out of scope.")]
-    public DomainManifest? GetDomainManifest([Description("Namespace, e.g. kitchen")] string domain)
+    [Description("Domain orientation in one call: note counts by type, the domain's skills (metadata), and its active memory_rule notes (the rules in force, with payload). Pass a project to resolve project-specific skill overrides. Use when entering a domain instead of dumping everything. Null if the domain is out of scope.")]
+    public DomainManifest? GetDomainManifest(
+        [Description("Namespace, e.g. development or kitchen")] string domain,
+        [Description("Resolve skills for this project (project-specific overrides win)")] string? project = null)
     {
         if (!_authz.CanRead(domain))
         {
@@ -443,7 +446,7 @@ public sealed class MemoryTools
         }
 
         var rules = _notes.Search(null, domain, "memory_rule", null, "active", 100, 0, _authz.ReadRestriction(domain), null, includePayload: true).Items;
-        return new DomainManifest(domain, _notes.CountByTypeInDomain(domain), _skills.List(domain, null), rules);
+        return new DomainManifest(domain, _notes.CountByTypeInDomain(domain), _skills.List(domain, null, project), rules);
     }
 
     /// <summary>Lists tags (facets) with their counts, most-used first.</summary>
