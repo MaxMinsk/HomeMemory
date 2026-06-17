@@ -421,6 +421,20 @@ public sealed class MemoryTools
     [Description("List domains (namespaces/workspaces) with note counts — to discover what workspaces exist.")]
     public IReadOnlyDictionary<string, long> DomainsList() => _diagnostics.Snapshot().NotesByDomain;
 
+    /// <summary>Returns a compact orientation for a domain: note types, skills, and active rules.</summary>
+    [McpServerTool(Name = "domain_manifest", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("Domain orientation in one call: note counts by type, the domain's skills (metadata), and its active memory_rule notes (the rules in force, with payload). Use when entering a domain instead of dumping everything. Null if the domain is out of scope.")]
+    public DomainManifest? GetDomainManifest([Description("Namespace, e.g. kitchen")] string domain)
+    {
+        if (!_authz.CanRead(domain))
+        {
+            return null;
+        }
+
+        var rules = _notes.Search(null, domain, "memory_rule", null, "active", 100, 0, _authz.ReadRestriction(domain), null, includePayload: true).Items;
+        return new DomainManifest(domain, _notes.CountByTypeInDomain(domain), _skills.List(domain, null), rules);
+    }
+
     /// <summary>Lists tags (facets) with their counts, most-used first.</summary>
     [McpServerTool(Name = "tags_list", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
     [Description("List tags (cross-cutting facets) with counts, most-used first — to discover the tag taxonomy.")]

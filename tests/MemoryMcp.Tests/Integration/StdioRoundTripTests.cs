@@ -56,6 +56,7 @@ public class StdioRoundTripTests
         Assert.Contains(tools, tool => tool.Name == "artifacts_find_text");
         Assert.Contains(tools, tool => tool.Name == "memory_capabilities");
         Assert.Contains(tools, tool => tool.Name == "schema_provenance");
+        Assert.Contains(tools, tool => tool.Name == "domain_manifest");
 
         await AssertCapabilities(client, cts.Token);
         await AssertNotesRoundTrip(client, cts.Token);

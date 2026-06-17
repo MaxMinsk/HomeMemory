@@ -47,6 +47,25 @@ public sealed class NotesReader
         return reader.Read() ? NoteRowMapper.Map(reader) : null;
     }
 
+    /// <summary>Active note counts grouped by type within a single domain (powers the domain manifest).</summary>
+    /// <param name="domain">The domain (namespace) to count within.</param>
+    public IReadOnlyDictionary<string, long> CountByTypeInDomain(string domain)
+    {
+        using var connection = _connectionFactory.Create();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT type, count(*) FROM notes WHERE deleted = 0 AND status = 'active' AND domain = $d GROUP BY type ORDER BY type;";
+        command.Parameters.AddWithValue("$d", Identifiers.Normalize(domain));
+
+        var counts = new Dictionary<string, long>(StringComparer.Ordinal);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            counts[reader.GetString(0)] = reader.GetInt64(1);
+        }
+
+        return counts;
+    }
+
     /// <summary>
     /// Returns a note plus cheap size metadata, applying body windowing so a caller need not pull a huge
     /// body to inspect a note. <paramref name="includeBody"/>=false omits the body; <paramref name="bodyMaxChars"/>

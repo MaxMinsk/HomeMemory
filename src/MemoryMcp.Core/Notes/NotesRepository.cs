@@ -91,6 +91,9 @@ public sealed class NotesRepository
     /// <inheritdoc cref="NotesReader.Get"/>
     public Note? Get(string id) => _reader.Get(id);
 
+    /// <inheritdoc cref="NotesReader.CountByTypeInDomain"/>
+    public IReadOnlyDictionary<string, long> CountByTypeInDomain(string domain) => _reader.CountByTypeInDomain(domain);
+
     /// <inheritdoc cref="NotesReader.GetView"/>
     public NoteView? GetView(string id, bool includeBody = true, int? bodyMaxChars = null)
         => _reader.GetView(id, includeBody, bodyMaxChars);

@@ -95,6 +95,22 @@ public class NotesRepositoryTests
         Assert.StartsWith("2026-06-15T10:05:00", (string)Scalar(c, "SELECT updated_utc FROM notes;")!);
     }
 
+    [Fact]
+    public void CountByTypeInDomain_groups_active_notes_in_one_domain()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        repo.Upsert("kitchen", "backlog_item", "A", null, """{ "key": "MEMP-960", "status": "ready" }""", null, "MEMP-960", "me");
+        repo.Upsert("kitchen", "memory_rule", "R", null, """{ "description": "x" }""", null, "rule-1", "me");
+        repo.Upsert("home", "backlog_item", "B", null, """{ "key": "MEMP-961", "status": "ready" }""", null, "MEMP-961", "me");
+
+        var counts = repo.CountByTypeInDomain("kitchen");
+
+        Assert.Equal(2, counts.Count);            // only kitchen's types
+        Assert.Equal(1, counts["backlog_item"]);  // home's backlog_item is not counted here
+        Assert.Equal(1, counts["memory_rule"]);
+    }
+
     private static (NotesRepository Repo, SqliteConnectionFactory Factory) NewRepo(TempDatabase temp, TimeProvider? clock = null)
     {
         var factory = new SqliteConnectionFactory(temp.FilePath);
