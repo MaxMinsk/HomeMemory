@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.35.0
+
+Sprint 28 — polish & ops (batched).
+
+- **`/health` probe + HA watchdog** (MEMP-144): an unauthenticated `GET /health` returns `200 {"status":"ok"}`
+  when the database answers (else `503`). The add-on registers it as the Supervisor `watchdog`, so Home
+  Assistant restarts the add-on if it stops responding. No version/detail leaked to unauthenticated callers.
+- **`memory_context` refinements** (MEMP-145): warns when included rules are stale (opted into
+  `stale_after_days` and unverified past their window), and dedupes skills by key across domain + commons.
+- **Docs & skills sync** (MEMP-143): README/DOCS updated for the current tool surface (memory_context,
+  domain_manifest, schema_provenance, `notes_search` sort, the admin panel); the `commons` operator-manual
+  skill bumped to v2 and the curator runbook refreshed.
+
 ## 0.34.0
 
 Sprint 27 — recall, review UX, and sortable search (batched).

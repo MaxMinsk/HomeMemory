@@ -11,7 +11,7 @@
 
     <!-- Single source of the build version. Keep in lockstep with addon/config.yaml on every release;
          the `status` tool reports it so agents can verify which build prod is running. -->
-    <Version>0.34.0</Version>
+    <Version>0.35.0</Version>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
 
     <!-- Code analysis (built-in CA quality + IDE style rules). Warnings stay visible locally;
