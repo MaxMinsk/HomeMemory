@@ -15,7 +15,8 @@ namespace MemoryMcp.Core.Notes;
 /// <param name="SourceAgent">Provenance: who last wrote it.</param>
 /// <param name="SchemaVer">Schema version the payload was validated against.</param>
 /// <param name="Deleted">Soft-delete flag.</param>
+/// <param name="Project">Optional project sub-axis within the domain (null = none).</param>
 public sealed record Note(
     string Id, string Domain, string Type, string? Title, string? Body,
     string? PayloadJson, string? TagsJson, string? DedupKey, string Status,
-    string CreatedUtc, string UpdatedUtc, string? SourceAgent, int SchemaVer, bool Deleted);
+    string CreatedUtc, string UpdatedUtc, string? SourceAgent, int SchemaVer, bool Deleted, string? Project = null);

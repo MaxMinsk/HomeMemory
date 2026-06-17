@@ -8,7 +8,7 @@ internal static class NoteRowMapper
     /// <summary>The column list every full-note query must SELECT, in this exact order.</summary>
     public const string Columns =
         "id, domain, type, title, body, payload_json, tags_json, dedup_key, status, " +
-        "created_utc, updated_utc, source_agent, schema_ver, deleted";
+        "created_utc, updated_utc, source_agent, schema_ver, deleted, project";
 
     /// <summary>Maps the current row (selected with <see cref="Columns"/>) to a <see cref="Note"/>.</summary>
     public static Note Map(SqliteDataReader reader) => new(
@@ -25,5 +25,6 @@ internal static class NoteRowMapper
         reader.GetString(10),
         reader.IsDBNull(11) ? null : reader.GetString(11),
         reader.GetInt32(12),
-        reader.GetInt64(13) != 0);
+        reader.GetInt64(13) != 0,
+        reader.IsDBNull(14) ? null : reader.GetString(14));
 }

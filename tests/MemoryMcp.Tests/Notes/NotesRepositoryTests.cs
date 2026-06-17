@@ -1,3 +1,4 @@
+using MemoryMcp.Core.Maintenance;
 using MemoryMcp.Core.Notes;
 using MemoryMcp.Core.Query;
 using MemoryMcp.Core.Schemas;
@@ -109,6 +110,38 @@ public class NotesRepositoryTests
 
         Assert.Equal("top", page.Items[0].Title); // 10 > 5 numerically (lexicographic would put "5" first)
         Assert.Equal("mid", page.Items[1].Title);
+    }
+
+    [Fact]
+    public void Upsert_derives_envelope_project_from_payload_project()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        var id = repo.Upsert("development", "backlog_item", "T", null,
+            """{ "key": "MEMP-980", "status": "ready", "project": "unity-solitaire" }""", null, "MEMP-980", "me").Id;
+
+        Assert.Equal("unity-solitaire", repo.Get(id)!.Project); // envelope project auto-set from payload.project
+    }
+
+    [Fact]
+    public void ProjectBackfill_sets_envelope_project_from_payload_for_legacy_notes()
+    {
+        using var temp = new TempDatabase();
+        var (repo, factory) = NewRepo(temp);
+        var id = repo.Upsert("development", "backlog_item", "T", null,
+            """{ "key": "MEMP-981", "status": "ready", "project": "unity-solitaire" }""", null, "MEMP-981", "me").Id;
+        using (var c = factory.Create()) // simulate a note written before the envelope axis existed
+        using (var cmd = c.CreateCommand())
+        {
+            cmd.CommandText = "UPDATE notes SET project = NULL WHERE id = $id;";
+            cmd.Parameters.AddWithValue("$id", id);
+            cmd.ExecuteNonQuery();
+        }
+        Assert.Null(repo.Get(id)!.Project);
+
+        Assert.Equal(1, ProjectBackfill.Run(factory, apply: false).NotesUpdated); // dry run counts it
+        Assert.Equal(1, ProjectBackfill.Run(factory, apply: true).NotesUpdated);
+        Assert.Equal("unity-solitaire", repo.Get(id)!.Project);
     }
 
     [Fact]

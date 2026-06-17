@@ -106,6 +106,8 @@ internal static class ViewerEndpoints
             RequireRoot(authz) ?? Results.Json(IdentifierBackfill.Run(factory, apply ?? false)));
         app.MapPost("/api/admin/gc-blobs", (RequestAuthorizer authz, ISqliteConnectionFactory factory, BlobStore blobs, bool? apply) =>
             RequireRoot(authz) ?? Results.Json(BlobReconciler.Reconcile(factory, blobs, apply ?? false)));
+        app.MapPost("/api/admin/backfill-project", (RequestAuthorizer authz, ISqliteConnectionFactory factory, bool? apply) =>
+            RequireRoot(authz) ?? Results.Json(ProjectBackfill.Run(factory, apply ?? false)));
     }
 
     // Maintenance is global and mutating — only the unrestricted (root/all-domains) token may run it.

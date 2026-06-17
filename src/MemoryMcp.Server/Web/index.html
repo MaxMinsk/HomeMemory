@@ -119,7 +119,7 @@ async function loadStats() {
 function itemHtml(it){
   let tags = []; try { tags = it.tagsJson ? JSON.parse(it.tagsJson) : []; } catch {}
   return `<div class="item" onclick="open_('${it.id}')"><div class="t">${esc(it.title)||'<i>untitled</i>'}</div>` +
-    `<div class="m"><span class="badge">${esc(it.type)}</span><span class="badge">${esc(it.domain)}</span>${esc(it.status||'')}</div>` +
+    `<div class="m"><span class="badge">${esc(it.type)}</span><span class="badge">${esc(it.domain)}</span>${it.project?`<span class="badge">${esc(it.project)}</span>`:''}${esc(it.status||'')}</div>` +
     (tags.length ? `<div>${tags.map(t=>`<span class="tag" data-tag="${esc(t)}" title="filter by this tag">${esc(t)}</span>`).join('')}</div>` : '') + `</div>`;
 }
 
@@ -188,6 +188,9 @@ function admin() {
     `<div class="meta"><b>GC blobs</b> <span class="k">— delete orphan content-addressed blobs</span><br>` +
     `<button onclick="adminRun('gc-blobs',false)">Dry-run</button> ` +
     `<button class="btn-reject" onclick="adminRun('gc-blobs',true)">Apply</button></div>` +
+    `<div class="meta"><b>Backfill project</b> <span class="k">— set the envelope project from payload.project on older notes</span><br>` +
+    `<button onclick="adminRun('backfill-project',false)">Dry-run</button> ` +
+    `<button class="btn-reject" onclick="adminRun('backfill-project',true)">Apply</button></div>` +
     `<h3>output</h3><pre id="adminout" class="k">—</pre>` +
     `<h3>Tokens</h3>` +
     `<div class="meta"><input id="tlabel" class="fld" type="text" placeholder="label (optional)"> ` +
@@ -269,6 +272,7 @@ async function open_(id) {
     $('#detail').innerHTML =
       `<h2>${esc(n.title)||'<i>untitled</i>'}</h2>` +
       `<div class="meta"><span class="lbl">domain</span>${esc(n.domain)}` +
+      (n.project ? `&nbsp;&nbsp;<span class="lbl">project</span>${esc(n.project)}` : '') +
       `&nbsp;&nbsp;<span class="lbl">type</span>${esc(n.type)}` +
       `&nbsp;&nbsp;<span class="lbl">status</span>${esc(n.status)}</div>` +
       (canReview ? `<div class="meta"><button onclick="reviewSuggestion('${esc(id)}','apply')">Apply</button> ` +

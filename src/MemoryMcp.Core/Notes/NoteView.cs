@@ -25,11 +25,12 @@ namespace MemoryMcp.Core.Notes;
 /// <param name="Truncated">True when the returned Body is shorter than the stored body.</param>
 /// <param name="AttachmentCount">Number of artifacts attached to this note.</param>
 /// <param name="LinkCount">Number of links touching this note (both directions).</param>
+/// <param name="Project">Optional project sub-axis within the domain (null = none).</param>
 public sealed record NoteView(
     string Id, string Domain, string Type, string? Title, string? Body,
     string? PayloadJson, string? TagsJson, string? DedupKey, string Status,
     string CreatedUtc, string UpdatedUtc, string? SourceAgent, int SchemaVer, bool Deleted,
-    int BodyChars, bool Truncated, int AttachmentCount, int LinkCount)
+    int BodyChars, bool Truncated, int AttachmentCount, int LinkCount, string? Project = null)
 {
     /// <summary>Builds a view from a full note, applying the requested body windowing and the counts.</summary>
     public static NoteView From(Note note, bool includeBody, int? bodyMaxChars, int attachmentCount, int linkCount)
@@ -59,6 +60,6 @@ public sealed record NoteView(
             note.Id, note.Domain, note.Type, note.Title, body,
             note.PayloadJson, note.TagsJson, note.DedupKey, note.Status,
             note.CreatedUtc, note.UpdatedUtc, note.SourceAgent, note.SchemaVer, note.Deleted,
-            bodyChars, truncated, attachmentCount, linkCount);
+            bodyChars, truncated, attachmentCount, linkCount, note.Project);
     }
 }

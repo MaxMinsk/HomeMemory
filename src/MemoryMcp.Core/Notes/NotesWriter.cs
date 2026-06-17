@@ -52,7 +52,9 @@ public sealed class NotesWriter
         domain = Identifiers.Normalize(domain);
         type = Identifiers.Normalize(type);
         tagsJson = Identifiers.NormalizeTags(tagsJson);
-        project = Identifiers.NormalizeOptional(project);
+        // Fall back to payload.project when no explicit envelope project is given, so a note that only carries
+        // its project in the typed payload (e.g. backlog_item) still gets the envelope axis set.
+        project = Identifiers.NormalizeOptional(project ?? PayloadProject(payloadJson));
 
         var validation = _validator.Validate(type, payloadJson ?? "{}");
         if (!validation.IsValid)
@@ -592,6 +594,25 @@ public sealed class NotesWriter
 
     private static void AddNullable(SqliteCommand command, string name, string? value) =>
         command.Parameters.AddWithValue(name, (object?)value ?? DBNull.Value);
+
+    // Reads a string "project" from the typed payload, if present (used to seed the envelope project axis).
+    private static string? PayloadProject(string? payloadJson)
+    {
+        if (string.IsNullOrWhiteSpace(payloadJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonNode.Parse(payloadJson) is JsonObject obj && obj["project"] is JsonValue value
+                && value.TryGetValue(out string? project) ? project : null;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
 
     private sealed record ExistingNote(
         string Id, string? Title, string? Body, string? PayloadJson, string? TagsJson, string Status, int SchemaVer);

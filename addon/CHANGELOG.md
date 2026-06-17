@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.39.0
+
+Sprint 32 — surface + backfill the project axis.
+
+- **The envelope `project` is now visible and self-populating** (MEMP-150): `notes_get`, `notes_search`/
+  `domain_manifest`/`memory_context` results, and the viewer (detail + list) now show a note's `project`.
+  And `notes_upsert` auto-derives the envelope `project` from `payload.project` when no explicit project is
+  given — so a note that carries its project only in the payload (e.g. a `backlog_item`) still gets the axis
+  set. (Previously project was write/filter-only and invisible in reads.)
+- **Admin "Backfill project"** (MEMP-151): a root-only `POST /api/admin/backfill-project` + viewer button
+  that sets the envelope `project` from `payload.project` for notes written before the auto-derive — so the
+  already-imported notes can be fixed from the UI, no shell needed (dry-run, then Apply).
+
 ## 0.38.0
 
 Hotfix — structured tool output for strict MCP clients (MEMP-149).

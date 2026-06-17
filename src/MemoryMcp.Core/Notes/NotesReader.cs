@@ -598,7 +598,7 @@ public sealed class NotesReader
         command.Parameters.AddWithValue("$limit", limit);
         command.Parameters.AddWithValue("$offset", offset);
         // envelope extras are always selected (cheap); they reach the caller only when includePayload is set.
-        const string columns = "n.id, n.title, n.type, n.domain, n.body, {0} AS score, n.status, n.payload_json, n.tags_json, n.dedup_key, n.updated_utc";
+        const string columns = "n.id, n.title, n.type, n.domain, n.body, {0} AS score, n.status, n.payload_json, n.tags_json, n.dedup_key, n.updated_utc, n.project";
         var scoreExpr = useFts ? "bm25(notes_fts)" : "0.0";
         var from = useFts ? "FROM notes_fts JOIN notes n ON n.rowid = notes_fts.rowid" : "FROM notes n";
         var orderBy = sortBody ?? (useFts ? "score" : "n.updated_utc DESC"); // explicit sort overrides relevance/recency
@@ -623,7 +623,8 @@ public sealed class NotesReader
                 includePayload && !reader.IsDBNull(7) ? reader.GetString(7) : null,
                 includePayload && !reader.IsDBNull(8) ? reader.GetString(8) : null,
                 includePayload && !reader.IsDBNull(9) ? reader.GetString(9) : null,
-                includePayload ? reader.GetString(10) : null));
+                includePayload ? reader.GetString(10) : null,
+                reader.IsDBNull(11) ? null : reader.GetString(11))); // project (envelope) always returned
         }
 
         return results;
