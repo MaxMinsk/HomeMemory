@@ -38,7 +38,7 @@ internal static class ViewerEndpoints
 
         app.MapGet("/api/search", (
             NotesRepository notes, RequestAuthorizer authz,
-            string? q, string? domain, string? type, string? tags, string? filter, string? status, int? limit, int? offset) =>
+            string? q, string? domain, string? type, string? tags, string? filter, string? status, int? limit, int? offset, string? sort) =>
         {
             IReadOnlyCollection<string>? restrict;
             try
@@ -54,7 +54,7 @@ internal static class ViewerEndpoints
                 ? null
                 : tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             var page = notes.Search(q, domain, type, tagList, string.IsNullOrWhiteSpace(status) ? "active" : status,
-                limit is > 0 ? limit.Value : 50, offset ?? 0, restrictToDomains: restrict, filter: filter, includePayload: true);
+                limit is > 0 ? limit.Value : 50, offset ?? 0, restrictToDomains: restrict, filter: filter, includePayload: true, sort: sort);
             return Results.Json(page);
         });
 

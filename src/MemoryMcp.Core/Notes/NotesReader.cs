@@ -547,11 +547,12 @@ public sealed class NotesReader
     /// <param name="filter">Optional filter DSL, e.g. <c>payload.sprint == 'S1' AND status == 'ready'</c>.</param>
     /// <param name="includePayload">When true, each hit also carries its envelope status and payload JSON (still no body), so callers can render a board without a follow-up get per row.</param>
     /// <param name="includeLinks">When true, each hit also carries its links (both directions), so callers can render a graph without a notes_links call per row.</param>
+    /// <param name="sort">Optional order-by spec (e.g. <c>payload.spice_level desc</c>); overrides relevance/recency. See <see cref="Query.SortOrder"/>.</param>
     public SearchPage Search(
         string? query = null, string? domain = null, string? type = null,
         IReadOnlyCollection<string>? tags = null, string status = "active",
         int limit = DefaultLimit, int offset = 0, IReadOnlyCollection<string>? restrictToDomains = null,
-        string? filter = null, bool includePayload = false, bool includeLinks = false)
+        string? filter = null, bool includePayload = false, bool includeLinks = false, string? sort = null)
     {
         domain = Identifiers.NormalizeOptional(domain);
         type = Identifiers.NormalizeOptional(type);
@@ -561,10 +562,11 @@ public sealed class NotesReader
         var tokens = string.IsNullOrWhiteSpace(query) ? new List<string>() : SnippetBuilder.Tokenize(query!);
         var useFts = tokens.Count > 0;
         var compiledFilter = string.IsNullOrWhiteSpace(filter) ? null : NoteFilter.Compile(filter!);
+        var sortBody = SortOrder.Compile(sort);
 
         using var connection = _connectionFactory.Create();
         var total = Count(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter);
-        var items = Page(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload);
+        var items = Page(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload, sortBody);
         if (includeLinks)
         {
             items = items.Select(item => item with { Links = Links(item.Id) }).ToList();
@@ -589,7 +591,7 @@ public sealed class NotesReader
     private static IReadOnlyList<SearchResult> Page(
         SqliteConnection connection, bool useFts, IReadOnlyList<string> tokens,
         string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
-        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, int limit, int offset, bool includePayload)
+        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, int limit, int offset, bool includePayload, string? sortBody = null)
     {
         using var command = connection.CreateCommand();
         var where = ApplyFilters(command, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter);
@@ -597,12 +599,12 @@ public sealed class NotesReader
         command.Parameters.AddWithValue("$offset", offset);
         // envelope extras are always selected (cheap); they reach the caller only when includePayload is set.
         const string columns = "n.id, n.title, n.type, n.domain, n.body, {0} AS score, n.status, n.payload_json, n.tags_json, n.dedup_key, n.updated_utc";
-        command.CommandText = useFts
-            ? $"SELECT {string.Format(System.Globalization.CultureInfo.InvariantCulture, columns, "bm25(notes_fts)")} " +
-              $"FROM notes_fts JOIN notes n ON n.rowid = notes_fts.rowid WHERE {where} " +
-              "ORDER BY score LIMIT $limit OFFSET $offset;"
-            : $"SELECT {string.Format(System.Globalization.CultureInfo.InvariantCulture, columns, "0.0")} " +
-              $"FROM notes n WHERE {where} ORDER BY n.updated_utc DESC LIMIT $limit OFFSET $offset;";
+        var scoreExpr = useFts ? "bm25(notes_fts)" : "0.0";
+        var from = useFts ? "FROM notes_fts JOIN notes n ON n.rowid = notes_fts.rowid" : "FROM notes n";
+        var orderBy = sortBody ?? (useFts ? "score" : "n.updated_utc DESC"); // explicit sort overrides relevance/recency
+        command.CommandText =
+            $"SELECT {string.Format(System.Globalization.CultureInfo.InvariantCulture, columns, scoreExpr)} " +
+            $"{from} WHERE {where} ORDER BY {orderBy} LIMIT $limit OFFSET $offset;";
 
         var results = new List<SearchResult>();
         using var reader = command.ExecuteReader();

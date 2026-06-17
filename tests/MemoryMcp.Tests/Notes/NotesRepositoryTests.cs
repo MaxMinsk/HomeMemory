@@ -1,4 +1,5 @@
 using MemoryMcp.Core.Notes;
+using MemoryMcp.Core.Query;
 using MemoryMcp.Core.Schemas;
 using MemoryMcp.Core.Storage;
 using MemoryMcp.Tests.Storage;
@@ -93,6 +94,29 @@ public class NotesRepositoryTests
         using var c = factory.Create();
         Assert.StartsWith("2026-06-15T10:00:00", (string)Scalar(c, "SELECT created_utc FROM notes;")!);
         Assert.StartsWith("2026-06-15T10:05:00", (string)Scalar(c, "SELECT updated_utc FROM notes;")!);
+    }
+
+    [Fact]
+    public void Search_orders_by_a_numeric_payload_field_numerically()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        repo.Upsert("memory-mcp", "memory_rule", "low", null, """{ "description": "a", "priority": 2 }""", null, "r-low", "me");
+        repo.Upsert("memory-mcp", "memory_rule", "top", null, """{ "description": "b", "priority": 10 }""", null, "r-top", "me");
+        repo.Upsert("memory-mcp", "memory_rule", "mid", null, """{ "description": "c", "priority": 5 }""", null, "r-mid", "me");
+
+        var page = repo.Search(type: "memory_rule", limit: 2, sort: "payload.priority desc");
+
+        Assert.Equal("top", page.Items[0].Title); // 10 > 5 numerically (lexicographic would put "5" first)
+        Assert.Equal("mid", page.Items[1].Title);
+    }
+
+    [Fact]
+    public void Search_rejects_an_unsortable_or_injected_field()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        Assert.Throws<FilterException>(() => repo.Search(sort: "evil; DROP TABLE notes"));
     }
 
     [Fact]

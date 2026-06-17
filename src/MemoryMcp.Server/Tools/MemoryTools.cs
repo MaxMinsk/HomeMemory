@@ -44,7 +44,7 @@ public sealed class MemoryTools
 
     /// <summary>Searches notes by optional full-text query plus structured filters (scope-restricted, paginated).</summary>
     [McpServerTool(Name = "notes_search", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
-    [Description("Search notes by an optional full-text query plus filters. Returns ONE page of hits (snippets + BM25 scores, never the full body) with total/hasMore — paginate with offset; do not try to fetch everything at once.")]
+    [Description("Search notes by an optional full-text query plus filters. Returns ONE page of hits (snippets + BM25 scores, never the full body) with total/hasMore — paginate with offset; do not try to fetch everything at once. Pass `sort` to order by a field instead of relevance/recency (e.g. top-N by a payload value).")]
     public SearchPage NotesSearch(
         [Description("Full-text query (optional)")] string? query = null,
         [Description("Domain filter, e.g. memory-mcp")] string? domain = null,
@@ -55,8 +55,9 @@ public sealed class MemoryTools
         [Description("Results to skip for pagination (default 0). Use the returned total/hasMore to page.")] int offset = 0,
         [Description("Optional filter DSL: field op value joined by AND/OR with parentheses. Fields: domain/type/status/title/... and payload.<x>. Ops: == != in, and 'is null'/'is not null'. E.g. \"payload.sprint is null\" (general backlog) or \"payload.sprint == 'S1' AND payload.status in ('ready','next')\".")] string? filter = null,
         [Description("When true, each hit also includes its envelope status and payload JSON (still no body), so you can render a board without a get per row.")] bool includePayload = false,
-        [Description("When true, each hit also includes its links (both directions), so you can render a graph without a notes_links call per row.")] bool includeLinks = false)
-        => Translate(() => _notes.Search(query, domain, type, tags, status, limit, offset, _authz.ReadRestriction(domain), filter, includePayload, includeLinks));
+        [Description("When true, each hit also includes its links (both directions), so you can render a graph without a notes_links call per row.")] bool includeLinks = false,
+        [Description("Order results by a field instead of relevance/recency: \"<field> asc|desc\" (default desc). Sortable: payload.<field> (numeric fields sort numerically), title, updated_utc, created_utc. NULLs last. E.g. top 10 hottest: type=pepper, sort=\"payload.spice_level desc\", limit=10.")] string? sort = null)
+        => Translate(() => _notes.Search(query, domain, type, tags, status, limit, offset, _authz.ReadRestriction(domain), filter, includePayload, includeLinks, sort));
 
     /// <summary>Recalls a compact context block (hits + linked neighbors) for a query, scope-restricted.</summary>
     [McpServerTool(Name = "notes_recall", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
