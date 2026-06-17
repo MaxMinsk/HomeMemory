@@ -23,5 +23,6 @@ public static class SchemaMigrations
         new Migration0010NoteUsage(),
         new Migration0011SchemaProvenance(),
         new Migration0012NoteProject(),
+        new Migration0013ContentHash(),
     };
 }

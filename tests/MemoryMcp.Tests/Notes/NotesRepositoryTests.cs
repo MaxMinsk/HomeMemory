@@ -142,6 +142,39 @@ public class NotesRepositoryTests
     }
 
     [Fact]
+    public void Upsert_stores_the_content_hash_for_the_note()
+    {
+        using var temp = new TempDatabase();
+        var (repo, factory) = NewRepo(temp);
+        var id = repo.Upsert("memory-mcp", "backlog_item", "T", "body", """{ "key": "MEMP-600", "status": "ready" }""", """["x"]""", "MEMP-600", "me").Id;
+        var expected = ContentHash.Compute("backlog_item", "T", "body", """{ "key": "MEMP-600", "status": "ready" }""", """["x"]""");
+
+        using var c = factory.Create();
+        Assert.Equal(expected, (string)Scalar(c, $"SELECT content_hash FROM notes WHERE id = '{id}';")!);
+    }
+
+    [Fact]
+    public void Lint_flags_duplicate_content_under_different_keys()
+    {
+        using var temp = new TempDatabase();
+        var (repo, factory) = NewRepo(temp);
+        repo.Upsert("memory-mcp", "backlog_item", "same", "identical body", """{ "key": "MEMP-650", "status": "ready" }""", null, "dup-a", "me");
+        repo.Upsert("memory-mcp", "backlog_item", "same", "identical body", """{ "key": "MEMP-650", "status": "ready" }""", null, "dup-b", "me");
+
+        using (var c = factory.Create())
+        {
+            var hashes = Count(c, "SELECT count(DISTINCT content_hash) FROM notes WHERE domain='memory-mcp';");
+            var rows = Count(c, "SELECT count(*) FROM notes WHERE domain='memory-mcp';");
+            Assert.Equal(2L, rows);
+            Assert.Equal(1L, hashes); // both rows share one content_hash
+        }
+
+        var findings = new NotesLinter(factory).Lint("memory-mcp", null);
+
+        Assert.Contains(findings, finding => finding.Rule == "duplicate_content"); // identical content, different dedup keys
+    }
+
+    [Fact]
     public void ScopedPurge_refuses_an_unscoped_purge()
     {
         using var temp = new TempDatabase();

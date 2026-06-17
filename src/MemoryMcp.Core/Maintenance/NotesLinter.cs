@@ -68,6 +68,11 @@ public sealed class NotesLinter
             "WHERE dup.deleted = 0 AND dup.status = 'active' AND dup.id <> notes.id " +
             "AND dup.domain = notes.domain AND dup.type = notes.type AND lower(dup.title) = lower(notes.title))",
             "duplicate", "warn", "Another active note shares this (domain, type, title)."));
+        findings.AddRange(NoteRule(connection, domain, restrictToDomains,
+            "content_hash IS NOT NULL AND EXISTS (SELECT 1 FROM notes dup " +
+            "WHERE dup.deleted = 0 AND dup.status = 'active' AND dup.id <> notes.id " +
+            "AND dup.domain = notes.domain AND dup.content_hash = notes.content_hash)",
+            "duplicate_content", "warn", "Another active note has identical content (same content hash) — merge or supersede one."));
         findings.AddRange(StaleUnstructured(connection, domain, restrictToDomains));
         findings.AddRange(StaleUnverified(connection, domain, restrictToDomains));
         findings.AddRange(NoteRule(connection, domain, restrictToDomains,
