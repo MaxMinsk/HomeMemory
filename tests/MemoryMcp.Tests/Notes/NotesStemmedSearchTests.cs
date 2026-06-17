@@ -24,7 +24,7 @@ public class NotesStemmedSearchTests
     {
         using var temp = new TempDatabase();
         var repo = NewRepo(temp);
-        // Cyrillic via code points only (keep the source ASCII for the English gate): "задача" (nominative) vs "задаче".
+        // Cyrillic via code points only (keep the source ASCII for the English gate): "zadacha" (nominative) vs "zadache".
         var nominative = new string(new[] { (char)0x0437, (char)0x0430, (char)0x0434, (char)0x0430, (char)0x0447, (char)0x0430 });
         var prepositional = new string(new[] { (char)0x0437, (char)0x0430, (char)0x0434, (char)0x0430, (char)0x0447, (char)0x0435 });
         Seed(repo, "MEMP-401", "RU note", nominative);
