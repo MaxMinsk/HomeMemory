@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.34.0
+
+Sprint 27 — recall, review UX, and sortable search (batched).
+
+- **`memory_context` tool** (MEMP-137): assembles a prompt-ready context block for a task in one call —
+  the domain's (and commons') active `memory_rule` notes (always_apply, then priority), its skills, and a
+  recall of notes relevant to the query (FTS hits + one-hop neighbors), plus an advisory-policy reminder.
+- **Inbox UX** (MEMP-131): the viewer Inbox now leads with open evolution suggestions to review, then lint
+  findings under human-friendly labels; the noisy per-row `warn` badge is gone (severity is a subtle border).
+- **Sortable search** (MEMP-142): `notes_search` takes a `sort` like `"payload.spice_level desc"` — order by
+  any payload field (numeric fields sort numerically) or title/created/updated, NULLs last, injection-safe.
+  e.g. top-10 hottest peppers: `type=pepper, sort="payload.spice_level desc", limit=10`. Also in `/api/search`.
+
 ## 0.33.0
 
 Sprint 26 — context-layer foundations + memory hygiene (a batched release).
