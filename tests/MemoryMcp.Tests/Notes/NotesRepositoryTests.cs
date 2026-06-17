@@ -251,6 +251,37 @@ public class NotesRepositoryTests
     }
 
     [Fact]
+    public void Search_recency_sort_ranks_durable_types_above_ephemeral_at_equal_age()
+    {
+        using var temp = new TempDatabase();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var (repo, _) = NewRepo(temp, clock);
+        repo.Upsert("memory-mcp", "backlog_item", "ephemeral", null, """{ "key": "MEMP-700", "status": "ready" }""", null, "MEMP-700", "me");
+        repo.Upsert("memory-mcp", "memory_rule", "durable", null, """{ "description": "x" }""", null, "rule-700", "me");
+
+        var page = repo.Search(domain: "memory-mcp", sort: "recency");
+
+        Assert.Equal("durable", page.Items[0].Title);    // memory_rule's long half-life outranks the same-age backlog_item
+        Assert.Equal("ephemeral", page.Items[1].Title);
+    }
+
+    [Fact]
+    public void Search_recency_sort_prefers_the_fresher_note_within_a_type()
+    {
+        using var temp = new TempDatabase();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var (repo, _) = NewRepo(temp, clock);
+        repo.Upsert("memory-mcp", "backlog_item", "older", null, """{ "key": "MEMP-701", "status": "ready" }""", null, "MEMP-701", "me");
+        clock.Advance(TimeSpan.FromDays(10));
+        repo.Upsert("memory-mcp", "backlog_item", "newer", null, """{ "key": "MEMP-702", "status": "ready" }""", null, "MEMP-702", "me");
+
+        var page = repo.Search(domain: "memory-mcp", type: "backlog_item", sort: "recency");
+
+        Assert.Equal("newer", page.Items[0].Title);
+        Assert.Equal("older", page.Items[1].Title);
+    }
+
+    [Fact]
     public void Search_rejects_an_unsortable_or_injected_field()
     {
         using var temp = new TempDatabase();

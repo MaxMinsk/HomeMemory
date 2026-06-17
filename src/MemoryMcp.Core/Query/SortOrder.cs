@@ -18,11 +18,16 @@ public static class SortOrder
             return null;
         }
 
+        if (sort.Trim().Equals("recency", StringComparison.OrdinalIgnoreCase))
+        {
+            return RecencyDecay.OrderByClause(); // type-aware recency decay (MEMP-037)
+        }
+
         var parts = sort.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         var direction = parts.Length > 1 && parts[1].Equals("asc", StringComparison.OrdinalIgnoreCase) ? "ASC" : "DESC";
         var expr = Expr(parts[0])
             ?? throw new FilterException(
-                $"Cannot sort by '{parts[0]}'. Sortable fields: payload.<field>, title, updated_utc, created_utc (append asc/desc).");
+                $"Cannot sort by '{parts[0]}'. Sortable fields: payload.<field>, title, updated_utc, created_utc, recency (append asc/desc).");
 
         return $"({expr}) IS NULL, ({expr}) {direction}"; // NULLs last regardless of direction
     }
