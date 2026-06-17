@@ -69,6 +69,16 @@ public sealed class MemoryTools
         [Description("Graph expansion depth (currently one hop)")] int maxHops = 1)
         => Translate(() => _notes.Recall(query, domain, limit, _authz.ReadRestriction(domain), includeLinks, maxHops));
 
+    /// <summary>Assembles a layered context block (rules + skills + recall) for a task in a domain.</summary>
+    [McpServerTool(Name = "memory_context", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("Assemble a prompt-ready context block for a task in a domain, in one call: the active rules in force (memory_rule from the domain + commons, most important first), the guiding skills, and a recall of notes relevant to the query (FTS hits + one-hop neighbors). Includes an advisory-policy reminder (memory is advisory; the live user/data wins). Use at the start of a task instead of separate skill_list/search/recall calls. Null if the domain is out of scope.")]
+    public ContextBlock? MemoryContext(
+        [Description("The task query to recall relevant notes for")] string query,
+        [Description("Namespace, e.g. kitchen")] string domain,
+        [Description("Max recall hits (default 10)")] int limit = 10,
+        [Description("Include one-hop linked neighbors of the recall hits (default true)")] bool includeLinks = true)
+        => Translate(() => new ContextAssembler(_notes, _skills).Assemble(query, domain, limit, includeLinks, _authz.Scope));
+
     /// <summary>Lists the most-recently-updated (or most-used) notes in scope.</summary>
     [McpServerTool(Name = "notes_recent", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
     [Description("List the most-recently-updated notes (or most-used with sort=used), scope-restricted, with payload — to see what's already in memory and avoid duplicates before writing. Compact (no snippet/score). Filter by domain/type.")]
