@@ -8,6 +8,16 @@ namespace MemoryMcp.Tests.Integration;
 
 public class StdioRoundTripTests
 {
+    // Every tool the server must advertise over stdio (a missing one means a wiring regression).
+    private static readonly string[] ExpectedTools =
+    {
+        "notes_upsert", "notes_search", "status", "skill_upsert", "skill_get", "notes_confirm",
+        "artifacts_put", "artifacts_get", "schema_upsert", "artifacts_delete", "artifacts_url",
+        "notes_patch", "notes_links", "notes_assemble", "notes_recall", "notes_recent", "notes_related",
+        "notes_graph", "notes_suggest_capture", "notes_get_by_key", "artifacts_find_text",
+        "memory_capabilities", "schema_provenance", "domain_manifest", "memory_context",
+    };
+
     [Fact]
     [Trait("Category", "Integration")]
     public async Task Stdio_client_lists_and_calls_tools_end_to_end()
@@ -35,31 +45,10 @@ public class StdioRoundTripTests
         Assert.Contains("memory-authoring", client.ServerInstructions ?? string.Empty, StringComparison.Ordinal);
 
         var tools = await client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Contains(tools, tool => tool.Name == "notes_upsert");
-        Assert.Contains(tools, tool => tool.Name == "notes_search");
-        Assert.Contains(tools, tool => tool.Name == "status");
-        Assert.Contains(tools, tool => tool.Name == "skill_upsert");
-        Assert.Contains(tools, tool => tool.Name == "skill_get");
-        Assert.Contains(tools, tool => tool.Name == "notes_confirm");
-        Assert.Contains(tools, tool => tool.Name == "artifacts_put");
-        Assert.Contains(tools, tool => tool.Name == "artifacts_get");
-        Assert.Contains(tools, tool => tool.Name == "schema_upsert");
-        Assert.Contains(tools, tool => tool.Name == "artifacts_delete");
-        Assert.Contains(tools, tool => tool.Name == "artifacts_url");
-        Assert.Contains(tools, tool => tool.Name == "notes_patch");
-        Assert.Contains(tools, tool => tool.Name == "notes_links");
-        Assert.Contains(tools, tool => tool.Name == "notes_assemble");
-        Assert.Contains(tools, tool => tool.Name == "notes_recall");
-        Assert.Contains(tools, tool => tool.Name == "notes_recent");
-        Assert.Contains(tools, tool => tool.Name == "notes_related");
-        Assert.Contains(tools, tool => tool.Name == "notes_graph");
-        Assert.Contains(tools, tool => tool.Name == "notes_suggest_capture");
-        Assert.Contains(tools, tool => tool.Name == "notes_get_by_key");
-        Assert.Contains(tools, tool => tool.Name == "artifacts_find_text");
-        Assert.Contains(tools, tool => tool.Name == "memory_capabilities");
-        Assert.Contains(tools, tool => tool.Name == "schema_provenance");
-        Assert.Contains(tools, tool => tool.Name == "domain_manifest");
-        Assert.Contains(tools, tool => tool.Name == "memory_context");
+        foreach (var name in ExpectedTools)
+        {
+            Assert.Contains(tools, tool => tool.Name == name);
+        }
 
         await AssertCapabilities(client, cts.Token);
         await AssertNotesRoundTrip(client, cts.Token);
