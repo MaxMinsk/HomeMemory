@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.43.0
+
+Sprint 37 — bilingual stemmed search (MEMP-024).
+
+- **Search now matches word forms across Russian and English.** Previously a query word only matched by exact
+  text or prefix, so `ANRs` found nothing while `ANR` worked, and Russian cases/plurals missed each other. A new
+  **stemming sidecar** (Snowball via the pure-managed `libstemmer.net`) indexes a stemmed copy of each note's
+  natural-language text in a `stems` FTS column (routed by alphabet: Cyrillic→Russian, Latin→English), and
+  queries OR-in the stemmed terms. So `ANRs`↔`ANR` (and Russian declensions like `zadacha`↔`zadache`) now match.
+- **Raw search is unchanged — IDs and code are never corrupted.** The existing title/body/tags/dedup_key/payload
+  FTS columns are untouched, so exact, prefix, and identifier search behave exactly as before; stems only *add*
+  recall. Only natural-language text is stemmed: code blocks, inline code, URLs and file paths are stripped, and
+  only pure-letter tokens are stemmed — so note IDs, dedupKeys, JSON keys, tool/MCP command names, file paths and
+  versions are never stemmed. Migration 0014 adds the column and reindexes existing notes.
+
 ## 0.42.0
 
 Sprint 35 — knowledge graph, dedup integrity & smart capture (MEMP-031, MEMP-035, MEMP-111, MEMP-018).
