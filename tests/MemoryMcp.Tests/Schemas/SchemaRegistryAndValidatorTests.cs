@@ -69,6 +69,7 @@ public class SchemaRegistryAndValidatorTests
     [InlineData("fact", """{ "statement": "pipe is 32mm plastic", "source": "site visit", "as_of": "2026-06-16", "confidence": "medium" }""")]
     [InlineData("episode", """{ "summary": "sent easement letter", "occurred_utc": "2026-06-16", "participants": ["neighbour"] }""")]
     [InlineData("memory_evolution_suggestion", """{ "target_id": "n1", "kind": "retag", "proposed_patch": { "tags": ["cuisine:georgian"] }, "proposed_links": [ { "to_id": "n2", "rel": "relates_to" } ], "rationale": "tag by cuisine for discovery", "confidence": "medium", "status": "open" }""")]
+    [InlineData("memory_rule", """{ "description": "recipe@1 stays immutable; evolve via recipe@2", "priority": 5, "status": "active", "trigger_phrases": ["recipe schema"], "last_verified_at": "2026-06-17", "stale_after_days": 90 }""")]
     public void Valid_agentic_memory_types_pass(string type, string payload)
     {
         var registry = SchemaRegistry.FromEmbeddedResources();
@@ -87,6 +88,9 @@ public class SchemaRegistryAndValidatorTests
     [InlineData("episode", """{ "summary": "x", "extra": true }""")]                   // additionalProperties
     [InlineData("memory_evolution_suggestion", """{ "rationale": "x", "status": "open" }""")]                  // missing target_id
     [InlineData("memory_evolution_suggestion", """{ "target_id": "n1", "rationale": "x", "status": "maybe" }""")] // bad status enum
+    [InlineData("memory_rule", "{ }")]                                                  // missing description
+    [InlineData("memory_rule", """{ "description": "x", "status": "retired" }""")]       // bad status enum
+    [InlineData("memory_rule", """{ "description": "x", "extra": true }""")]             // additionalProperties
     public void Invalid_agentic_memory_types_are_rejected(string type, string payload)
     {
         var result = new SchemaValidator(SchemaRegistry.FromEmbeddedResources()).Validate(type, payload);

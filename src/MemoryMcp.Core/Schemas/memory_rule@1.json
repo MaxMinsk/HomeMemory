@@ -1,0 +1,19 @@
+{
+  "$id": "memory_rule@1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["description"],
+  "additionalProperties": false,
+  "properties": {
+    "description": { "type": "string", "description": "The rule stated compactly (what is true / must hold). Keep it short; prose detail goes in the note body." },
+    "scope": { "type": "string", "description": "Optional sub-scope within the domain (topic/area) this rule applies to." },
+    "priority": { "type": "integer", "description": "Higher = surfaced/applied first when rules conflict." },
+    "trigger_phrases": { "type": "array", "items": { "type": "string" }, "description": "Phrases/intents that should surface this rule on demand." },
+    "topic_globs": { "type": "array", "items": { "type": "string" }, "description": "Topic/path globs the rule applies to (code projects); use trigger_phrases/scope for non-code domains." },
+    "always_apply": { "type": "boolean", "description": "If true, part of the baseline context; otherwise loaded on-demand." },
+    "status": { "enum": ["active", "deprecated"], "description": "Deprecated rules are kept for history but not applied." },
+    "last_verified_at": { "type": "string", "description": "When the rule was last confirmed correct (ISO-8601). Drives the stale_unverified lint." },
+    "stale_after_days": { "type": "integer", "description": "Flag as stale if not verified within this many days." },
+    "source_refs": { "type": "array", "items": { "type": "string" }, "description": "Note/artifact ids or URLs that justify the rule." }
+  }
+}
