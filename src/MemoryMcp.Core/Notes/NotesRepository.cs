@@ -116,6 +116,12 @@ public sealed class NotesRepository
     public NoteGraph? Graph(string id, int maxHops, IReadOnlyCollection<string>? restrictToDomains)
         => _reader.Graph(id, maxHops, restrictToDomains);
 
+    /// <inheritdoc cref="NotesReader.SuggestCapture"/>
+    public CaptureSuggestion SuggestCapture(
+        string domain, string type, string? title, string? body, string? payloadJson, string? tagsJson,
+        IReadOnlyCollection<string>? restrictToDomains)
+        => _reader.SuggestCapture(domain, type, title, body, payloadJson, tagsJson, restrictToDomains);
+
     /// <inheritdoc cref="NotesReader.List"/>
     public IReadOnlyList<Note> List(string domain, string type, int limit = 1000) => _reader.List(domain, type, limit);
 

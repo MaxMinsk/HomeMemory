@@ -53,6 +53,7 @@ public class StdioRoundTripTests
         Assert.Contains(tools, tool => tool.Name == "notes_recent");
         Assert.Contains(tools, tool => tool.Name == "notes_related");
         Assert.Contains(tools, tool => tool.Name == "notes_graph");
+        Assert.Contains(tools, tool => tool.Name == "notes_suggest_capture");
         Assert.Contains(tools, tool => tool.Name == "notes_get_by_key");
         Assert.Contains(tools, tool => tool.Name == "artifacts_find_text");
         Assert.Contains(tools, tool => tool.Name == "memory_capabilities");

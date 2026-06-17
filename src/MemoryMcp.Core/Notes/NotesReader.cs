@@ -441,6 +441,129 @@ public sealed class NotesReader
         filters.Add(InClause(command, column, "$rd", restrict.ToList()));
     }
 
+    /// <summary>Below this many body characters (with no title and an empty payload) a candidate is not worth capturing.</summary>
+    public const int CaptureMinBodyChars = 10;
+
+    /// <summary>
+    /// Rule-based capture advice (MEMP-111): given a candidate note, recommends <c>save</c> / <c>update</c> /
+    /// <c>skip</c> / <c>ask</c> by checking — in order — for negligible content, an identical note (same content
+    /// hash), an existing same-title/type note to update instead, and merely similar notes (FTS) to review. Reads
+    /// only; writes nothing. Scoped to <paramref name="domain"/>; <paramref name="restrictToDomains"/> bounds the
+    /// similarity search.
+    /// </summary>
+    /// <param name="domain">The domain the note would be written to.</param>
+    /// <param name="type">The candidate note type.</param>
+    /// <param name="title">The candidate title.</param>
+    /// <param name="body">The candidate body.</param>
+    /// <param name="payloadJson">The candidate payload JSON.</param>
+    /// <param name="tagsJson">The candidate tags JSON.</param>
+    /// <param name="restrictToDomains">Auth scope for the similarity search (null = unrestricted).</param>
+    public CaptureSuggestion SuggestCapture(
+        string domain, string type, string? title, string? body, string? payloadJson, string? tagsJson,
+        IReadOnlyCollection<string>? restrictToDomains)
+    {
+        domain = Identifiers.Normalize(domain);
+        type = Identifiers.Normalize(type);
+        var trimmedTitle = title?.Trim();
+        var hasPayload = !string.IsNullOrWhiteSpace(payloadJson) && payloadJson.Trim() is not ("{}" or "[]");
+        if (string.IsNullOrWhiteSpace(trimmedTitle) && (body?.Trim().Length ?? 0) < CaptureMinBodyChars && !hasPayload)
+        {
+            return new CaptureSuggestion("skip", "Nothing substantive to capture (no title, negligible body, empty payload).", Array.Empty<CaptureCandidate>());
+        }
+
+        var hash = ContentHash.Compute(type, title, body, payloadJson, tagsJson);
+        var identical = MatchNotes(domain, "content_hash = $h", "identical content", new[] { ("$h", hash) });
+        if (identical.Count > 0)
+        {
+            return new CaptureSuggestion("skip", "An identical note already exists — no need to capture it again.", identical);
+        }
+
+        if (!string.IsNullOrWhiteSpace(trimmedTitle))
+        {
+            var sameTitle = MatchNotes(domain, "type = $t AND lower(trim(title)) = lower($title)", "same title & type",
+                new[] { ("$t", type), ("$title", trimmedTitle!) });
+            if (sameTitle.Count > 0)
+            {
+                return new CaptureSuggestion("update", "A note of the same type and title exists — update it instead of creating a duplicate.", sameTitle);
+            }
+        }
+
+        var probe = !string.IsNullOrWhiteSpace(trimmedTitle) ? trimmedTitle! : FirstWords(body, 12);
+        var similar = SimilarByText(domain, type, probe, restrictToDomains);
+        if (similar.Count > 0)
+        {
+            return new CaptureSuggestion("ask", "Similar notes exist — review them before saving a new one.", similar);
+        }
+
+        return new CaptureSuggestion("save", "No similar note found — safe to capture.", Array.Empty<CaptureCandidate>());
+    }
+
+    // Notes of the same domain+type sharing ANY significant token with the probe (OR-FTS, ranked) — a soft
+    // "similar" signal, unlike Search's all-terms-must-match AND. Empty probe => no candidates.
+    private List<CaptureCandidate> SimilarByText(string domain, string type, string probe, IReadOnlyCollection<string>? restrictToDomains)
+    {
+        var tokens = SnippetBuilder.Tokenize(probe);
+        if (tokens.Count == 0)
+        {
+            return new List<CaptureCandidate>();
+        }
+
+        using var connection = _connectionFactory.Create();
+        using var command = connection.CreateCommand();
+        var filters = new List<string> { "notes_fts MATCH $q", "n.deleted = 0", "n.status = 'active'", "n.domain = $d", "n.type = $t" };
+        command.Parameters.AddWithValue("$q", string.Join(" OR ", tokens.Select(token => $"\"{token}\"*")));
+        command.Parameters.AddWithValue("$d", domain);
+        command.Parameters.AddWithValue("$t", type);
+        AppendScopeIn(command, filters, "n.domain", restrictToDomains);
+        command.CommandText =
+            "SELECT n.id, n.title, n.type, n.domain FROM notes_fts JOIN notes n ON n.rowid = notes_fts.rowid " +
+            $"WHERE {string.Join(" AND ", filters)} ORDER BY bm25(notes_fts) LIMIT 4;";
+
+        var matches = new List<CaptureCandidate>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            matches.Add(new CaptureCandidate(reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1),
+                reader.GetString(2), reader.GetString(3), "text match"));
+        }
+
+        return matches;
+    }
+
+    // Returns up to 5 active notes in a domain matching a predicate, each tagged with the given reason.
+    private List<CaptureCandidate> MatchNotes(string domain, string predicate, string reason, IReadOnlyList<(string Name, string Value)> bindings)
+    {
+        using var connection = _connectionFactory.Create();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            $"SELECT id, title, type, domain FROM notes WHERE domain = $d AND deleted = 0 AND status = 'active' AND ({predicate}) LIMIT 5;";
+        command.Parameters.AddWithValue("$d", domain);
+        foreach (var (name, value) in bindings)
+        {
+            command.Parameters.AddWithValue(name, value);
+        }
+
+        var matches = new List<CaptureCandidate>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            matches.Add(new CaptureCandidate(reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1),
+                reader.GetString(2), reader.GetString(3), reason));
+        }
+
+        return matches;
+    }
+
+    private static string FirstWords(string? text, int count)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        return string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Take(count));
+    }
+
     /// <summary>Returns the note's links in both directions (each resolved to the note at the other end).</summary>
     /// <param name="id">The note id.</param>
     public IReadOnlyList<LinkView> Links(string id)

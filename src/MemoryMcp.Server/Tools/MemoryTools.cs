@@ -198,6 +198,25 @@ public sealed class MemoryTools
         }
     }
 
+    /// <summary>Rule-based advice on whether to capture a candidate note (save/update/skip/ask).</summary>
+    [McpServerTool(Name = "notes_suggest_capture", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("Before writing a note, ask whether you should: returns an action (save / update / skip / ask), a reason, and any existing notes behind it. Rule-based and read-only — it checks for an identical note (same content hash), a same-title/type note to update instead, or merely similar notes to review — so you avoid duplicating shared memory. Pass the same domain/type/title/body/payload/tags you intend to write.")]
+    public CaptureSuggestion NotesSuggestCapture(
+        [Description("Namespace the note would be written to, e.g. memory-mcp")] string domain,
+        [Description("Schema type, e.g. backlog_item")] string type,
+        [Description("Candidate title")] string? title = null,
+        [Description("Candidate body")] string? body = null,
+        [Description("Candidate payload as a JSON object (a JSON string is also accepted)")] JsonElement? payload = null,
+        [Description("Candidate tags as a JSON array (a JSON array string is also accepted)")] JsonElement? tags = null)
+    {
+        if (!_authz.CanRead(domain))
+        {
+            return new CaptureSuggestion("ask", "Out of scope to check that domain for duplicates — decide manually.", Array.Empty<CaptureCandidate>());
+        }
+
+        return _notes.SuggestCapture(domain, type, title, body, JsonArg(payload), JsonArg(tags), _authz.ReadRestriction(domain));
+    }
+
     private string SkillHint(string domain, string type)
     {
         var keys = _skills.List(domain, type).Select(skill => skill.Key).ToArray();
