@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Security.Cryptography;
 using MemoryMcp.Core.Artifacts;
 using MemoryMcp.Core.Diagnostics;
 using MemoryMcp.Core.Maintenance;
@@ -11,6 +12,11 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 
 namespace MemoryMcp.Server.Web;
+
+/// <summary>Body for creating a per-agent token from the admin UI (MEMP-141).</summary>
+/// <param name="Label">Optional human label.</param>
+/// <param name="Domains">Comma-separated domains, or <c>*</c> for all (defaults to <c>*</c>).</param>
+internal sealed record TokenCreateRequest(string? Label, string? Domains);
 
 /// <summary>Read-only web viewer: a self-contained SPA at <c>/ui</c> plus a small JSON API at
 /// <c>/api/*</c> over the note store. The SPA loads without a token; its API calls carry the bearer
@@ -28,6 +34,7 @@ internal static class ViewerEndpoints
         app.MapLint();
         app.MapSuggestionActions();
         app.MapAdminActions();
+        app.MapTokenAdmin();
 
         app.MapGet("/api/search", (
             NotesRepository notes, RequestAuthorizer authz,
@@ -82,6 +89,30 @@ internal static class ViewerEndpoints
     // Maintenance is global and mutating — only the unrestricted (root/all-domains) token may run it.
     private static IResult? RequireRoot(RequestAuthorizer authz) =>
         authz.Scope.IsUnrestricted ? null : Results.StatusCode(StatusCodes.Status403Forbidden);
+
+    // Per-agent token management (MEMP-141), root-only. List never exposes hashes; create returns the raw
+    // token exactly once (the store keeps only its hash). Minting credentials is owner-only by design.
+    private static void MapTokenAdmin(this IEndpointRouteBuilder app)
+    {
+        app.MapGet("/api/admin/tokens", (RequestAuthorizer authz, TokenStore tokens) =>
+            RequireRoot(authz) ?? Results.Json(tokens.List()));
+
+        app.MapPost("/api/admin/tokens", (RequestAuthorizer authz, TokenStore tokens, TokenCreateRequest body) =>
+        {
+            if (RequireRoot(authz) is { } denied)
+            {
+                return denied;
+            }
+
+            var domains = string.IsNullOrWhiteSpace(body.Domains) ? "*" : body.Domains.Trim();
+            var raw = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+            var record = tokens.Add(string.IsNullOrWhiteSpace(body.Label) ? null : body.Label.Trim(), domains, raw);
+            return Results.Json(new { record, token = raw }); // raw shown once; only the hash is stored
+        });
+
+        app.MapPost("/api/admin/tokens/{id}/revoke", (string id, RequestAuthorizer authz, TokenStore tokens) =>
+            RequireRoot(authz) ?? Results.Json(new { ok = true, revoked = tokens.Revoke(id) }));
+    }
 
     // Review actions for memory_evolution_suggestion notes (MEMP-133): the only write path in the viewer.
     // Apply maps proposed_patch/proposed_links onto the target (scope-checked, optimistic concurrency, all

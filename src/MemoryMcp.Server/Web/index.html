@@ -18,6 +18,7 @@
   #filters input[type=text]{ flex:1; min-width:120px; }
   button { background:var(--accent); color:#08101f; border:0; border-radius:6px; padding:6px 12px; font-weight:600; cursor:pointer; }
   .btn-reject { background:#3a2330; color:#e0a0b0; }
+  .fld { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 8px; font-size:13px; }
   .item { padding:9px 12px; border-bottom:1px solid var(--line); cursor:pointer; }
   .item:hover { background:#1d2230; }
   .item .t { font-weight:600; }
@@ -176,7 +177,48 @@ function admin() {
     `<div class="meta"><b>GC blobs</b> <span class="k">— delete orphan content-addressed blobs</span><br>` +
     `<button onclick="adminRun('gc-blobs',false)">Dry-run</button> ` +
     `<button class="btn-reject" onclick="adminRun('gc-blobs',true)">Apply</button></div>` +
-    `<h3>output</h3><pre id="adminout" class="k">—</pre>`;
+    `<h3>output</h3><pre id="adminout" class="k">—</pre>` +
+    `<h3>Tokens</h3>` +
+    `<div class="meta"><input id="tlabel" class="fld" type="text" placeholder="label (optional)"> ` +
+    `<input id="tdomains" class="fld" type="text" placeholder="domains, e.g. kitchen,home or *"> ` +
+    `<button onclick="tokenAdd()">Create</button> ` +
+    `<button onclick="tokensLoad()" style="background:#222838;color:var(--muted)">Refresh</button></div>` +
+    `<pre id="tokenout" class="k">—</pre><div id="tokenlist"></div>`;
+  tokensLoad();
+}
+async function tokensLoad() {
+  const el = $('#tokenlist'); if (!el) return;
+  try {
+    const r = await fetch('/api/admin/tokens', { headers: { 'Authorization': 'Bearer ' + token } });
+    if (r.status === 403) { el.innerHTML = '<div class="k">403 — requires the root (all-domains) token.</div>'; return; }
+    if (!r.ok) throw new Error(r.status);
+    const list = await r.json();
+    el.innerHTML = list.length ? list.map(t =>
+      `<div class="item"><div class="t">${esc(t.label||'(no label)')} <span class="badge">${esc(t.domains)}</span></div>` +
+      `<div class="m">${esc(t.id)} · ${t.revokedUtc ? 'revoked' : 'active'}` +
+      (t.revokedUtc ? '' : ` · <a href="#" onclick="tokenRevoke('${esc(t.id)}');return false">revoke</a>`) + `</div></div>`).join('')
+      : '<div class="k">No tokens.</div>';
+  } catch(e){ el.innerHTML = '<div class="k">'+esc(e.message)+'</div>'; }
+}
+async function tokenAdd() {
+  const out = $('#tokenout');
+  try {
+    const r = await fetch('/api/admin/tokens', { method:'POST', headers:{ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' },
+      body: JSON.stringify({ label: $('#tlabel').value, domains: $('#tdomains').value }) });
+    if (r.status === 403) { out.textContent = '403 — requires the root (all-domains) token.'; return; }
+    if (!r.ok) throw new Error(r.status + ' ' + (await r.text()).slice(0,200));
+    const d = await r.json();
+    out.textContent = 'TOKEN (copy now — shown once):\n' + d.token + '\n\n' + JSON.stringify(d.record, null, 2);
+    $('#tlabel').value=''; $('#tdomains').value=''; tokensLoad();
+  } catch(e){ out.textContent = e.message; }
+}
+async function tokenRevoke(id) {
+  if (!confirm('Revoke token ' + id + '?')) return;
+  try {
+    const r = await fetch('/api/admin/tokens/' + id + '/revoke', { method:'POST', headers:{ 'Authorization':'Bearer '+token } });
+    if (!r.ok) throw new Error(r.status);
+    tokensLoad();
+  } catch(e){ alert(e.message); }
 }
 async function adminRun(op, apply) {
   if (apply && !confirm('Apply "' + op + '"? This writes to the database.')) return;

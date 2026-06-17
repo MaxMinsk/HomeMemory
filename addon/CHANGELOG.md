@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.32.0
+
+Sprint 25 — token management from the admin UI (MEMP-141).
+
+- The viewer **admin** panel gains a **Tokens** section: list per-agent tokens (id / label / domains /
+  state), **create** one (label + domains; the raw token is shown exactly once — only its hash is stored),
+  and **revoke** by id. Root-only endpoints `GET/POST /api/admin/tokens` and `POST /api/admin/tokens/{id}/revoke`
+  (a domain-scoped token gets 403). Completes the owner-UI maintenance story started in 0.31.0 — the
+  per-agent token CLIs are now reachable without a container shell.
+
 ## 0.31.0
 
 Sprint 24 — owner maintenance from the UI + operator manual.
