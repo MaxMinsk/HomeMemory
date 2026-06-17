@@ -8,6 +8,7 @@
     <!-- Runtime -->
     <PackageVersion Include="Microsoft.Data.Sqlite" Version="8.0.10" />
     <PackageVersion Include="JsonSchema.Net" Version="7.3.4" />
+    <PackageVersion Include="libstemmer.net" Version="2.2.3" />
     <PackageVersion Include="ModelContextProtocol" Version="1.4.0" />
     <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="1.4.0" />
   </ItemGroup>

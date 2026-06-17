@@ -867,11 +867,17 @@ public sealed class NotesReader
 
         if (useFts)
         {
-            // Quote each token as an FTS5 phrase (so arbitrary input can't break MATCH syntax) and make it
-            // a prefix match, so longer word forms are found (e.g. "plumb" matches "plumbing"; in Russian a
-            // short stem matches its inflected forms).
+            // Raw part (current behavior): each token a quoted FTS5 prefix phrase, ANDed across all columns —
+            // preserves exact/ID/code/prefix matching. Stems part (MEMP-024): the stemmed tokens ANDed against the
+            // `stems` sidecar column, so word forms match (ANRs/ANR, Russian cases). The two are ORed, so the raw
+            // path always still wins; stems only ADD recall. Tokens are quoted so input can't break MATCH syntax.
+            var raw = string.Join(' ', tokens.Select(token => $"\"{token}\"*"));
+            var stemmed = SearchStems.StemQueryTokens(tokens);
+            var match = stemmed.Count == 0
+                ? raw
+                : $"({raw}) OR (stems : ({string.Join(' ', stemmed.Select(stem => $"\"{stem}\""))}))";
             filters.Add("notes_fts MATCH $q");
-            command.Parameters.AddWithValue("$q", string.Join(' ', tokens.Select(token => $"\"{token}\"*")));
+            command.Parameters.AddWithValue("$q", match);
         }
 
         filters.Add("n.deleted = 0");

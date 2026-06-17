@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json.Nodes;
 using MemoryMcp.Core.Naming;
+using MemoryMcp.Core.Query;
 using MemoryMcp.Core.Schemas;
 using MemoryMcp.Core.Storage;
 using Microsoft.Data.Sqlite;
@@ -82,6 +83,7 @@ public sealed class NotesWriter
         var existing = dedupKey is null ? null : FindByDedup(connection, transaction, domain, type, dedupKey);
 
         var contentHash = ContentHash.Compute(type, title, body, payloadJson, tagsJson);
+        var searchStems = SearchStems.For(title, body, tagsJson, payloadJson);
 
         string id;
         bool created;
@@ -90,14 +92,14 @@ public sealed class NotesWriter
         {
             id = Guid.NewGuid().ToString("N");
             created = true;
-            Insert(connection, transaction, id, domain, type, title, body, payloadJson, tagsJson, dedupKey, sourceAgent, schemaVer, nowUtc, contentHash, project);
+            Insert(connection, transaction, id, domain, type, title, body, payloadJson, tagsJson, dedupKey, sourceAgent, schemaVer, nowUtc, contentHash, searchStems, project);
         }
         else
         {
             id = existing.Id;
             created = false;
             before = NoteAudit.Snapshot(existing.Title, existing.Body, existing.PayloadJson, existing.TagsJson, existing.Status, existing.SchemaVer);
-            Update(connection, transaction, id, title, body, payloadJson, tagsJson, sourceAgent, schemaVer, nowUtc, contentHash, project);
+            Update(connection, transaction, id, title, body, payloadJson, tagsJson, sourceAgent, schemaVer, nowUtc, contentHash, searchStems, project);
         }
 
         var after = NoteAudit.Snapshot(title, body, payloadJson, tagsJson, existing?.Status ?? "active", schemaVer);
@@ -206,10 +208,11 @@ public sealed class NotesWriter
         var dedupKey = "journal-" + id[..8];
 
         var contentHash = ContentHash.Compute("journal", resolvedTitle, text, null, tags);
+        var searchStems = SearchStems.For(resolvedTitle, text, tags, null);
 
         using var connection = _connectionFactory.Create();
         using var transaction = connection.BeginTransaction();
-        Insert(connection, transaction, id, domain, "journal", resolvedTitle, text, null, tags, dedupKey, sourceAgent, 0, nowUtc, contentHash);
+        Insert(connection, transaction, id, domain, "journal", resolvedTitle, text, null, tags, dedupKey, sourceAgent, 0, nowUtc, contentHash, searchStems);
         NoteAudit.Append(connection, transaction, id, "create", sourceAgent, nowUtc,
             new JsonObject { ["op"] = "create", ["type"] = "journal" }.ToJsonString());
         transaction.Commit();
@@ -551,14 +554,14 @@ public sealed class NotesWriter
     private static void Insert(
         SqliteConnection connection, SqliteTransaction transaction, string id, string domain, string type,
         string? title, string? body, string? payloadJson, string? tagsJson, string? dedupKey, string? sourceAgent,
-        int schemaVer, string nowUtc, string contentHash, string? project = null)
+        int schemaVer, string nowUtc, string contentHash, string? searchStems, string? project = null)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText =
             "INSERT INTO notes (id, domain, project, type, title, body, payload_json, tags_json, dedup_key, status, " +
-            "created_utc, updated_utc, source_agent, schema_ver, deleted, content_hash) " +
-            "VALUES ($id, $d, $proj, $ty, $title, $body, $payload, $tags, $dedup, 'active', $now, $now, $agent, $ver, 0, $hash);";
+            "created_utc, updated_utc, source_agent, schema_ver, deleted, content_hash, search_stems) " +
+            "VALUES ($id, $d, $proj, $ty, $title, $body, $payload, $tags, $dedup, 'active', $now, $now, $agent, $ver, 0, $hash, $stems);";
         command.Parameters.AddWithValue("$id", id);
         command.Parameters.AddWithValue("$d", domain);
         AddNullable(command, "$proj", project);
@@ -572,19 +575,21 @@ public sealed class NotesWriter
         command.Parameters.AddWithValue("$now", nowUtc);
         command.Parameters.AddWithValue("$ver", schemaVer);
         command.Parameters.AddWithValue("$hash", contentHash);
+        AddNullable(command, "$stems", searchStems);
         command.ExecuteNonQuery();
     }
 
     private static void Update(
         SqliteConnection connection, SqliteTransaction transaction, string id,
-        string? title, string? body, string? payloadJson, string? tagsJson, string? sourceAgent, int schemaVer, string nowUtc, string contentHash, string? project = null)
+        string? title, string? body, string? payloadJson, string? tagsJson, string? sourceAgent, int schemaVer, string nowUtc, string contentHash, string? searchStems, string? project = null)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         // COALESCE keeps the existing project when the caller doesn't supply one (a plain re-upsert won't null it).
         command.CommandText =
             "UPDATE notes SET title = $title, body = $body, payload_json = $payload, tags_json = $tags, " +
-            "source_agent = $agent, schema_ver = $ver, updated_utc = $now, content_hash = $hash, project = COALESCE($proj, project) WHERE id = $id;";
+            "source_agent = $agent, schema_ver = $ver, updated_utc = $now, content_hash = $hash, search_stems = $stems, " +
+            "project = COALESCE($proj, project) WHERE id = $id;";
         AddNullable(command, "$title", title);
         AddNullable(command, "$body", body);
         AddNullable(command, "$payload", payloadJson);
@@ -594,6 +599,7 @@ public sealed class NotesWriter
         command.Parameters.AddWithValue("$ver", schemaVer);
         command.Parameters.AddWithValue("$now", nowUtc);
         command.Parameters.AddWithValue("$hash", contentHash);
+        AddNullable(command, "$stems", searchStems);
         command.Parameters.AddWithValue("$id", id);
         command.ExecuteNonQuery();
     }

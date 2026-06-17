@@ -24,5 +24,6 @@ public static class SchemaMigrations
         new Migration0011SchemaProvenance(),
         new Migration0012NoteProject(),
         new Migration0013ContentHash(),
+        new Migration0014SearchStems(),
     };
 }

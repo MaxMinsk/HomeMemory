@@ -8,8 +8,9 @@ namespace MemoryMcp.Tests.Notes;
 
 /// <summary>Guards payload full-text search (MEMP-120): values stored only inside a note's typed payload
 /// — e.g. a recipe's <c>russian_name</c>/<c>name</c>/<c>aliases</c> — are found by <c>notes_search</c>,
-/// including Cyrillic (FTS5's default unicode61 tokenizer). Stemming is intentionally out of scope (MEMP-024).
-/// Cyrillic test words are built from code points so the source file itself stays ASCII (English-gate clean).</summary>
+/// including Cyrillic. Since MEMP-024 the stemmed sidecar also matches word forms (declensions), so payload
+/// values are found across inflections. Cyrillic test words are built from code points so the source file
+/// itself stays ASCII (English-gate clean).</summary>
 public class PayloadFtsTests
 {
     private static string Cyr(params int[] codePoints) => new(codePoints.Select(c => (char)c).ToArray());
@@ -34,6 +35,6 @@ public class PayloadFtsTests
 
         Assert.Single(repo.Search(query: UkrMasc, domain: "kitchen").Items);  // payload value is indexed
         Assert.Single(repo.Search(query: Borshch, domain: "kitchen").Items);  // another payload token
-        Assert.Empty(repo.Search(query: UkrFem, domain: "kitchen").Items);    // no stemming across declensions
+        Assert.Single(repo.Search(query: UkrFem, domain: "kitchen").Items);   // MEMP-024: declensions now match via the stemmed sidecar
     }
 }
