@@ -113,27 +113,56 @@ public sealed class NotesReader
     /// <summary>
     /// Reads a window of a note's body: from <paramref name="offset"/> for up to <paramref name="limitChars"/>
     /// characters, with the partial-read contract (total/returned/truncated/nextOffset/revision). Returns
-    /// <c>null</c> only when the note does not exist; an empty body yields an empty slice.
+    /// <c>null</c> only when the note does not exist; an empty body yields an empty slice. The window is sliced
+    /// in SQLite (<c>substr</c>/<c>length</c>) so a multi-megabyte body is never materialized in memory just to
+    /// return a few kilobytes. Offsets and lengths are Unicode code points (SQLite text semantics).
     /// </summary>
     /// <param name="id">The note id.</param>
     /// <param name="offset">Start character offset (clamped to [0, totalChars]).</param>
     /// <param name="limitChars">Max characters to return (clamped to [1, <see cref="MaxReadChars"/>]).</param>
     public NoteReadSlice? ReadBody(string id, int offset = 0, int limitChars = DefaultReadChars)
     {
-        var note = Get(id);
-        if (note is null)
+        using var connection = _connectionFactory.Create();
+
+        int total;
+        string updatedUtc;
+        using (var head = connection.CreateCommand())
         {
-            return null;
+            // length() counts the body without transferring it — so we can clamp the offset without loading it.
+            head.CommandText = "SELECT length(body), updated_utc FROM notes WHERE id = $id AND deleted = 0 LIMIT 1;";
+            head.Parameters.AddWithValue("$id", id);
+            using var headReader = head.ExecuteReader();
+            if (!headReader.Read())
+            {
+                return null; // note does not exist
+            }
+
+            total = headReader.IsDBNull(0) ? 0 : (int)headReader.GetInt64(0); // length(NULL) = NULL -> empty body
+            updatedUtc = headReader.GetString(1);
         }
 
-        var body = note.Body ?? string.Empty;
-        var total = body.Length;
         var start = Math.Clamp(offset, 0, total);
         var take = Math.Clamp(limitChars, 1, MaxReadChars);
-        var end = Math.Min(start + take, total);
-        var content = body.Substring(start, end - start);
-        var truncated = end < total;
-        return new NoteReadSlice(id, content, start, content.Length, total, truncated, truncated ? end : null, note.UpdatedUtc);
+
+        string content;
+        int returned;
+        using (var window = connection.CreateCommand())
+        {
+            // substr() is 1-based; length(substr(...)) keeps Returned and Total in the same (code-point) units.
+            window.CommandText =
+                "SELECT substr(body, $start + 1, $take), length(substr(body, $start + 1, $take)) " +
+                "FROM notes WHERE id = $id AND deleted = 0 LIMIT 1;";
+            window.Parameters.AddWithValue("$id", id);
+            window.Parameters.AddWithValue("$start", start);
+            window.Parameters.AddWithValue("$take", take);
+            using var windowReader = window.ExecuteReader();
+            windowReader.Read();
+            content = windowReader.IsDBNull(0) ? string.Empty : windowReader.GetString(0);
+            returned = windowReader.IsDBNull(1) ? 0 : (int)windowReader.GetInt64(1);
+        }
+
+        var truncated = start + returned < total;
+        return new NoteReadSlice(id, content, start, returned, total, truncated, truncated ? start + returned : null, updatedUtc);
     }
 
     /// <summary>

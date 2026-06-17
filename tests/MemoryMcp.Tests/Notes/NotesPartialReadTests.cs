@@ -31,6 +31,39 @@ public class NotesPartialReadTests
     }
 
     [Fact]
+    public void ReadBody_windows_a_large_body_in_sql_without_materializing_it()
+    {
+        using var temp = new TempDatabase();
+        var repo = NewRepo(temp);
+        var body = new string('x', 50_000) + "MARK" + new string('y', 50_000); // > any single slice
+        var id = Seed(repo, body);
+
+        var slice = repo.ReadBody(id, offset: 50_000, limitChars: 4);
+        Assert.Equal("MARK", slice!.Content);          // the requested window, sliced server-side
+        Assert.Equal(50_000, slice.Offset);
+        Assert.Equal(4, slice.ReturnedChars);
+        Assert.Equal(100_004, slice.TotalChars);       // true total reported without returning the whole body
+        Assert.True(slice.Truncated);
+        Assert.Equal(50_004, slice.NextOffset);
+    }
+
+    [Fact]
+    public void ReadBody_slices_by_code_point_not_byte_for_non_ascii()
+    {
+        using var temp = new TempDatabase();
+        var repo = NewRepo(temp);
+        var ch = (char)0x0431;                          // a 2-byte-UTF-8 letter; char count != byte count
+        var id = Seed(repo, body: new string(ch, 5));
+
+        var slice = repo.ReadBody(id, offset: 0, limitChars: 3);
+        Assert.Equal(new string(ch, 3), slice!.Content); // 3 whole characters, not 3 bytes
+        Assert.Equal(3, slice.ReturnedChars);
+        Assert.Equal(5, slice.TotalChars);
+        Assert.True(slice.Truncated);
+        Assert.Equal(3, slice.NextOffset);
+    }
+
+    [Fact]
     public void ReadBody_clamps_offset_past_end_to_empty_tail()
     {
         using var temp = new TempDatabase();
