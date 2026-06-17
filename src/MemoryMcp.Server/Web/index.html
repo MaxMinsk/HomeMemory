@@ -25,8 +25,9 @@
   .item .m { color:var(--muted); font-size:12px; }
   .badge { display:inline-block; background:#222838; color:var(--muted); border-radius:4px; padding:0 6px; font-size:11px; margin-right:4px; }
   .grouphdr { padding:6px 12px; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); background:#13161d; border-bottom:1px solid var(--line); position:sticky; top:0; }
-  .sev-warn { background:#4a2f12; color:#e0b074; }
-  .sev-info { background:#16324a; color:#79b8e0; }
+  .finding { border-left:3px solid var(--line); }
+  .finding.sev-warn { border-left-color:#c9893f; }
+  .finding.sev-info { border-left-color:#4f8fc0; }
   #detail { overflow:auto; padding:16px 20px; }
   #detail h2 { margin:0 0 4px; }
   pre { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; overflow:auto; white-space:pre-wrap; word-break:break-word; }
@@ -145,24 +146,34 @@ async function search(reset=true) {
   } catch(e){ list.innerHTML = '<div class="empty">'+esc(e.message)+'</div>'; }
 }
 
-// Memory inbox: lint findings (the review queue), grouped by rule; each row opens the note.
+// Friendly labels for lint rules (the snake_case rule is the real axis; severity was just noise).
+const RULE_LABEL = { no_tags:'No tags', no_dedup_key:'No dedup key', no_title:'No title',
+  duplicate:'Possible duplicate', broken_link:'Broken link', stale_unstructured:'Stale (unstructured)',
+  stale_unverified:'Stale (unverified)', oversized_no_summary:'Oversized, no summary', possible_secret:'Possible secret' };
+
+// Memory inbox: open evolution suggestions to review, then lint findings grouped by rule. Each row opens the note.
 async function inbox() {
-  const p = new URLSearchParams();
-  if ($('#domain').value) p.set('domain', $('#domain').value);
+  const dom = $('#domain').value;
   const list = $('#list');
   try {
-    const findings = await api('/api/lint' + (p.toString() ? '?' + p.toString() : ''));
+    const sp = new URLSearchParams(); sp.set('type','memory_evolution_suggestion'); sp.set('filter', "payload.status == 'open'");
+    if (dom) sp.set('domain', dom);
+    const sug = await api('/api/search?' + sp.toString());
+    const sugHtml = sug.items.length
+      ? `<div class="grouphdr">suggestions to review · ${sug.items.length}</div>` + sug.items.map(itemHtml).join('') : '';
+
+    const findings = await api('/api/lint' + (dom ? '?domain=' + encodeURIComponent(dom) : ''));
     const more = $('#more'); if (more) more.remove();
-    if (!findings.length) { list.innerHTML = '<div class="empty">Inbox clear — no lint findings.</div>'; return; }
     const groups = {};
     for (const f of findings) (groups[f.rule] = groups[f.rule] || []).push(f);
-    list.innerHTML = Object.keys(groups).sort().map(rule => {
+    const lintHtml = Object.keys(groups).sort().map(rule => {
       const rows = groups[rule].map(f =>
-        `<div class="item" onclick="open_('${f.noteId}')"><div class="t">${esc(f.title)||'<i>untitled</i>'}</div>` +
-        `<div class="m"><span class="badge sev-${esc(f.severity)}">${esc(f.severity)}</span><span class="badge">${esc(f.domain)}</span><span class="badge">${esc(f.type)}</span></div>` +
-        `<div class="m">${esc(f.message)}</div></div>`).join('');
-      return `<div class="grouphdr">${esc(rule)} · ${groups[rule].length}</div>${rows}`;
+        `<div class="item finding sev-${esc(f.severity)}" onclick="open_('${f.noteId}')"><div class="t">${esc(f.title)||'<i>untitled</i>'}</div>` +
+        `<div class="m"><span class="badge">${esc(f.domain)}</span><span class="badge">${esc(f.type)}</span> ${esc(f.message)}</div></div>`).join('');
+      return `<div class="grouphdr">${esc(RULE_LABEL[rule]||rule)} · ${groups[rule].length}</div>${rows}`;
     }).join('');
+
+    list.innerHTML = (sugHtml + lintHtml) || '<div class="empty">Inbox clear — nothing to review.</div>';
   } catch(e){ list.innerHTML = '<div class="empty">'+esc(e.message)+'</div>'; }
 }
 
