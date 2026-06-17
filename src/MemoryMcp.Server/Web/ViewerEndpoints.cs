@@ -129,6 +129,22 @@ internal static class ViewerEndpoints
                 return Results.BadRequest(exception.Message);
             }
         });
+        app.MapPost("/api/admin/scoped-purge", (RequestAuthorizer authz, ISqliteConnectionFactory factory, string? domain, string? sourceAgent, bool? apply) =>
+        {
+            if (RequireRoot(authz) is { } denied)
+            {
+                return denied;
+            }
+
+            try
+            {
+                return Results.Json(ScopedPurge.Run(factory, domain, sourceAgent, apply ?? false));
+            }
+            catch (ArgumentException exception)
+            {
+                return Results.BadRequest(exception.Message);
+            }
+        });
     }
 
     // Maintenance is global and mutating — only the unrestricted (root/all-domains) token may run it.

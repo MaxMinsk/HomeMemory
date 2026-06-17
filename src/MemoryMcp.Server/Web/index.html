@@ -196,6 +196,11 @@ function admin() {
     `<input id="mvtarget" class="fld" type="text" value="development" placeholder="target domain"> ` +
     `<button onclick="adminMoveDomain(false)">Dry-run</button> ` +
     `<button class="btn-reject" onclick="adminMoveDomain(true)">Apply</button></div>` +
+    `<div class="meta"><b>Scoped purge</b> <span class="k">— permanently delete notes by domain and/or source agent (reclaims space; ≥1 field required)</span><br>` +
+    `<input id="pgdomain" class="fld" type="text" placeholder="domain (optional)"> ` +
+    `<input id="pgagent" class="fld" type="text" placeholder="source agent (optional)"> ` +
+    `<button onclick="adminPurge(false)">Dry-run</button> ` +
+    `<button class="btn-reject" onclick="adminPurge(true)">Apply</button></div>` +
     `<h3>output</h3><pre id="adminout" class="k">—</pre>` +
     `<h3>Tokens</h3>` +
     `<div class="meta"><input id="tlabel" class="fld" type="text" placeholder="label (optional)"> ` +
@@ -247,6 +252,22 @@ async function adminMoveDomain(apply) {
   try {
     const p = new URLSearchParams({ src, target, apply: String(apply) });
     const r = await fetch('/api/admin/move-domain?' + p.toString(), { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
+    if (r.status === 403) { out.textContent = '403 — requires the root (all-domains) token.'; return; }
+    if (!r.ok) throw new Error(r.status + ' ' + (await r.text()).slice(0,300));
+    out.textContent = JSON.stringify(await r.json(), null, 2);
+  } catch(e){ out.textContent = e.message; }
+}
+async function adminPurge(apply) {
+  const domain = $('#pgdomain').value.trim(), sourceAgent = $('#pgagent').value.trim();
+  const out = $('#adminout'); if (out) out.textContent = 'running…';
+  if (!domain && !sourceAgent) { out.textContent = 'a domain and/or a source agent is required'; return; }
+  const scope = [domain && ('domain=' + domain), sourceAgent && ('agent=' + sourceAgent)].filter(Boolean).join(', ');
+  if (apply && !confirm(`PERMANENTLY delete all notes where ${scope}? This cannot be undone.`)) return;
+  try {
+    const p = new URLSearchParams({ apply: String(apply) });
+    if (domain) p.set('domain', domain);
+    if (sourceAgent) p.set('sourceAgent', sourceAgent);
+    const r = await fetch('/api/admin/scoped-purge?' + p.toString(), { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
     if (r.status === 403) { out.textContent = '403 — requires the root (all-domains) token.'; return; }
     if (!r.ok) throw new Error(r.status + ' ' + (await r.text()).slice(0,300));
     out.textContent = JSON.stringify(await r.json(), null, 2);

@@ -142,6 +142,70 @@ public class NotesRepositoryTests
     }
 
     [Fact]
+    public void ScopedPurge_refuses_an_unscoped_purge()
+    {
+        using var temp = new TempDatabase();
+        var (_, factory) = NewRepo(temp);
+        Assert.Throws<ArgumentException>(() => ScopedPurge.Run(factory, null, null, apply: false));
+        Assert.Throws<ArgumentException>(() => ScopedPurge.Run(factory, "  ", "", apply: true)); // blank scope is still unscoped
+    }
+
+    [Fact]
+    public void ScopedPurge_hard_deletes_scoped_notes_and_their_satellites()
+    {
+        using var temp = new TempDatabase();
+        var (repo, factory) = NewRepo(temp);
+        var spam = repo.Upsert("development", "backlog_item", "S1", "spam uniquetoken", """{ "key": "MEMP-900", "status": "ready" }""", null, "MEMP-900", "spammer").Id;
+        repo.Upsert("development", "backlog_item", "S2", "more spam", """{ "key": "MEMP-901", "status": "ready" }""", null, "MEMP-901", "spammer");
+        var keep = repo.Upsert("development", "backlog_item", "K", "legit", """{ "key": "MEMP-902", "status": "ready" }""", null, "MEMP-902", "keeper").Id;
+        using (var seed = factory.Create()) // a link + a usage row hanging off the spam note (satellite tables)
+        using (var cmd = seed.CreateCommand())
+        {
+            cmd.CommandText =
+                "INSERT INTO note_links(from_id,to_id,rel,created_utc) VALUES ($f,$t,'mentions','2026-01-01');" +
+                "INSERT INTO note_usage(note_id,last_accessed_utc,retrieval_count) VALUES ($f,'2026-01-01',3);";
+            cmd.Parameters.AddWithValue("$f", spam);
+            cmd.Parameters.AddWithValue("$t", keep);
+            cmd.ExecuteNonQuery();
+        }
+
+        var dry = ScopedPurge.Run(factory, null, "spammer", apply: false);
+        Assert.Equal(2, dry.Notes);
+        Assert.False(dry.Applied);
+        using (var c = factory.Create())
+        {
+            Assert.Equal(3L, Count(c, "SELECT count(*) FROM notes;")); // dry run wrote nothing
+        }
+
+        var done = ScopedPurge.Run(factory, null, "spammer", apply: true);
+        Assert.Equal(2, done.Notes);
+        Assert.True(done.Applied);
+
+        using var conn = factory.Create();
+        Assert.Equal(1L, Count(conn, "SELECT count(*) FROM notes;"));                          // only the keeper survives
+        Assert.Equal(0L, Count(conn, "SELECT count(*) FROM note_events WHERE actor='spammer';"));
+        Assert.Equal(0L, Count(conn, "SELECT count(*) FROM note_links;"));                     // the spam->keep link is gone
+        Assert.Equal(0L, Count(conn, "SELECT count(*) FROM note_usage;"));                     // usage row gone
+        Assert.NotNull(repo.Get(keep));
+        Assert.Equal(0, repo.Search(query: "uniquetoken").Total);                              // FTS delete trigger fired
+    }
+
+    [Fact]
+    public void ScopedPurge_by_domain_leaves_other_domains_untouched()
+    {
+        using var temp = new TempDatabase();
+        var (repo, factory) = NewRepo(temp);
+        repo.Upsert("scratch", "backlog_item", "A", null, """{ "key": "MEMP-910", "status": "ready" }""", null, "MEMP-910", "me");
+        repo.Upsert("development", "backlog_item", "B", null, """{ "key": "MEMP-911", "status": "ready" }""", null, "MEMP-911", "me");
+
+        Assert.True(ScopedPurge.Run(factory, "scratch", null, apply: true).Applied);
+
+        using var c = factory.Create();
+        Assert.Equal(0L, Count(c, "SELECT count(*) FROM notes WHERE domain='scratch';"));
+        Assert.Equal(1L, Count(c, "SELECT count(*) FROM notes WHERE domain='development';"));
+    }
+
+    [Fact]
     public void Upsert_derives_envelope_project_from_payload_project()
     {
         using var temp = new TempDatabase();
