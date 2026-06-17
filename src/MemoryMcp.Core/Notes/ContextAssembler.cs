@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using MemoryMcp.Core.Security;
 using MemoryMcp.Core.Skills;
@@ -14,12 +15,14 @@ public sealed class ContextAssembler
 
     private readonly NotesRepository _notes;
     private readonly SkillsService _skills;
+    private readonly TimeProvider _clock;
 
-    /// <summary>Creates the assembler over the note store and skills service.</summary>
-    public ContextAssembler(NotesRepository notes, SkillsService skills)
+    /// <summary>Creates the assembler over the note store, skills service and clock (for stale-rule warnings).</summary>
+    public ContextAssembler(NotesRepository notes, SkillsService skills, TimeProvider? clock = null)
     {
         _notes = notes ?? throw new ArgumentNullException(nameof(notes));
         _skills = skills ?? throw new ArgumentNullException(nameof(skills));
+        _clock = clock ?? TimeProvider.System;
     }
 
     /// <summary>Builds the context block, or null if the domain is out of read scope.</summary>
@@ -51,6 +54,9 @@ public sealed class ContextAssembler
             skills.AddRange(_skills.List(scoped, null));
         }
 
+        // Dedupe skills by key when merging the domain with commons (the domain's wins, listed first).
+        var dedupedSkills = skills.GroupBy(skill => skill.Key, StringComparer.Ordinal).Select(group => group.First()).ToList();
+
         var warnings = new List<string>();
         var ranked = rules.OrderByDescending(AlwaysApply).ThenByDescending(Priority).ToList();
         if (ranked.Count > MaxRules)
@@ -59,8 +65,15 @@ public sealed class ContextAssembler
             ranked = ranked.GetRange(0, MaxRules);
         }
 
+        var now = _clock.GetUtcNow();
+        var stale = ranked.Count(rule => IsStaleRule(rule.PayloadJson, now));
+        if (stale > 0)
+        {
+            warnings.Add($"{stale} included rule(s) may be outdated (unverified past their window) — verify or deprecate them.");
+        }
+
         var recall = _notes.Recall(query, domain, limit, guard.RestrictionForSearch(domain), includeLinks, 1);
-        return new ContextBlock(domain, ranked, skills, recall, AdvisoryPolicy, warnings);
+        return new ContextBlock(domain, ranked, dedupedSkills, recall, AdvisoryPolicy, warnings);
     }
 
     private static bool AlwaysApply(SearchResult rule) =>
@@ -71,6 +84,25 @@ public sealed class ContextAssembler
 
     private static string? Field(string? json, string name) =>
         Element(json, name) is { ValueKind: JsonValueKind.String } s ? s.GetString() : null;
+
+    // A rule "opted into" verification (stale_after_days) is stale if never verified, or verified longer ago than the window.
+    private static bool IsStaleRule(string? payloadJson, DateTimeOffset now)
+    {
+        if (Element(payloadJson, "stale_after_days") is not { ValueKind: JsonValueKind.Number } sad
+            || !sad.TryGetInt32(out var days) || days <= 0)
+        {
+            return false;
+        }
+
+        if (Field(payloadJson, "last_verified_at") is not { } verified)
+        {
+            return true; // opted in but never verified
+        }
+
+        const DateTimeStyles styles = DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal;
+        return !DateTimeOffset.TryParse(verified, CultureInfo.InvariantCulture, styles, out var since)
+            || (now - since).TotalDays > days;
+    }
 
     private static JsonElement? Element(string? json, string name)
     {

@@ -29,6 +29,7 @@ internal static class ViewerEndpoints
     {
         app.MapGet("/", () => Results.Redirect("/ui"));
         app.MapGet("/ui", () => Results.Content(IndexHtml(), "text/html; charset=utf-8"));
+        app.MapHealth();
 
         app.MapGet("/api/stats", (DiagnosticsService diagnostics) => Results.Json(diagnostics.Snapshot()));
         app.MapLint();
@@ -73,6 +74,27 @@ internal static class ViewerEndpoints
         });
 
         app.MapArtifactBytes();
+    }
+
+    // Unauthenticated liveness/readiness probe (MEMP-144) for the HA watchdog / Docker healthcheck.
+    // 200 only if the database answers; no version or other detail is leaked to an unauthenticated caller.
+    private static void MapHealth(this IEndpointRouteBuilder app)
+    {
+        app.MapGet("/health", (ISqliteConnectionFactory factory) =>
+        {
+            try
+            {
+                using var connection = factory.Create();
+                using var command = connection.CreateCommand();
+                command.CommandText = "SELECT 1;";
+                command.ExecuteScalar();
+                return Results.Json(new { status = "ok" });
+            }
+            catch (Microsoft.Data.Sqlite.SqliteException)
+            {
+                return Results.Json(new { status = "unhealthy" }, statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+        });
     }
 
     // Owner maintenance actions (MEMP-140): the CLI ops (normalize-identifiers, gc-blobs) exposed as

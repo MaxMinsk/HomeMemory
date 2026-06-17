@@ -105,7 +105,8 @@ if (transport == "http")
     app.Use(async (context, next) =>
     {
         // The static viewer page loads without a token; its /api calls carry the bearer like /mcp.
-        if (context.Request.Path.StartsWithSegments("/ui") || context.Request.Path == "/")
+        // /health is an unauthenticated liveness probe (HA watchdog / Docker healthcheck).
+        if (context.Request.Path.StartsWithSegments("/ui") || context.Request.Path == "/" || context.Request.Path == "/health")
         {
             await next();
             return;
