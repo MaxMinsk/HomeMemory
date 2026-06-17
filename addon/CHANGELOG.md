@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.33.0
+
+Sprint 26 — context-layer foundations + memory hygiene (a batched release).
+
+- **`memory_rule` note type** (MEMP-135): a new built-in for durable, non-obvious rules — "what's true /
+  must hold" — distinct from skills ("how to do"). Fields: description, scope, priority, trigger_phrases,
+  topic_globs, always_apply, status, last_verified_at, stale_after_days, source_refs. Plus a `commons`
+  skill `create-memory-rule`. Rules are meant to be compact and loaded on demand.
+- **`stale_unverified` lint** (MEMP-136): any note that opted into verification (payload `stale_after_days`)
+  but hasn't been re-confirmed within that window (baseline `last_verified_at`, else created) — so an aging
+  `memory_rule` surfaces for review instead of silently misleading.
+- **`oversized_no_summary` lint** (MEMP-138): a large body (>4000 chars) with no heading or summary — a nudge
+  to add an outline.
+- **`domain_manifest` tool** (MEMP-139): one-call domain orientation — note counts by type, the domain's
+  skills, and its active `memory_rule` notes — instead of dumping everything on entry.
+
 ## 0.32.0
 
 Sprint 25 — token management from the admin UI (MEMP-141).
