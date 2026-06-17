@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.42.0
+
+Sprint 35 — knowledge graph, dedup integrity & smart capture (MEMP-031, MEMP-035, MEMP-111, MEMP-018).
+
+- **Knowledge-graph traversal** (MEMP-031): new `notes_graph` tool returns a note's **N-hop link
+  neighborhood** as nodes (id, title, type, domain, hops-from-root) + edges (fromId, toId, rel), scope-filtered.
+  See how a note connects — dependencies, derivations, sprint membership — in one call instead of walking
+  `notes_links` by hand. `maxHops` 1–5 (default 2); a large neighborhood is capped (`truncated=true`).
+- **Deterministic content hash + duplicate detection** (MEMP-035): every note now carries a `content_hash`
+  (SHA-256 of its canonical type+title+body+payload+tags, with JSON keys sorted so equal-but-differently-written
+  payloads match). Migration 0013 backfills existing notes. A new `duplicate_content` lint flags active notes
+  with **identical content under different keys** (the title-based `duplicate` rule stays).
+- **Capture help** (MEMP-111): new read-only `notes_suggest_capture` tool — before writing a note, ask whether
+  you should. It returns an action (**save / update / skip / ask**), a reason, and the existing notes behind it,
+  by checking for negligible content, an identical note (content hash), a same-title/type note to **update**
+  instead, or merely similar notes (full-text) to **review**. Helps avoid duplicating shared memory.
+- **Architecture decision records** (MEMP-018): wrote ADRs 0003 (lexical-FTS-first, no vectors), 0004 (typed
+  payload is the source of truth; rendered docs are derived), 0005 (procedural work runs agent-side; the server
+  stays a data-plane) under `docs/decisions`.
+
 ## 0.41.0
 
 Sprint 34 — retrieval & ops polish (MEMP-104, MEMP-038, MEMP-109, MEMP-037).
