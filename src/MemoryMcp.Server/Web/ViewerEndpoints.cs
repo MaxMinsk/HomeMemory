@@ -26,6 +26,7 @@ internal static class ViewerEndpoints
 
         app.MapGet("/api/stats", (DiagnosticsService diagnostics) => Results.Json(diagnostics.Snapshot()));
         app.MapLint();
+        app.MapSuggestionActions();
 
         app.MapGet("/api/search", (
             NotesRepository notes, RequestAuthorizer authz,
@@ -65,6 +66,27 @@ internal static class ViewerEndpoints
 
         app.MapArtifactBytes();
     }
+
+    // Review actions for memory_evolution_suggestion notes (MEMP-133): the only write path in the viewer.
+    // Apply maps proposed_patch/proposed_links onto the target (scope-checked, optimistic concurrency, all
+    // audited, non-destructive); Reject just marks the suggestion. Bearer-gated like every other endpoint.
+    private static void MapSuggestionActions(this IEndpointRouteBuilder app)
+    {
+        app.MapPost("/api/suggestions/{id}/apply",
+            (string id, SuggestionReviewer reviewer, RequestAuthorizer authz) => ToResult(reviewer.Apply(id, authz.Scope)));
+        app.MapPost("/api/suggestions/{id}/reject",
+            (string id, SuggestionReviewer reviewer, RequestAuthorizer authz) => ToResult(reviewer.Reject(id, authz.Scope)));
+    }
+
+    private static IResult ToResult(SuggestionActionResult result) => result.Outcome switch
+    {
+        SuggestionOutcome.Applied => Results.Json(new { ok = true, applied = true, result.Data }),
+        SuggestionOutcome.Rejected => Results.Json(new { ok = true, rejected = true }),
+        SuggestionOutcome.NotFound => Results.NotFound(),
+        SuggestionOutcome.Forbidden => Results.StatusCode(StatusCodes.Status403Forbidden),
+        SuggestionOutcome.Conflict => Results.Problem(result.Message, statusCode: StatusCodes.Status409Conflict),
+        _ => Results.Problem(result.Message ?? "Bad request", statusCode: StatusCodes.Status400BadRequest),
+    };
 
     // Memory inbox (MEMP-110): the read-only review queue — lint findings (unstructured/stale/secret/
     // no-tags/duplicate/broken-link) the owner should triage. Mutating fixes go through the MCP tools

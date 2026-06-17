@@ -228,6 +228,7 @@ static void RegisterServices(IServiceCollection services, string dbPath)
         provider.GetRequiredService<TimeProvider>(),
         Environment.GetEnvironmentVariable("MEMORY_PUBLIC_BASE_URL")));
     services.AddSingleton<DiagnosticsService>();
+    services.AddSingleton<SuggestionReviewer>(); // applies/rejects memory_evolution_suggestion (viewer review actions)
     // Single domain-authorization facade (MEMP-102): wraps the request scope so every tool/endpoint
     // authorizes through one place. Safe as a singleton — it reads the ambient scope per call.
     services.AddSingleton<RequestAuthorizer>();

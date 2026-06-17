@@ -17,6 +17,7 @@
   #filters input, #filters select { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 8px; font-size:13px; }
   #filters input[type=text]{ flex:1; min-width:120px; }
   button { background:var(--accent); color:#08101f; border:0; border-radius:6px; padding:6px 12px; font-weight:600; cursor:pointer; }
+  .btn-reject { background:#3a2330; color:#e0a0b0; }
   .item { padding:9px 12px; border-bottom:1px solid var(--line); cursor:pointer; }
   .item:hover { background:#1d2230; }
   .item .t { font-weight:600; }
@@ -163,11 +164,24 @@ async function inbox() {
   } catch(e){ list.innerHTML = '<div class="empty">'+esc(e.message)+'</div>'; }
 }
 
+// Apply/reject a memory_evolution_suggestion (the viewer's only write action). Refreshes detail + list.
+async function reviewSuggestion(id, action) {
+  if (!confirm(action === 'apply' ? 'Apply this suggestion to its target note?' : 'Reject this suggestion?')) return;
+  try {
+    const r = await fetch('/api/suggestions/' + id + '/' + action, { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
+    if (!r.ok) throw new Error(r.status + ' ' + (await r.text()).slice(0,200));
+    await open_(id);  // status is now applied/rejected
+    await search();   // refresh the list
+  } catch(e){ alert(e.message); }
+}
+
 async function open_(id) {
   try {
     const d = await api('/api/notes/' + id);
     const n = d.note;
-    let payload = ''; if (n.payloadJson) { try { payload = JSON.stringify(JSON.parse(n.payloadJson), null, 2); } catch { payload = n.payloadJson; } }
+    let payload = '', pobj = {};
+    if (n.payloadJson) { try { pobj = JSON.parse(n.payloadJson); payload = JSON.stringify(pobj, null, 2); } catch { payload = n.payloadJson; } }
+    const canReview = n.type === 'memory_evolution_suggestion' && pobj.status === 'open';
     const tags = n.tagsJson ? JSON.parse(n.tagsJson) : [];
     const atts = (d.attachments||[]).map(a => `<li><a href="${esc(a.url)}" target="_blank">${esc(a.filename||a.sha256.slice(0,12))}</a> <span class="k">${esc(a.contentType||'')} · ${a.sizeBytes}b</span></li>`).join('');
     const linkLi = l => `<li><span class="k">${l.direction==='out'?'→':'←'} ${esc(l.rel)}</span> <a href="#" onclick="open_('${l.noteId}');return false">${esc(l.title)||esc(l.noteId.slice(0,8))}</a> <span class="k">(${esc(l.type)})</span></li>`;
@@ -179,6 +193,8 @@ async function open_(id) {
       `<div class="meta"><span class="lbl">domain</span>${esc(n.domain)}` +
       `&nbsp;&nbsp;<span class="lbl">type</span>${esc(n.type)}` +
       `&nbsp;&nbsp;<span class="lbl">status</span>${esc(n.status)}</div>` +
+      (canReview ? `<div class="meta"><button onclick="reviewSuggestion('${esc(id)}','apply')">Apply</button> ` +
+        `<button class="btn-reject" onclick="reviewSuggestion('${esc(id)}','reject')">Reject</button></div>` : '') +
       `<div class="meta"><span class="lbl">tags</span>${tags.length ? tags.map(t=>`<span class="tag" data-tag="${esc(t)}" title="filter by this tag">${esc(t)}</span>`).join('') : '<i class="k">none</i>'}</div>` +
       `<p class="k">key: ${esc(n.dedupKey||'—')} · updated: ${esc(n.updatedUtc)} · by: ${esc(n.sourceAgent||'—')}</p>` +
       (payload ? `<h3>payload</h3><pre>${esc(payload)}</pre>` : '') +

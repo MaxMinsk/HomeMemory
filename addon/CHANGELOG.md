@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.30.0
+
+Sprint 23 — one-click review of evolution suggestions (MEMP-133).
+
+- **Apply / Reject buttons in the viewer** for `memory_evolution_suggestion` notes. **Apply** maps the
+  suggestion's `proposed_patch` (title/body/tags/payload — mirroring `notes_patch`: tags REPLACE, payload
+  MERGES) and `proposed_links` onto the target, then marks the suggestion `applied`. **Reject** marks it
+  `rejected`, target untouched.
+- This is the viewer's first write path (the seed of the owner UI). It is bearer-gated and scope-checked
+  via the shared authorizer, uses optimistic concurrency (won't clobber a note changed since), and is
+  non-destructive + fully audited — no two-phase confirm needed. New endpoints `POST
+  /api/suggestions/{id}/apply` and `/reject`; logic lives in a unit-tested core `SuggestionReviewer`.
+- Curator skill `agent-memory-enrichment` (commons) bumped to v3: propose the COMPLETE tag set (apply
+  replaces tags) and a note that suggestions are now one-click-applyable.
+
 ## 0.29.0
 
 Sprint 22 — artifact link lifetime fix (MEMP-132).
