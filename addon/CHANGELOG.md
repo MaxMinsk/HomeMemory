@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.40.0
+
+Sprint 33 — domain → project consolidation (MEMP-148).
+
+- **Move a whole domain under another as a project.** New root-only `POST /api/admin/move-domain` + viewer
+  "Move domain → project" form (dry-run, then Apply) that re-homes every active note in a source domain into a
+  target domain (default `development`) with `project = <source domain>` — e.g. `memory-mcp` →
+  `development`/project=memory-mcp. The dry run reports how many notes move and lists any dedup clashes
+  (`type:dedupKey` already present in the target); an apply is **refused while any clash exists**, and the
+  `(domain, type, dedup_key)` unique index makes the apply atomic (a stray clash rolls the whole move back).
+
 ## 0.39.0
 
 Sprint 32 — surface + backfill the project axis.

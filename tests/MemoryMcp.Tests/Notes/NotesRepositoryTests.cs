@@ -113,6 +113,35 @@ public class NotesRepositoryTests
     }
 
     [Fact]
+    public void DomainMove_moves_notes_and_sets_project_when_no_collision()
+    {
+        using var temp = new TempDatabase();
+        var (repo, factory) = NewRepo(temp);
+        var id = repo.Upsert("memory-mcp", "backlog_item", "A", null, """{ "key": "MEMP-990", "status": "ready" }""", null, "MEMP-990", "me").Id;
+
+        var dry = DomainMove.Run(factory, "memory-mcp", "development", apply: false);
+        Assert.Equal(1, dry.ToMove);
+        Assert.Empty(dry.Collisions);
+
+        Assert.True(DomainMove.Run(factory, "memory-mcp", "development", apply: true).Applied);
+        var moved = repo.Get(id)!;
+        Assert.Equal("development", moved.Domain);
+        Assert.Equal("memory-mcp", moved.Project);
+    }
+
+    [Fact]
+    public void DomainMove_reports_collision_and_refuses_apply()
+    {
+        using var temp = new TempDatabase();
+        var (repo, factory) = NewRepo(temp);
+        repo.Upsert("memory-mcp", "backlog_item", "A", null, """{ "key": "MEMP-991", "status": "ready" }""", null, "MEMP-991", "me");
+        repo.Upsert("development", "backlog_item", "dup", null, """{ "key": "MEMP-991", "status": "ready" }""", null, "MEMP-991", "me");
+
+        Assert.Contains("backlog_item:MEMP-991", DomainMove.Run(factory, "memory-mcp", "development", apply: false).Collisions);
+        Assert.False(DomainMove.Run(factory, "memory-mcp", "development", apply: true).Applied); // blocked while a clash exists
+    }
+
+    [Fact]
     public void Upsert_derives_envelope_project_from_payload_project()
     {
         using var temp = new TempDatabase();

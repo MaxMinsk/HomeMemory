@@ -108,6 +108,27 @@ internal static class ViewerEndpoints
             RequireRoot(authz) ?? Results.Json(BlobReconciler.Reconcile(factory, blobs, apply ?? false)));
         app.MapPost("/api/admin/backfill-project", (RequestAuthorizer authz, ISqliteConnectionFactory factory, bool? apply) =>
             RequireRoot(authz) ?? Results.Json(ProjectBackfill.Run(factory, apply ?? false)));
+        app.MapPost("/api/admin/move-domain", (RequestAuthorizer authz, ISqliteConnectionFactory factory, string? src, string? target, bool? apply) =>
+        {
+            if (RequireRoot(authz) is { } denied)
+            {
+                return denied;
+            }
+
+            if (string.IsNullOrWhiteSpace(src))
+            {
+                return Results.BadRequest("src (source domain) is required.");
+            }
+
+            try
+            {
+                return Results.Json(DomainMove.Run(factory, src, string.IsNullOrWhiteSpace(target) ? "development" : target, apply ?? false));
+            }
+            catch (ArgumentException exception)
+            {
+                return Results.BadRequest(exception.Message);
+            }
+        });
     }
 
     // Maintenance is global and mutating — only the unrestricted (root/all-domains) token may run it.

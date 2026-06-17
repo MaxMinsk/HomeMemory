@@ -191,6 +191,11 @@ function admin() {
     `<div class="meta"><b>Backfill project</b> <span class="k">— set the envelope project from payload.project on older notes</span><br>` +
     `<button onclick="adminRun('backfill-project',false)">Dry-run</button> ` +
     `<button class="btn-reject" onclick="adminRun('backfill-project',true)">Apply</button></div>` +
+    `<div class="meta"><b>Move domain → project</b> <span class="k">— re-home a domain's notes under a target domain as a project</span><br>` +
+    `<input id="mvsrc" class="fld" type="text" placeholder="source domain, e.g. memory-mcp"> ` +
+    `<input id="mvtarget" class="fld" type="text" value="development" placeholder="target domain"> ` +
+    `<button onclick="adminMoveDomain(false)">Dry-run</button> ` +
+    `<button class="btn-reject" onclick="adminMoveDomain(true)">Apply</button></div>` +
     `<h3>output</h3><pre id="adminout" class="k">—</pre>` +
     `<h3>Tokens</h3>` +
     `<div class="meta"><input id="tlabel" class="fld" type="text" placeholder="label (optional)"> ` +
@@ -233,6 +238,19 @@ async function tokenRevoke(id) {
     if (!r.ok) throw new Error(r.status);
     tokensLoad();
   } catch(e){ alert(e.message); }
+}
+async function adminMoveDomain(apply) {
+  const src = $('#mvsrc').value.trim(), target = ($('#mvtarget').value.trim() || 'development');
+  const out = $('#adminout'); if (out) out.textContent = 'running…';
+  if (!src) { out.textContent = 'source domain is required'; return; }
+  if (apply && !confirm(`Move ALL notes from "${src}" into "${target}" (project=${src})? This rewrites domains.`)) return;
+  try {
+    const p = new URLSearchParams({ src, target, apply: String(apply) });
+    const r = await fetch('/api/admin/move-domain?' + p.toString(), { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
+    if (r.status === 403) { out.textContent = '403 — requires the root (all-domains) token.'; return; }
+    if (!r.ok) throw new Error(r.status + ' ' + (await r.text()).slice(0,300));
+    out.textContent = JSON.stringify(await r.json(), null, 2);
+  } catch(e){ out.textContent = e.message; }
 }
 async function adminRun(op, apply) {
   if (apply && !confirm('Apply "' + op + '"? This writes to the database.')) return;
