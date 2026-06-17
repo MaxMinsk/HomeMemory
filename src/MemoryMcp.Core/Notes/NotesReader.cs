@@ -467,6 +467,81 @@ public sealed class NotesReader
         return links;
     }
 
+    /// <summary>Largest number of nodes a single <see cref="Graph"/> traversal returns before truncating.</summary>
+    public const int MaxGraphNodes = 200;
+
+    /// <summary>
+    /// Returns the link-graph neighborhood of a note out to <paramref name="maxHops"/> hops: a breadth-first walk
+    /// over <c>note_links</c> in both directions, scope-restricted, returning nodes (with hop distance) and the
+    /// edges among them. Returns <c>null</c> only when the root is missing or out of scope. Bounded by
+    /// <see cref="MaxGraphNodes"/> (sets <c>Truncated</c>) so a hub note can't return the whole store.
+    /// </summary>
+    /// <param name="id">The root note id.</param>
+    /// <param name="maxHops">Traversal depth (clamped to [1, 5]).</param>
+    /// <param name="restrictToDomains">Auth scope; restricts both the root and every neighbor (null = unrestricted).</param>
+    public NoteGraph? Graph(string id, int maxHops, IReadOnlyCollection<string>? restrictToDomains)
+    {
+        var root = Get(id);
+        if (root is null || (restrictToDomains is not null && !restrictToDomains.Contains(root.Domain)))
+        {
+            return null;
+        }
+
+        maxHops = Math.Clamp(maxHops, 1, 5);
+        var nodes = new Dictionary<string, GraphNode>(StringComparer.Ordinal)
+        {
+            [root.Id] = new GraphNode(root.Id, root.Title, root.Type, root.Domain, 0),
+        };
+        var edges = new List<GraphEdge>();
+        var edgeKeys = new HashSet<string>(StringComparer.Ordinal);
+        var frontier = new List<string> { root.Id };
+        var truncated = false;
+
+        for (var hop = 1; hop <= maxHops && frontier.Count > 0 && !truncated; hop++)
+        {
+            var next = new List<string>();
+            foreach (var nodeId in frontier)
+            {
+                foreach (var link in Links(nodeId))
+                {
+                    if (restrictToDomains is not null && !restrictToDomains.Contains(link.Domain))
+                    {
+                        continue; // neighbor outside the caller's scope — omit the node and the edge to it
+                    }
+
+                    var (fromId, toId) = link.Direction == "out" ? (nodeId, link.NoteId) : (link.NoteId, nodeId);
+                    if (edgeKeys.Add($"{fromId}{toId}{link.Rel}"))
+                    {
+                        edges.Add(new GraphEdge(fromId, toId, link.Rel));
+                    }
+
+                    if (nodes.ContainsKey(link.NoteId))
+                    {
+                        continue;
+                    }
+
+                    if (nodes.Count >= MaxGraphNodes)
+                    {
+                        truncated = true;
+                        break;
+                    }
+
+                    nodes[link.NoteId] = new GraphNode(link.NoteId, link.Title, link.Type, link.Domain, hop);
+                    next.Add(link.NoteId);
+                }
+
+                if (truncated)
+                {
+                    break;
+                }
+            }
+
+            frontier = next;
+        }
+
+        return new NoteGraph(root.Id, nodes.Values.ToList(), edges, truncated);
+    }
+
     /// <summary>Returns a note's history (newest first) from the append-only event log.</summary>
     /// <param name="id">The note id.</param>
     /// <param name="limit">Maximum number of events (clamped to [1, 500]).</param>

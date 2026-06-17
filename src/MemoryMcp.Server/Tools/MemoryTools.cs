@@ -349,6 +349,23 @@ public sealed class MemoryTools
         return note is not null && _authz.CanRead(note.Domain) ? _notes.Links(id) : Array.Empty<LinkView>();
     }
 
+    /// <summary>Traverses the link graph from a note out to N hops (nodes + edges, scope-filtered).</summary>
+    [McpServerTool(Name = "notes_graph", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("Traverse the link graph from a note: returns its N-hop neighborhood as nodes (id, title, type, domain, hops-from-root) + edges (fromId, toId, rel), scope-filtered. Use it to see how a note connects — dependencies, derivations, sprint membership — in one call instead of walking notes_links by hand. maxHops 1-5 (default 2); a large neighborhood is capped (truncated=true).")]
+    public NoteGraph? NotesGraph(
+        [Description("Root note id")] string id,
+        [Description("Traversal depth, 1-5 (default 2)")] int maxHops = 2)
+    {
+        var note = _notes.Get(id);
+        if (note is null || !_authz.CanRead(note.Domain))
+        {
+            return null;
+        }
+
+        RecordUsage(id);
+        return _notes.Graph(id, maxHops, _authz.ReadRestriction(null));
+    }
+
     /// <summary>Removes a directed link from one note to another.</summary>
     [McpServerTool(Name = "notes_unlink", Destructive = true, Idempotent = true, UseStructuredContent = true)]
     [Description("Remove a directed link (rel) from one note to another. Returns the number of links removed (0 if none matched).")]
