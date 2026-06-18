@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.45.0
+
+Sprint 36 — consolidation & scoping hygiene (MEMP-027, MEMP-036, MEMP-117).
+
+- **Merge duplicate notes** (MEMP-027): a root-only `POST /api/admin/merge-duplicates` + viewer "Merge
+  duplicates" form (dry-run, then Apply) collapses groups of exact-content duplicates (same `content_hash`) within
+  a domain into the newest copy — each older copy is **superseded** (with a `supersedes` link) and its incoming
+  links are **re-pointed to the canonical**, so references survive and duplicates drop out of active search. Runs
+  in one transaction; the dry run reports how many groups/notes would merge.
+- **Skill consolidation advice** (MEMP-036): a read-only `skill_consolidate_plan` tool flags **redundant project
+  overrides** (a project skill identical to the domain-general one it shadows) and **duplicate skills** (identical
+  bodies under different keys), each with a suggested action (delete / merge) and the related key. It only
+  proposes — apply via `skill_upsert`.
+- **Scope-axis conventions** (MEMP-117): documented `session` / `thread` / `subject` as **payload conventions**
+  for fine-grained scoping (vs. `domain` = security boundary and `project` = product), shipped as the world-readable
+  `memory-scope-axes` skill. No schema change — these are already filterable (`payload.<field>`) and searchable.
+
 ## 0.44.0
 
 Sprint 38 — cut payload-search noise (MEMP-152).
