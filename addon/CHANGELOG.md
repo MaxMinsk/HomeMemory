@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.49.0
+
+Sprint 42 — search & viewer polish (MEMP-159, MEMP-160, MEMP-161, MEMP-162, MEMP-163).
+
+- **Searching a key surfaces that note first** (MEMP-159): with no explicit sort, a note whose `dedup_key` equals
+  the query (e.g. `HPA-008`) now ranks above notes that merely mention it.
+- **Exact title match boost** (MEMP-160): a note whose title equals the query ranks just after an exact-key match
+  and above plain relevance.
+- **`contains` filter operator** (MEMP-161): the filter DSL gains `field contains 'x'` — a case-insensitive
+  substring match for `title` and `payload.<field>` (e.g. `payload.subject contains 'STU-12'`), safely escaped.
+- **Search-match highlighting in the viewer** (MEMP-162): result rows show the snippet with the matched terms
+  highlighted instead of raw bracket markers.
+- **List-row polish** (MEMP-163): rows now show a relative "updated" time (project badge + clickable tag chips
+  were already there).
+
 ## 0.48.0
 
 Sprint 41 — events & portability (MEMP-155, MEMP-156, MEMP-056, MEMP-157, MEMP-158).
