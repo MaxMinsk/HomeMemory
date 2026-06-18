@@ -116,6 +116,9 @@ public sealed class NotesRepository
     public NoteGraph? Graph(string id, int maxHops, IReadOnlyCollection<string>? restrictToDomains)
         => _reader.Graph(id, maxHops, restrictToDomains);
 
+    /// <inheritdoc cref="NotesWriter.IsValidPayload"/>
+    public bool IsValidPayload(string type, string? payloadJson) => _writer.IsValidPayload(type, payloadJson);
+
     /// <inheritdoc cref="NotesReader.Changes"/>
     public NoteChangePage Changes(string? since, string? domain, string? type, int limit, IReadOnlyCollection<string>? restrictToDomains)
         => _reader.Changes(since, domain, type, limit, restrictToDomains);

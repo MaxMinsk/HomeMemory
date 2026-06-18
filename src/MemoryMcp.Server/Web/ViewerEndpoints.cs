@@ -147,6 +147,19 @@ internal static class ViewerEndpoints
         });
         app.MapPost("/api/admin/merge-duplicates", (RequestAuthorizer authz, ISqliteConnectionFactory factory, string? domain, bool? apply) =>
             RequireRoot(authz) ?? Results.Json(DuplicateMerge.Run(factory, domain, apply ?? false)));
+        app.MapGet("/api/admin/export", (RequestAuthorizer authz, ISqliteConnectionFactory factory, string? domain) =>
+            RequireRoot(authz) ?? Results.Text(string.Join("\n", NotesExport.Lines(factory, domain)), "application/x-ndjson"));
+        app.MapPost("/api/admin/import", async (HttpRequest request, RequestAuthorizer authz, NotesRepository notes, bool? apply) =>
+        {
+            if (RequireRoot(authz) is { } denied)
+            {
+                return denied;
+            }
+
+            using var reader = new StreamReader(request.Body);
+            var ndjson = await reader.ReadToEndAsync();
+            return Results.Json(NotesImport.Run(notes, ndjson, apply ?? false));
+        });
     }
 
     // Maintenance is global and mutating — only the unrestricted (root/all-domains) token may run it.

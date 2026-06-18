@@ -608,6 +608,13 @@ public sealed class NotesWriter
     private static void AddNullable(SqliteCommand command, string name, string? value) =>
         command.Parameters.AddWithValue(name, (object?)value ?? DBNull.Value);
 
+    /// <summary>True if <paramref name="payloadJson"/> is valid for <paramref name="type"/> (project-axis aware).
+    /// Used for import dry-runs to report would-be-invalid notes without writing.</summary>
+    /// <param name="type">The note type.</param>
+    /// <param name="payloadJson">The payload to check.</param>
+    public bool IsValidPayload(string type, string? payloadJson) =>
+        _validator.Validate(Identifiers.Normalize(type), PayloadForValidation(payloadJson)).IsValid;
+
     // Payload to validate against the type schema, with a top-level "project" lifted out (MEMP-154): project is an
     // ENVELOPE axis, so any type may carry payload.project to set it — even types whose schema forbids extra fields
     // (e.g. reference). The original payload is still stored as-is; only the schema check sees the stripped copy.

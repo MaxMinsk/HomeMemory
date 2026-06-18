@@ -216,6 +216,54 @@ public class NotesRepositoryTests
     }
 
     [Fact]
+    public void Export_then_import_round_trips_notes_into_a_fresh_store()
+    {
+        using var src = new TempDatabase();
+        var (srcRepo, srcFactory) = NewRepo(src);
+        srcRepo.Upsert("development", "backlog_item", "Task", null, """{ "key": "MEMP-900", "status": "ready", "project": "memory-mcp" }""", null, "t1", "me");
+        srcRepo.Upsert("development", "fact", "Fact", "body text", """{ "statement": "x" }""", """["a","b"]""", "f1", "me");
+
+        var ndjson = string.Join("\n", NotesExport.Lines(srcFactory, null));
+        Assert.Equal(2, ndjson.Split('\n').Length);
+
+        using var dst = new TempDatabase();
+        var (dstRepo, _) = NewRepo(dst);
+        var dry = NotesImport.Run(dstRepo, ndjson, apply: false);
+        Assert.Equal(2, dry.Total);
+        Assert.Equal(2, dry.Created);
+        Assert.Equal(0, dry.Invalid);
+        Assert.False(dry.Applied);
+
+        Assert.Equal(2, NotesImport.Run(dstRepo, ndjson, apply: true).Created);
+
+        var task = dstRepo.GetByDedupKey("development", "backlog_item", "t1");
+        Assert.Equal("Task", task!.Title);
+        Assert.Equal("memory-mcp", task.Project);                               // project axis preserved through round-trip
+        Assert.Equal("body text", dstRepo.GetByDedupKey("development", "fact", "f1")!.Body);
+
+        var again = NotesImport.Run(dstRepo, ndjson, apply: true);              // re-import is idempotent (updates, no dupes)
+        Assert.Equal(2, again.Updated);
+        Assert.Equal(0, again.Created);
+    }
+
+    [Fact]
+    public void Import_counts_malformed_and_invalid_lines()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        var ndjson = string.Join("\n",
+            """{ "domain": "development", "type": "backlog_item", "dedupKey": "ok1", "payload": { "key": "MEMP-900", "status": "ready" } }""",
+            "{ not json",                                                                       // malformed
+            """{ "domain": "development", "type": "backlog_item", "dedupKey": "bad", "payload": { "status": "bogus" } }"""); // schema-invalid
+
+        var report = NotesImport.Run(repo, ndjson, apply: true);
+
+        Assert.Equal(3, report.Total);
+        Assert.Equal(1, report.Created);
+        Assert.Equal(2, report.Invalid);
+    }
+
+    [Fact]
     public void Changes_returns_events_oldest_first_with_a_resumable_cursor()
     {
         using var temp = new TempDatabase();
