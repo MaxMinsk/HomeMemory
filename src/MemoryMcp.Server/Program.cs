@@ -13,6 +13,7 @@ using MemoryMcp.Core.Security;
 using MemoryMcp.Core.Skills;
 using MemoryMcp.Core.Storage;
 using MemoryMcp.Server.Logging;
+using MemoryMcp.Server.Mqtt;
 using MemoryMcp.Server.Security;
 using MemoryMcp.Server.Tools;
 using MemoryMcp.Server.Web;
@@ -225,7 +226,12 @@ static void RegisterServices(IServiceCollection services, string dbPath)
     services.AddSingleton(TimeProvider.System);
     services.AddSingleton<ISqliteConnectionFactory>(new SqliteConnectionFactory(dbPath));
     services.AddSingleton(SchemaRegistry.FromEmbeddedResources());
-    services.AddSingleton<NotesRepository>();
+    RegisterMqtt(services);
+    services.AddSingleton(provider => new NotesRepository(
+        provider.GetRequiredService<ISqliteConnectionFactory>(),
+        provider.GetRequiredService<SchemaRegistry>(),
+        provider.GetRequiredService<TimeProvider>(),
+        provider.GetRequiredService<INoteEventSink>()));
     services.AddSingleton<SkillsService>();
     services.AddSingleton<ConfirmationService>();
     services.AddSingleton(BuildBlobStore(dbPath));
@@ -249,6 +255,23 @@ static void RegisterServices(IServiceCollection services, string dbPath)
         (Environment.GetEnvironmentVariable("MEMORY_ALLOWED_DOMAINS") ?? string.Empty)
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
         provider.GetRequiredService<TokenStore>()));
+}
+
+// MQTT is opt-in (MEMP-156 / MEMP-056). When disabled, the no-op sink is used and nothing connects to a
+// broker. When enabled, register the shared connection, the note-change sink, and the HA discovery service.
+static void RegisterMqtt(IServiceCollection services)
+{
+    var mqtt = MqttOptions.FromEnvironment();
+    if (!mqtt.Enabled || string.IsNullOrWhiteSpace(mqtt.Host))
+    {
+        services.AddSingleton<INoteEventSink>(NullNoteEventSink.Instance);
+        return;
+    }
+
+    services.AddSingleton(mqtt);
+    services.AddSingleton<MqttConnection>();
+    services.AddSingleton<INoteEventSink, MqttNoteEventSink>();
+    services.AddHostedService<HomeAssistantDiscoveryService>();
 }
 
 static void Bootstrap(IServiceProvider services)

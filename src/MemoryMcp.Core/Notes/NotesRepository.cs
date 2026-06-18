@@ -18,10 +18,11 @@ public sealed class NotesRepository
     /// <param name="connectionFactory">Database connection factory.</param>
     /// <param name="registry">Schema registry used for validation and version stamping.</param>
     /// <param name="timeProvider">Clock for timestamps; defaults to the system clock.</param>
-    public NotesRepository(ISqliteConnectionFactory connectionFactory, SchemaRegistry registry, TimeProvider? timeProvider = null)
+    /// <param name="eventSink">Sink for post-commit note-change events; defaults to a no-op sink.</param>
+    public NotesRepository(ISqliteConnectionFactory connectionFactory, SchemaRegistry registry, TimeProvider? timeProvider = null, INoteEventSink? eventSink = null)
     {
         _reader = new NotesReader(connectionFactory);
-        _writer = new NotesWriter(connectionFactory, registry, timeProvider);
+        _writer = new NotesWriter(connectionFactory, registry, timeProvider, eventSink);
     }
 
     /// <inheritdoc cref="NotesWriter.Upsert"/>

@@ -27,5 +27,21 @@ if bashio::config.has_value 'public_base_url'; then
   export MEMORY_PUBLIC_BASE_URL="$(bashio::config 'public_base_url')"
 fi
 
+# Opt-in real-time MQTT publishing (note-change events) + Home Assistant stats sensors (MEMP-156/MEMP-056).
+# Disabled by default: when mqtt_enabled is false nothing connects to a broker.
+export MEMORY_MQTT_ENABLED="$(bashio::config 'mqtt_enabled')"
+if bashio::config.true 'mqtt_enabled'; then
+  export MEMORY_MQTT_HOST="$(bashio::config 'mqtt_host')"
+  export MEMORY_MQTT_PORT="$(bashio::config 'mqtt_port')"
+  export MEMORY_MQTT_TOPIC_PREFIX="$(bashio::config 'mqtt_topic_prefix')"
+  if bashio::config.has_value 'mqtt_username'; then
+    export MEMORY_MQTT_USERNAME="$(bashio::config 'mqtt_username')"
+  fi
+  if bashio::config.has_value 'mqtt_password'; then
+    export MEMORY_MQTT_PASSWORD="$(bashio::config 'mqtt_password')"
+  fi
+  bashio::log.info "MQTT publishing enabled (host=${MEMORY_MQTT_HOST}:${MEMORY_MQTT_PORT}, prefix=${MEMORY_MQTT_TOPIC_PREFIX})"
+fi
+
 bashio::log.info "Starting Memory MCP (HTTP on :8099, db=${MEMORY_DB_PATH})"
 exec /opt/memory-mcp/MemoryMcp.Server

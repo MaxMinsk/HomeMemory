@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.48.0
+
+Sprint 41 — events & portability (MEMP-155, MEMP-156, MEMP-056, MEMP-157, MEMP-158).
+
+- **Changefeed for subscriptions** (MEMP-155): new read-only `notes_changes(since, domain?, type?)` returns notes
+  changed since an opaque cursor (create/update/supersede/archive), oldest-first, scope-restricted, paginated.
+  Built on the append-only event log; consumers store the cursor and poll — the server stays stateless.
+- **Real-time MQTT events** (MEMP-156, opt-in, default OFF): when configured, the server publishes a small event
+  `{id, domain, type, project, tags, op, ts}` (no body/secrets) to MQTT on every note change — so Home Assistant
+  automations and agents can react in real time. Best-effort: a broker outage never affects writes.
+- **Memory stats as HA sensors** (MEMP-056): when MQTT is on, the server publishes HA MQTT-discovery configs +
+  periodic state (note count, DB size, attachment count, per-domain/type counts) so memory shows up as graphable
+  Home Assistant sensors.
+- **Backup/portability** (MEMP-157/158): root-only `GET /api/admin/export` streams all notes as NDJSON; `POST
+  /api/admin/import` loads NDJSON, upserting idempotently by (domain,type,dedupKey) with a dry-run that reports
+  created/updated/invalid counts.
+
+New add-on options (all optional, MQTT disabled by default): `mqtt_enabled`, `mqtt_host`, `mqtt_port`,
+`mqtt_username`, `mqtt_password`, `mqtt_topic_prefix`.
+
 ## 0.47.0
 
 Sprint 40 — viewer Markdown + universal project axis (MEMP-153, MEMP-154).

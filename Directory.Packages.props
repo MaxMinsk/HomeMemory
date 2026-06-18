@@ -11,6 +11,8 @@
     <PackageVersion Include="libstemmer.net" Version="2.2.3" />
     <PackageVersion Include="ModelContextProtocol" Version="1.4.0" />
     <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="1.4.0" />
+    <!-- Pure-managed MQTT client (opt-in real-time publishing for Home Assistant); multi-arch safe. -->
+    <PackageVersion Include="MQTTnet" Version="5.1.0.1559" />
   </ItemGroup>
 
   <ItemGroup>

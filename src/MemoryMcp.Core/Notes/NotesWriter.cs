@@ -18,17 +18,20 @@ public sealed class NotesWriter
     private readonly SchemaRegistry _registry;
     private readonly SchemaValidator _validator;
     private readonly TimeProvider _timeProvider;
+    private readonly INoteEventSink _eventSink;
 
     /// <summary>Creates a writer over the given database, schema registry and clock.</summary>
     /// <param name="connectionFactory">Database connection factory.</param>
     /// <param name="registry">Schema registry used for validation and version stamping.</param>
     /// <param name="timeProvider">Clock for timestamps; defaults to the system clock.</param>
-    public NotesWriter(ISqliteConnectionFactory connectionFactory, SchemaRegistry registry, TimeProvider? timeProvider = null)
+    /// <param name="eventSink">Sink for post-commit note-change events; defaults to a no-op sink.</param>
+    public NotesWriter(ISqliteConnectionFactory connectionFactory, SchemaRegistry registry, TimeProvider? timeProvider = null, INoteEventSink? eventSink = null)
     {
         _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
         _registry = registry ?? throw new ArgumentNullException(nameof(registry));
         _validator = new SchemaValidator(registry);
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _eventSink = eventSink ?? NullNoteEventSink.Instance;
     }
 
     /// <summary>
@@ -70,6 +73,7 @@ public sealed class NotesWriter
         using var transaction = connection.BeginTransaction();
         var (id, created) = PersistNote(connection, transaction, domain, type, title, body, payloadJson, tagsJson, dedupKey, sourceAgent, schemaVer, nowUtc, project);
         transaction.Commit();
+        Emit(id, domain, type, project, tagsJson, created ? "create" : "update", nowUtc);
         return new UpsertResult(id, created, nowUtc, type, dedupKey);
     }
 
@@ -152,6 +156,7 @@ public sealed class NotesWriter
         }
 
         transaction.Commit();
+        Emit(id, domain, type, project, tagsJson, created ? "create" : "update", nowUtc);
         return new AssembleResult(id, created, nowUtc, specs.Count);
     }
 
@@ -217,6 +222,7 @@ public sealed class NotesWriter
         NoteAudit.Append(connection, transaction, id, "create", sourceAgent, nowUtc,
             new JsonObject { ["op"] = "create", ["type"] = "journal" }.ToJsonString());
         transaction.Commit();
+        Emit(id, domain, "journal", null, tags, "create", nowUtc);
         return id;
     }
 
@@ -286,6 +292,7 @@ public sealed class NotesWriter
         using var connection = _connectionFactory.Create();
         using var transaction = connection.BeginTransaction();
 
+        var facets = ReadFacets(connection, transaction, id);
         int affected;
         using (var command = connection.CreateCommand())
         {
@@ -303,6 +310,7 @@ public sealed class NotesWriter
 
         NoteAudit.Append(connection, transaction, id, "archive", null, nowUtc, new JsonObject { ["op"] = "archive" }.ToJsonString());
         transaction.Commit();
+        Emit(facets, id, "archive", nowUtc);
         return true;
     }
 
@@ -318,6 +326,7 @@ public sealed class NotesWriter
         using var connection = _connectionFactory.Create();
         using var transaction = connection.BeginTransaction();
 
+        var facets = ReadFacets(connection, transaction, oldId);
         int affected;
         using (var command = connection.CreateCommand())
         {
@@ -345,6 +354,7 @@ public sealed class NotesWriter
 
         NoteAudit.Append(connection, transaction, oldId, "supersede", null, nowUtc, new JsonObject { ["op"] = "supersede", ["by"] = newId }.ToJsonString());
         transaction.Commit();
+        Emit(facets, oldId, "supersede", nowUtc);
         return true;
     }
 
@@ -524,6 +534,82 @@ public sealed class NotesWriter
     }
 
     private string NowUtc() => _timeProvider.GetUtcNow().UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
+
+    // Best-effort post-commit notification. NEVER lets a sink failure escape into the write path.
+    private void Emit(string id, string domain, string type, string? project, string? tagsJson, string op, string nowUtc)
+    {
+        try
+        {
+            _eventSink.Publish(new NoteChangedEvent(id, domain, type, project, ParseTags(tagsJson), op, nowUtc));
+        }
+        catch
+        {
+            // sinks are best-effort: a broker hiccup must not fail (or roll back) a committed write
+        }
+    }
+
+    private void Emit(NoteFacets? facets, string id, string op, string nowUtc)
+    {
+        if (facets is null)
+        {
+            return; // the row vanished between read and commit; nothing meaningful to publish
+        }
+
+        Emit(id, facets.Domain, facets.Type, facets.Project, facets.TagsJson, op, nowUtc);
+    }
+
+    // Reads the envelope facets needed for a change event, inside the active transaction. Null if the row is gone.
+    private static NoteFacets? ReadFacets(SqliteConnection connection, SqliteTransaction transaction, string id)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT domain, type, project, tags_json FROM notes WHERE id = $id AND deleted = 0 LIMIT 1;";
+        command.Parameters.AddWithValue("$id", id);
+        using var reader = command.ExecuteReader();
+        if (!reader.Read())
+        {
+            return null;
+        }
+
+        return new NoteFacets(
+            reader.GetString(0), reader.GetString(1),
+            reader.IsDBNull(2) ? null : reader.GetString(2),
+            reader.IsDBNull(3) ? null : reader.GetString(3));
+    }
+
+    // Parses a tags_json array into a string list; empty on null/blank/malformed input.
+    private static IReadOnlyList<string> ParseTags(string? tagsJson)
+    {
+        if (string.IsNullOrWhiteSpace(tagsJson))
+        {
+            return Array.Empty<string>();
+        }
+
+        try
+        {
+            if (JsonNode.Parse(tagsJson) is not JsonArray array)
+            {
+                return Array.Empty<string>();
+            }
+
+            var tags = new List<string>(array.Count);
+            foreach (var node in array)
+            {
+                if (node is JsonValue value && value.TryGetValue<string>(out var tag))
+                {
+                    tags.Add(tag);
+                }
+            }
+
+            return tags;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return Array.Empty<string>();
+        }
+    }
+
+    private sealed record NoteFacets(string Domain, string Type, string? Project, string? TagsJson);
 
     private static ExistingNote? FindByDedup(SqliteConnection connection, SqliteTransaction transaction, string domain, string type, string dedupKey)
     {
