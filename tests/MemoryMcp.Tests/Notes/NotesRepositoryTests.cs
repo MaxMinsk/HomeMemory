@@ -475,6 +475,21 @@ public class NotesRepositoryTests
     }
 
     [Fact]
+    public void Search_ranks_an_exact_dedup_key_match_first()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        // A note that merely MENTIONS the key many times (high term frequency)...
+        repo.Upsert("development", "backlog_item", "HPA-008 HPA-008 HPA-008", "see HPA-008 and HPA-008 again", """{ "key": "MEMP-900", "status": "ready" }""", null, "mentions", "me");
+        // ...vs the note whose dedup_key IS the queried key (the key appears only there).
+        repo.Upsert("development", "backlog_item", "The task", "body", """{ "key": "MEMP-901", "status": "ready" }""", null, "HPA-008", "me");
+
+        var page = repo.Search(query: "HPA-008", domain: "development", includePayload: true);
+
+        Assert.Equal("HPA-008", page.Items[0].DedupKey); // exact dedup_key wins over the other's term frequency (MEMP-159)
+    }
+
+    [Fact]
     public void Search_rejects_an_unsortable_or_injected_field()
     {
         using var temp = new TempDatabase();

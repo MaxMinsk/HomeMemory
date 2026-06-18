@@ -39,10 +39,13 @@ public sealed partial class NotesReader
         var useFts = tokens.Count > 0;
         var compiledFilter = string.IsNullOrWhiteSpace(filter) ? null : NoteFilter.Compile(filter!);
         var sortBody = SortOrder.Compile(sort);
+        // With no explicit sort, a note whose dedup_key IS the query ranks first (MEMP-159): searching a key
+        // (e.g. "HPA-008") should surface that note above ones that merely mention it.
+        var exactKey = sortBody is null && !string.IsNullOrWhiteSpace(query) ? query!.Trim() : null;
 
         using var connection = _connectionFactory.Create();
         var total = Count(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter);
-        var items = Page(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload, sortBody);
+        var items = Page(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload, sortBody, exactKey);
         if (includeLinks)
         {
             items = items.Select(item => item with { Links = Links(item.Id) }).ToList();
@@ -67,7 +70,7 @@ public sealed partial class NotesReader
     private static IReadOnlyList<SearchResult> Page(
         SqliteConnection connection, bool useFts, IReadOnlyList<string> tokens,
         string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
-        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, int limit, int offset, bool includePayload, string? sortBody = null)
+        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, int limit, int offset, bool includePayload, string? sortBody = null, string? exactKey = null)
     {
         using var command = connection.CreateCommand();
         var where = ApplyFilters(command, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter);
@@ -78,6 +81,11 @@ public sealed partial class NotesReader
         var scoreExpr = useFts ? "bm25(notes_fts)" : "0.0";
         var from = useFts ? "FROM notes_fts JOIN notes n ON n.rowid = notes_fts.rowid" : "FROM notes n";
         var orderBy = sortBody ?? (useFts ? "score" : "n.updated_utc DESC"); // explicit sort overrides relevance/recency
+        if (exactKey is not null)
+        {
+            command.Parameters.AddWithValue("$exactkey", exactKey);
+            orderBy = $"(CASE WHEN n.dedup_key IS NOT NULL AND lower(n.dedup_key) = lower($exactkey) THEN 0 ELSE 1 END), {orderBy}"; // exact dedup_key first
+        }
         command.CommandText =
             $"SELECT {string.Format(System.Globalization.CultureInfo.InvariantCulture, columns, scoreExpr)} " +
             $"{from} WHERE {where} ORDER BY {orderBy} LIMIT $limit OFFSET $offset;";
