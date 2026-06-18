@@ -30,6 +30,10 @@
   table.kv th { text-align:left; vertical-align:top; color:var(--muted); font-weight:600; padding:3px 12px 3px 0; white-space:nowrap; }
   table.kv td { padding:3px 0; word-break:break-word; }
   details.raw { margin-top:6px; } details.raw summary { color:var(--muted); cursor:pointer; font-size:12px; }
+  #tagbar { padding:6px 10px; border-bottom:1px solid var(--line); display:flex; flex-wrap:wrap; gap:4px; align-items:center; max-height:92px; overflow:auto; }
+  #tagbar:empty { display:none; }
+  .cpbtn { background:#222838; color:var(--muted); border:1px solid var(--line); border-radius:5px; padding:2px 8px; font-size:11px; font-weight:500; cursor:pointer; }
+  .cpbtn:hover { color:var(--fg); }
   .badge { display:inline-block; background:#222838; color:var(--muted); border-radius:4px; padding:0 6px; font-size:11px; margin-right:4px; }
   .grouphdr { padding:6px 12px; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); background:#13161d; border-bottom:1px solid var(--line); position:sticky; top:0; }
   .finding { border-left:3px solid var(--line); }
@@ -81,6 +85,7 @@
       <button onclick="search()">Search</button>
       <button onclick="inbox()" title="Review queue: lint findings (unstructured / stale / possible secret / no tags / duplicate / broken link)" style="background:#3a2f12;color:#e0c074">Inbox</button>
     </div>
+    <div id="tagbar"></div>
     <div id="list"><div class="empty">Enter token, then Search.</div></div>
   </div>
   <div id="detail"><div class="empty">Select a note.</div></div>
@@ -172,7 +177,22 @@ function logout(){ localStorage.removeItem('memtoken'); location.hash=''; locati
 // Click any tag chip (list or detail) to filter the search by that tag. Capture phase so it wins
 // over the surrounding list item's open handler before that fires.
 function tagSearch(tag){ $('#tag').value = tag; $('#left').scrollTop = 0; search(); }
+function cp(text){ if (navigator.clipboard) navigator.clipboard.writeText(text); }
+// Tag-facet sidebar (MEMP-171): top tags for the current domain; chips reuse the .tag click delegate -> tagSearch.
+async function loadTags(){
+  const bar = $('#tagbar'); if(!bar) return;
+  try {
+    const d = $('#domain').value;
+    const tags = await api('/api/tags' + (d ? ('?domain=' + encodeURIComponent(d)) : ''));
+    const top = Object.entries(tags).sort((a,b)=>b[1]-a[1]).slice(0,25);
+    bar.innerHTML = top.length
+      ? `<span class="k" style="font-size:11px">tags:</span> ` + top.map(([t,n])=>`<span class="tag" data-tag="${esc(t)}" title="${n} notes">${esc(t)} <span class="k">${n}</span></span>`).join('')
+      : '';
+  } catch { bar.innerHTML = ''; }
+}
 document.addEventListener('click', e => {
+  const cpb = e.target.closest('.cpbtn');
+  if (cpb) { e.stopPropagation(); cp(cpb.dataset.copyLink ? location.href : (cpb.dataset.copy || '')); const o = cpb.textContent; cpb.textContent = 'copied'; setTimeout(()=>{ cpb.textContent = o; }, 900); return; }
   const chip = e.target.closest('.tag');
   if (chip && chip.dataset.tag) { e.stopPropagation(); tagSearch(chip.dataset.tag); }
 }, true);
@@ -293,6 +313,12 @@ function admin() {
     `<input id="mddomain" class="fld" type="text" placeholder="domain (optional; all if blank)"> ` +
     `<button onclick="adminMergeDuplicates(false)">Dry-run</button> ` +
     `<button class="btn-reject" onclick="adminMergeDuplicates(true)">Apply</button></div>` +
+    `<div class="meta"><b>Export / Import</b> <span class="k">— NDJSON backup &amp; restore</span><br>` +
+    `<input id="exdomain" class="fld" type="text" placeholder="domain (optional; all if blank)"> ` +
+    `<button onclick="adminExport()">Export NDJSON</button></div>` +
+    `<div class="meta"><textarea id="importtext" class="fld" rows="4" placeholder="paste NDJSON to import" style="width:100%;font-family:monospace"></textarea><br>` +
+    `<button onclick="adminImport(false)">Dry-run</button> ` +
+    `<button class="btn-reject" onclick="adminImport(true)">Apply</button></div>` +
     `<h3>output</h3><pre id="adminout" class="k">—</pre>` +
     `<h3>Tokens</h3>` +
     `<div class="meta"><input id="tlabel" class="fld" type="text" placeholder="label (optional)"> ` +
@@ -362,6 +388,32 @@ async function adminMergeDuplicates(apply) {
     out.textContent = JSON.stringify(await r.json(), null, 2);
   } catch(e){ out.textContent = e.message; }
 }
+async function adminExport(){
+  const out = $('#adminout'); if (out) out.textContent = 'exporting…';
+  try {
+    const d = $('#exdomain').value.trim();
+    const r = await fetch('/api/admin/export' + (d ? ('?domain=' + encodeURIComponent(d)) : ''), { headers: { 'Authorization': 'Bearer ' + token } });
+    if (r.status === 403) { out.textContent = '403 — requires the root (all-domains) token.'; return; }
+    if (!r.ok) throw new Error(r.status + ' ' + (await r.text()).slice(0,300));
+    const text = await r.text();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: 'application/x-ndjson' }));
+    a.download = (d || 'memory') + '-export.ndjson'; a.click(); URL.revokeObjectURL(a.href);
+    out.textContent = 'exported ' + text.split('\n').filter(Boolean).length + ' notes';
+  } catch(e){ out.textContent = e.message; }
+}
+async function adminImport(apply){
+  const out = $('#adminout'); if (out) out.textContent = 'running…';
+  const body = $('#importtext').value;
+  if (!body.trim()) { out.textContent = 'paste NDJSON first'; return; }
+  if (apply && !confirm('Import these notes (upsert by domain/type/dedupKey)? This writes to the store.')) return;
+  try {
+    const r = await fetch('/api/admin/import?apply=' + String(apply), { method: 'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/x-ndjson' }, body });
+    if (r.status === 403) { out.textContent = '403 — requires the root (all-domains) token.'; return; }
+    if (!r.ok) throw new Error(r.status + ' ' + (await r.text()).slice(0,300));
+    out.textContent = JSON.stringify(await r.json(), null, 2);
+  } catch(e){ out.textContent = e.message; }
+}
 async function adminPurge(apply) {
   const domain = $('#pgdomain').value.trim(), sourceAgent = $('#pgagent').value.trim();
   const out = $('#adminout'); if (out) out.textContent = 'running…';
@@ -423,6 +475,9 @@ async function open_(id) {
         `<button class="btn-reject" onclick="reviewSuggestion('${esc(id)}','reject')">Reject</button></div>` : '') +
       `<div class="meta"><span class="lbl">tags</span>${tags.length ? tags.map(t=>`<span class="tag" data-tag="${esc(t)}" title="filter by this tag">${esc(t)}</span>`).join('') : '<i class="k">none</i>'}</div>` +
       `<p class="k">key: ${esc(n.dedupKey||'—')} · updated: ${esc(n.updatedUtc)} · by: ${esc(n.sourceAgent||'—')}</p>` +
+      `<div class="meta"><button class="cpbtn" data-copy="${esc(id)}">copy id</button>` +
+      (n.dedupKey ? ` <button class="cpbtn" data-copy="${esc(n.dedupKey)}">copy key</button>` : '') +
+      ` <button class="cpbtn" data-copy-link="1">copy link</button></div>` +
       (payload ? `<h3>payload</h3>${(pobj && typeof pobj==='object' && !Array.isArray(pobj)) ? kvTable(pobj)+`<details class="raw"><summary>raw JSON</summary><pre>${esc(payload)}</pre></details>` : `<pre>${esc(payload)}</pre>`}` : '') +
       (n.body ? `<h3>body</h3><div class="md">${mdToHtml(n.body)}</div>` : '') +
       linkSection('outgoing links', outs) +
@@ -436,6 +491,8 @@ async function init() {
   await loadStats();          // populates type/domain option lists first
   const sel = readHash();     // then restore filters from the URL
   await search();
+  loadTags();                 // tag facets for the (restored) domain
+  $('#domain').addEventListener('change', loadTags); // refresh facets when the domain filter changes
   if (sel) open_(sel);
 }
 init();

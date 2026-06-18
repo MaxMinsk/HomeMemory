@@ -59,6 +59,18 @@ internal static class ViewerEndpoints
             return Results.Json(page);
         });
 
+        app.MapGet("/api/tags", (NotesRepository notes, RequestAuthorizer authz, string? domain) =>
+        {
+            try
+            {
+                return Results.Json(notes.TagFacets(domain, authz.ReadRestriction(domain)));
+            }
+            catch (ScopeForbiddenException)
+            {
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            }
+        });
+
         app.MapGet("/api/notes/{id}", (string id, NotesRepository notes, ArtifactsService artifacts, ArtifactUrlSigner signer, RequestAuthorizer authz) =>
         {
             var note = notes.Get(id);
