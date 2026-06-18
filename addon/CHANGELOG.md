@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.47.0
+
+Sprint 40 — viewer Markdown + universal project axis (MEMP-153, MEMP-154).
+
+- **The viewer renders note bodies as Markdown** (MEMP-153). Instead of raw text, the body now shows formatted
+  headings, lists, tables, code blocks, blockquotes, links, bold/italic. Rendered by a small self-contained
+  renderer that HTML-escapes first (XSS-safe) and only allows http(s)/relative links — no external dependency.
+- **Any note type can belong to a project** (MEMP-154). The envelope `project` axis previously couldn't be set
+  on types whose schema forbids extra fields (e.g. `reference`, `fact`, `decision`), because `payload.project`
+  was rejected at validation. Now the writer validates against the type schema with a top-level `project` lifted
+  out, so `payload.project` (or the explicit `project` argument) sets the project axis on **any** type. Stored
+  payload is unchanged; the envelope project is derived as before.
+
 ## 0.46.0
 
 Sprint 39 — tech-debt + curation (MEMP-103, MEMP-083). Internal/maintenance release — no behavior or API change.
