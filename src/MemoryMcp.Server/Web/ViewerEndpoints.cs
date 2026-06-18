@@ -145,6 +145,8 @@ internal static class ViewerEndpoints
                 return Results.BadRequest(exception.Message);
             }
         });
+        app.MapPost("/api/admin/merge-duplicates", (RequestAuthorizer authz, ISqliteConnectionFactory factory, string? domain, bool? apply) =>
+            RequireRoot(authz) ?? Results.Json(DuplicateMerge.Run(factory, domain, apply ?? false)));
     }
 
     // Maintenance is global and mutating — only the unrestricted (root/all-domains) token may run it.

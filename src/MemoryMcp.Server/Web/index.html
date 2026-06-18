@@ -201,6 +201,10 @@ function admin() {
     `<input id="pgagent" class="fld" type="text" placeholder="source agent (optional)"> ` +
     `<button onclick="adminPurge(false)">Dry-run</button> ` +
     `<button class="btn-reject" onclick="adminPurge(true)">Apply</button></div>` +
+    `<div class="meta"><b>Merge duplicates</b> <span class="k">— supersede exact-content duplicates into the newest copy (re-points links)</span><br>` +
+    `<input id="mddomain" class="fld" type="text" placeholder="domain (optional; all if blank)"> ` +
+    `<button onclick="adminMergeDuplicates(false)">Dry-run</button> ` +
+    `<button class="btn-reject" onclick="adminMergeDuplicates(true)">Apply</button></div>` +
     `<h3>output</h3><pre id="adminout" class="k">—</pre>` +
     `<h3>Tokens</h3>` +
     `<div class="meta"><input id="tlabel" class="fld" type="text" placeholder="label (optional)"> ` +
@@ -252,6 +256,19 @@ async function adminMoveDomain(apply) {
   try {
     const p = new URLSearchParams({ src, target, apply: String(apply) });
     const r = await fetch('/api/admin/move-domain?' + p.toString(), { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
+    if (r.status === 403) { out.textContent = '403 — requires the root (all-domains) token.'; return; }
+    if (!r.ok) throw new Error(r.status + ' ' + (await r.text()).slice(0,300));
+    out.textContent = JSON.stringify(await r.json(), null, 2);
+  } catch(e){ out.textContent = e.message; }
+}
+async function adminMergeDuplicates(apply) {
+  const domain = $('#mddomain').value.trim();
+  const out = $('#adminout'); if (out) out.textContent = 'running…';
+  if (apply && !confirm(`Merge exact-content duplicates${domain ? ' in "' + domain + '"' : ' (all domains)'}? Older copies are superseded into the newest.`)) return;
+  try {
+    const p = new URLSearchParams({ apply: String(apply) });
+    if (domain) p.set('domain', domain);
+    const r = await fetch('/api/admin/merge-duplicates?' + p.toString(), { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
     if (r.status === 403) { out.textContent = '403 — requires the root (all-domains) token.'; return; }
     if (!r.ok) throw new Error(r.status + ' ' + (await r.text()).slice(0,300));
     out.textContent = JSON.stringify(await r.json(), null, 2);

@@ -175,6 +175,47 @@ public class NotesRepositoryTests
     }
 
     [Fact]
+    public void DuplicateMerge_supersedes_older_duplicates_into_the_newest_and_repoints_links()
+    {
+        using var temp = new TempDatabase();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var (repo, factory) = NewRepo(temp, clock);
+        var older = repo.Upsert("development", "backlog_item", "Dup", "same body", """{ "key": "MEMP-700", "status": "ready" }""", null, "dup-old", "me").Id;
+        clock.Advance(TimeSpan.FromDays(1));
+        var newer = repo.Upsert("development", "backlog_item", "Dup", "same body", """{ "key": "MEMP-700", "status": "ready" }""", null, "dup-new", "me").Id;
+        var external = repo.Upsert("development", "backlog_item", "Ext", null, """{ "key": "MEMP-701", "status": "ready" }""", null, "ext", "me").Id;
+        repo.Link(external, older, "references"); // an external note points at the older duplicate
+
+        var dry = DuplicateMerge.Run(factory, "development", apply: false);
+        Assert.Equal(1, dry.Groups);
+        Assert.Equal(1, dry.Superseded);
+        Assert.False(dry.Applied);
+
+        Assert.True(DuplicateMerge.Run(factory, "development", apply: true).Applied);
+
+        Assert.Equal("superseded", repo.Get(older)!.Status); // older copy retired
+        Assert.Equal("active", repo.Get(newer)!.Status);     // newest kept as canonical
+        var links = repo.Links(external);
+        Assert.Contains(links, link => link.NoteId == newer && link.Rel == "references");      // re-pointed to canonical
+        Assert.DoesNotContain(links, link => link.NoteId == older && link.Rel == "references");
+    }
+
+    [Fact]
+    public void DuplicateMerge_reports_no_groups_when_content_differs()
+    {
+        using var temp = new TempDatabase();
+        var (repo, factory) = NewRepo(temp);
+        repo.Upsert("development", "backlog_item", "A", "body one", """{ "key": "MEMP-710", "status": "ready" }""", null, "a", "me");
+        repo.Upsert("development", "backlog_item", "B", "body two", """{ "key": "MEMP-711", "status": "ready" }""", null, "b", "me");
+
+        var report = DuplicateMerge.Run(factory, "development", apply: true);
+
+        Assert.Equal(0, report.Groups);
+        Assert.Equal(0, report.Superseded);
+        Assert.False(report.Applied);
+    }
+
+    [Fact]
     public void ScopedPurge_refuses_an_unscoped_purge()
     {
         using var temp = new TempDatabase();
