@@ -60,6 +60,13 @@ public sealed class SkillTools
         [Description("Prefer this project's override of the key (falls back to the general skill)")] string? project = null)
         => _authz.CanRead(domain) ? _skills.Get(domain, key, project) : null;
 
+    /// <summary>Proposes how to consolidate a domain's redundant/duplicate skills (read-only), if in scope.</summary>
+    [McpServerTool(Name = "skill_consolidate_plan", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("Read-only consolidation plan for a domain's skills: flags redundant project overrides (a project skill identical to the domain-general one it shadows) and duplicate skills (identical bodies under different keys), each with a suggested action (delete / merge / noop) and the related key. Nothing is changed — apply the suggestions yourself via skill_upsert. Empty when nothing is redundant.")]
+    public SkillConsolidationPlan? SkillConsolidatePlan(
+        [Description("Namespace, e.g. memory-mcp")] string domain)
+        => _authz.CanRead(domain) ? _skills.ConsolidationPlan(domain) : null;
+
     private static T Translate<T>(Func<T> action)
     {
         try

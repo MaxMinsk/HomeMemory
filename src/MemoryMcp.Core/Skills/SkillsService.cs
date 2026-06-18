@@ -70,6 +70,56 @@ public sealed class SkillsService
         return general is null ? null : ToSkill(general);
     }
 
+    /// <summary>
+    /// Builds a consolidation plan for a domain's skills (MEMP-036): redundant project overrides (a project skill
+    /// whose body is identical to the domain-general one it shadows) and duplicate skills (identical bodies under
+    /// different keys within the same scope). Read-only — it only proposes actions.
+    /// </summary>
+    /// <param name="domain">The domain to analyze.</param>
+    public SkillConsolidationPlan ConsolidationPlan(string domain)
+    {
+        var skills = _notes.List(domain, SkillType).Select(ToSkill).Where(skill => skill.Body is not null).ToList();
+        var items = new List<SkillConsolidationItem>();
+
+        // Redundant project overrides: a project-scoped skill with the same body as the same-key general skill.
+        var generalByKey = skills.Where(skill => skill.Project is null)
+            .ToDictionary(skill => skill.Key, skill => skill, StringComparer.Ordinal);
+        foreach (var skill in skills.Where(skill => skill.Project is not null))
+        {
+            if (generalByKey.TryGetValue(skill.Key, out var general) && SameBody(skill.Body, general.Body))
+            {
+                items.Add(new SkillConsolidationItem(skill.Key, skill.Project, "delete",
+                    "Identical to the domain-general skill it overrides — the override is redundant.", skill.Key));
+            }
+        }
+
+        // Duplicate bodies under different keys within the same scope (project), keep the first key, merge the rest.
+        foreach (var scope in skills.GroupBy(skill => skill.Project, StringComparer.Ordinal))
+        {
+            foreach (var sameBody in scope.GroupBy(skill => Normalize(skill.Body), StringComparer.Ordinal))
+            {
+                var ordered = sameBody.OrderBy(skill => skill.Key, StringComparer.Ordinal).ToList();
+                if (ordered.Count < 2)
+                {
+                    continue;
+                }
+
+                var canonical = ordered[0].Key;
+                foreach (var duplicate in ordered.Skip(1))
+                {
+                    items.Add(new SkillConsolidationItem(duplicate.Key, duplicate.Project, "merge",
+                        $"Identical body to skill '{canonical}' — consolidate them.", canonical));
+                }
+            }
+        }
+
+        return new SkillConsolidationPlan(domain, items);
+    }
+
+    private static bool SameBody(string? a, string? b) => string.Equals(Normalize(a), Normalize(b), StringComparison.Ordinal);
+
+    private static string Normalize(string? body) => (body ?? string.Empty).Trim();
+
     private static string Qualify(string project, string key) => $"{project}::{key}";
 
     // From all variants of one logical key, choose the project-specific one if asked and present, else the general one.
