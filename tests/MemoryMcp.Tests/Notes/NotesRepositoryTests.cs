@@ -280,6 +280,18 @@ public class NotesRepositoryTests
     }
 
     [Fact]
+    public void Upsert_sets_project_from_payload_even_when_the_schema_forbids_extra_fields()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        // fact@1 has additionalProperties:false and no 'project' field; payload.project must STILL set the axis (MEMP-154).
+        var id = repo.Upsert("development", "fact", "F", null,
+            """{ "statement": "the n150 box has a coral tpu", "project": "ha-personal-agent" }""", null, "fact-proj", "me").Id;
+
+        Assert.Equal("ha-personal-agent", repo.Get(id)!.Project); // envelope project lifted from payload despite the strict schema
+    }
+
+    [Fact]
     public void Upsert_derives_envelope_project_from_payload_project()
     {
         using var temp = new TempDatabase();

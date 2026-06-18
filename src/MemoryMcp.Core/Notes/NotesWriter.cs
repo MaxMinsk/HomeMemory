@@ -57,7 +57,7 @@ public sealed class NotesWriter
         // its project in the typed payload (e.g. backlog_item) still gets the envelope axis set.
         project = Identifiers.NormalizeOptional(project ?? PayloadProject(payloadJson));
 
-        var validation = _validator.Validate(type, payloadJson ?? "{}");
+        var validation = _validator.Validate(type, PayloadForValidation(payloadJson));
         if (!validation.IsValid)
         {
             throw new NoteValidationException(validation.Errors);
@@ -121,7 +121,7 @@ public sealed class NotesWriter
         type = Identifiers.Normalize(type);
         tagsJson = Identifiers.NormalizeTags(tagsJson);
 
-        var validation = _validator.Validate(type, payloadJson ?? "{}");
+        var validation = _validator.Validate(type, PayloadForValidation(payloadJson));
         if (!validation.IsValid)
         {
             throw new NoteValidationException(validation.Errors);
@@ -131,9 +131,10 @@ public sealed class NotesWriter
         var nowUtc = NowUtc();
         var specs = links ?? Array.Empty<AssembleLink>();
 
+        var project = Identifiers.NormalizeOptional(PayloadProject(payloadJson)); // lift the project axis from payload (MEMP-154)
         using var connection = _connectionFactory.Create();
         using var transaction = connection.BeginTransaction();
-        var (id, created) = PersistNote(connection, transaction, domain, type, title, body, payloadJson, tagsJson, dedupKey, sourceAgent, schemaVer, nowUtc);
+        var (id, created) = PersistNote(connection, transaction, domain, type, title, body, payloadJson, tagsJson, dedupKey, sourceAgent, schemaVer, nowUtc, project);
 
         foreach (var link in specs)
         {
@@ -606,6 +607,32 @@ public sealed class NotesWriter
 
     private static void AddNullable(SqliteCommand command, string name, string? value) =>
         command.Parameters.AddWithValue(name, (object?)value ?? DBNull.Value);
+
+    // Payload to validate against the type schema, with a top-level "project" lifted out (MEMP-154): project is an
+    // ENVELOPE axis, so any type may carry payload.project to set it — even types whose schema forbids extra fields
+    // (e.g. reference). The original payload is still stored as-is; only the schema check sees the stripped copy.
+    private static string PayloadForValidation(string? payloadJson)
+    {
+        if (string.IsNullOrWhiteSpace(payloadJson))
+        {
+            return "{}";
+        }
+
+        try
+        {
+            if (JsonNode.Parse(payloadJson) is JsonObject obj && obj.ContainsKey("project"))
+            {
+                obj.Remove("project");
+                return obj.ToJsonString();
+            }
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            // fall through: let the validator surface the malformed-JSON error
+        }
+
+        return payloadJson;
+    }
 
     // Reads a string "project" from the typed payload, if present (used to seed the envelope project axis).
     private static string? PayloadProject(string? payloadJson)
