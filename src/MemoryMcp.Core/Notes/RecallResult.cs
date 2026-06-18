@@ -18,4 +18,9 @@ public sealed record RecallNeighbor(string Id, string? Title, string Type, strin
 /// <param name="Query">The query that produced the recall (may be null for structured-only recall).</param>
 /// <param name="Hits">The primary matches (with snippet/payload), scope-restricted.</param>
 /// <param name="Neighbors">Linked neighbor notes of the hits (deduped, scope-restricted).</param>
-public sealed record RecallResult(string? Query, IReadOnlyList<SearchResult> Hits, IReadOnlyList<RecallNeighbor> Neighbors);
+/// <param name="BudgetChars">The snippet-char budget requested, or null when paging by row count (MEMP-176).</param>
+/// <param name="UsedChars">Sum of the included hits' snippet chars, when budgeted (else null).</param>
+/// <param name="DroppedCount">How many ranked hits the budget left out, when budgeted (else null).</param>
+public sealed record RecallResult(
+    string? Query, IReadOnlyList<SearchResult> Hits, IReadOnlyList<RecallNeighbor> Neighbors,
+    int? BudgetChars = null, int? UsedChars = null, int? DroppedCount = null);

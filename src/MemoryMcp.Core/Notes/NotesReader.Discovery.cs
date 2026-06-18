@@ -135,12 +135,17 @@ public sealed partial class NotesReader
     /// <param name="restrictToDomains">Auth scope; restricts both hits and neighbors.</param>
     /// <param name="includeLinks">When true, include one-hop linked neighbors of the hits.</param>
     /// <param name="maxHops">Graph expansion depth; currently one hop (values &gt; 1 behave as 1).</param>
+    /// <param name="budgetChars">When set, pack the highest-ranked hits whose snippets fit this char budget instead of taking a fixed count (MEMP-176).</param>
+    /// <param name="explain">When true, each hit carries its hybrid <see cref="ScoreBreakdown"/> (MEMP-177).</param>
     public RecallResult Recall(
         string? query, string? domain, int limit, IReadOnlyCollection<string>? restrictToDomains,
-        bool includeLinks = true, int maxHops = 1)
+        bool includeLinks = true, int maxHops = 1, int? budgetChars = null, bool explain = false)
     {
-        var page = Search(query, domain, null, null, "active", limit, 0, restrictToDomains, null, includePayload: true);
-        var hits = page.Items;
+        // Recall ranks for usefulness, not lexical purity: hybrid relevance is the default here (MEMP-174). When a
+        // budget is set, fetch a fuller page so packing has ranked candidates to choose from.
+        var fetch = budgetChars is int ? Math.Clamp(limit * 4, limit, MaxLimit) : limit;
+        var page = Search(query, domain, null, null, "active", fetch, 0, restrictToDomains, null, includePayload: true, rank: "hybrid", explain: explain);
+        var (hits, budget, used, dropped) = PackToBudget(page.Items, limit, budgetChars);
 
         var neighbors = new List<RecallNeighbor>();
         if (includeLinks && maxHops >= 1 && hits.Count > 0)
@@ -165,7 +170,48 @@ public sealed partial class NotesReader
             }
         }
 
-        return new RecallResult(query, hits, neighbors);
+        return new RecallResult(query, hits, neighbors, budget, used, dropped);
+    }
+
+    // Budget packing (MEMP-176): without a budget, just take the top `limit`. With one, walk the ranked hits and
+    // include each while its snippet fits the remaining char budget, trimming the last snippet to fill the final
+    // slot; report how many chars were used and how many ranked hits were left out.
+    private static (IReadOnlyList<SearchResult> Hits, int? Budget, int? Used, int? Dropped) PackToBudget(
+        IReadOnlyList<SearchResult> ranked, int limit, int? budgetChars)
+    {
+        if (budgetChars is not int budget)
+        {
+            var top = ranked.Count > limit ? ranked.Take(limit).ToList() : ranked;
+            return (top, null, null, null);
+        }
+
+        var packed = new List<SearchResult>();
+        var used = 0;
+        foreach (var hit in ranked)
+        {
+            if (packed.Count >= limit || used >= budget)
+            {
+                break;
+            }
+
+            var snippet = hit.Snippet ?? hit.Title ?? string.Empty;
+            var remaining = budget - used;
+            if (snippet.Length <= remaining)
+            {
+                packed.Add(hit);
+                used += snippet.Length;
+            }
+            else
+            {
+                // Trim the snippet to fill the final slot, then stop (the budget is spent).
+                var trimmed = hit.Snippet is null ? hit : hit with { Snippet = snippet[..remaining] };
+                packed.Add(trimmed);
+                used = budget;
+                break;
+            }
+        }
+
+        return (packed, budget, used, ranked.Count - packed.Count);
     }
 
     /// <summary>
@@ -222,9 +268,15 @@ public sealed partial class NotesReader
         return results;
     }
 
+    private const double RelatedTagWeight = 100d;  // each shared tag dominates a single text/link signal
+    private const double RelatedTextWeight = 10d;
+    private const double RelatedLinkWeight = 10d;
+
     /// <summary>
-    /// Returns notes related to <paramref name="id"/> by shared tags (most overlap first), scope-restricted.
-    /// A linking/dedup suggestion — it never creates links. Empty if the note has no tags.
+    /// Returns notes related to <paramref name="id"/> (a linking/dedup suggestion — it never creates links),
+    /// blending three signals (MEMP-178): shared tags (strongest), lexical similarity of the source's title/body,
+    /// and direct links. Each candidate reports which signal(s) surfaced it. Scope-restricted; tag overlap still
+    /// dominates the order, so a heavily-shared-tag note ranks above a merely text-similar one.
     /// </summary>
     /// <param name="id">The source note id.</param>
     /// <param name="limit">Max candidates (clamped to [1, 100]).</param>
@@ -232,36 +284,139 @@ public sealed partial class NotesReader
     public IReadOnlyList<RelatedNote> Related(string id, int limit, IReadOnlyCollection<string>? restrictToDomains)
     {
         var source = Get(id);
-        var tags = ParseTags(source?.TagsJson);
-        if (tags.Count == 0)
+        if (source is null)
         {
             return Array.Empty<RelatedNote>();
         }
 
+        var candidates = new Dictionary<string, RelatedAccumulator>(StringComparer.Ordinal);
+
+        var tags = ParseTags(source.TagsJson);
+        if (tags.Count > 0)
+        {
+            foreach (var (cid, title, type, domain, shared) in RelatedByTags(id, tags, restrictToDomains))
+            {
+                var acc = GetAccumulator(candidates, cid, title, type, domain);
+                acc.Score += shared.Count * RelatedTagWeight;
+                acc.SharedTags = shared;
+                acc.Reasons.Add("tags");
+            }
+        }
+
+        var probe = !string.IsNullOrWhiteSpace(source.Title) ? source.Title! : FirstWords(source.Body, 12);
+        foreach (var (cid, title, type, domain) in RelatedByText(probe, id, restrictToDomains))
+        {
+            var acc = GetAccumulator(candidates, cid, title, type, domain);
+            acc.Score += RelatedTextWeight;
+            acc.Reasons.Add("text");
+        }
+
+        foreach (var link in Links(id))
+        {
+            if (restrictToDomains is not null && !restrictToDomains.Contains(link.Domain))
+            {
+                continue;
+            }
+
+            var acc = GetAccumulator(candidates, link.NoteId, link.Title, link.Type, link.Domain);
+            acc.Score += RelatedLinkWeight;
+            acc.Reasons.Add("link");
+        }
+
+        candidates.Remove(id); // never relate a note to itself (e.g. reachable via its own tags)
+
+        return candidates.Values
+            .OrderByDescending(candidate => candidate.Score).ThenBy(candidate => candidate.Id, StringComparer.Ordinal)
+            .Take(Math.Clamp(limit, 1, 100))
+            .Select(candidate => new RelatedNote(candidate.Id, candidate.Title, candidate.Type, candidate.Domain,
+                candidate.SharedTags, OrderReasons(candidate.Reasons)))
+            .ToList();
+    }
+
+    // Active notes (excluding the source) sharing any of the given tags, with the concrete tags each shares.
+    private IEnumerable<(string Id, string? Title, string Type, string Domain, IReadOnlyList<string> Shared)> RelatedByTags(
+        string id, IReadOnlyList<string> tags, IReadOnlyCollection<string>? restrictToDomains)
+    {
         using var connection = _connectionFactory.Create();
         using var command = connection.CreateCommand();
         var filters = new List<string> { "n.deleted = 0", "n.status = 'active'", "n.id <> $id" };
         command.Parameters.AddWithValue("$id", id);
         filters.Add(InClause(command, "je.value", "$tag", tags));
         AppendScopeIn(command, filters, "n.domain", restrictToDomains);
-
         command.CommandText =
             "SELECT n.id, n.title, n.type, n.domain, group_concat(je.value) AS shared " +
             "FROM notes n, json_each(n.tags_json) je " +
-            $"WHERE {string.Join(" AND ", filters)} " +
-            "GROUP BY n.id, n.title, n.type, n.domain ORDER BY count(*) DESC, n.updated_utc DESC LIMIT $limit;";
-        command.Parameters.AddWithValue("$limit", Math.Clamp(limit, 1, 100));
+            $"WHERE {string.Join(" AND ", filters)} GROUP BY n.id, n.title, n.type, n.domain;";
 
-        var related = new List<RelatedNote>();
+        var results = new List<(string, string?, string, string, IReadOnlyList<string>)>();
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
             var shared = reader.GetString(4).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            related.Add(new RelatedNote(reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1),
+            results.Add((reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1),
                 reader.GetString(2), reader.GetString(3), shared));
         }
 
-        return related;
+        return results;
+    }
+
+    // Active notes (excluding the source, any type) lexically similar to the probe (OR-FTS, BM25 order). Empty probe => none.
+    private IEnumerable<(string Id, string? Title, string Type, string Domain)> RelatedByText(
+        string probe, string excludeId, IReadOnlyCollection<string>? restrictToDomains)
+    {
+        var tokens = SnippetBuilder.Tokenize(probe);
+        if (tokens.Count == 0)
+        {
+            return Array.Empty<(string, string?, string, string)>();
+        }
+
+        using var connection = _connectionFactory.Create();
+        using var command = connection.CreateCommand();
+        var filters = new List<string> { "notes_fts MATCH $q", "n.deleted = 0", "n.status = 'active'", "n.id <> $id" };
+        command.Parameters.AddWithValue("$q", string.Join(" OR ", tokens.Select(token => $"\"{token}\"*")));
+        command.Parameters.AddWithValue("$id", excludeId);
+        AppendScopeIn(command, filters, "n.domain", restrictToDomains);
+        command.CommandText =
+            "SELECT n.id, n.title, n.type, n.domain FROM notes_fts JOIN notes n ON n.rowid = notes_fts.rowid " +
+            $"WHERE {string.Join(" AND ", filters)} ORDER BY bm25(notes_fts) LIMIT 10;";
+
+        var results = new List<(string, string?, string, string)>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            results.Add((reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1),
+                reader.GetString(2), reader.GetString(3)));
+        }
+
+        return results;
+    }
+
+    private static RelatedAccumulator GetAccumulator(
+        IDictionary<string, RelatedAccumulator> candidates, string id, string? title, string type, string domain)
+    {
+        if (!candidates.TryGetValue(id, out var accumulator))
+        {
+            accumulator = new RelatedAccumulator(id, title, type, domain);
+            candidates[id] = accumulator;
+        }
+
+        return accumulator;
+    }
+
+    // Reasons in a stable strength order (tags strongest), only those that fired.
+    private static IReadOnlyList<string> OrderReasons(ISet<string> reasons) =>
+        new[] { "tags", "text", "link" }.Where(reasons.Contains).ToArray();
+
+    // Mutable per-candidate tally while the three related-note signals are merged.
+    private sealed class RelatedAccumulator(string id, string? title, string type, string domain)
+    {
+        public string Id { get; } = id;
+        public string? Title { get; } = title;
+        public string Type { get; } = type;
+        public string Domain { get; } = domain;
+        public double Score { get; set; }
+        public IReadOnlyList<string> SharedTags { get; set; } = Array.Empty<string>();
+        public ISet<string> Reasons { get; } = new HashSet<string>(StringComparer.Ordinal);
     }
 
     private static List<string> ParseTags(string? tagsJson)

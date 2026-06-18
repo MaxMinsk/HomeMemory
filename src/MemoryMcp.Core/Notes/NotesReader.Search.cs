@@ -24,11 +24,14 @@ public sealed partial class NotesReader
     /// <param name="includePayload">When true, each hit also carries its envelope status and payload JSON (still no body), so callers can render a board without a follow-up get per row.</param>
     /// <param name="includeLinks">When true, each hit also carries its links (both directions), so callers can render a graph without a notes_links call per row.</param>
     /// <param name="sort">Optional order-by spec (e.g. <c>payload.spice_level desc</c>); overrides relevance/recency. See <see cref="Query.SortOrder"/>.</param>
+    /// <param name="rank">Relevance mode for text queries: <c>lexical</c> (default, pure BM25) or <c>hybrid</c> (RRF blend of relevance + recency + link-degree + importance, MEMP-174). Ignored when an explicit <paramref name="sort"/> is given or the query is structured-only.</param>
+    /// <param name="explain">When true (hybrid only), each hit carries its <see cref="ScoreBreakdown"/> (MEMP-177).</param>
     public SearchPage Search(
         string? query = null, string? domain = null, string? type = null,
         IReadOnlyCollection<string>? tags = null, string status = "active",
         int limit = DefaultLimit, int offset = 0, IReadOnlyCollection<string>? restrictToDomains = null,
-        string? filter = null, bool includePayload = false, bool includeLinks = false, string? sort = null)
+        string? filter = null, bool includePayload = false, bool includeLinks = false, string? sort = null,
+        string? rank = null, bool explain = false)
     {
         domain = Identifiers.NormalizeOptional(domain);
         type = Identifiers.NormalizeOptional(type);
@@ -46,10 +49,15 @@ public sealed partial class NotesReader
         // With no explicit sort, a note whose dedup_key IS the query ranks first (MEMP-159): searching a key
         // (e.g. "HPA-008") should surface that note above ones that merely mention it.
         var exactKey = sortBody is null && !string.IsNullOrWhiteSpace(positives) ? positives.Trim() : null;
+        // Hybrid relevance only applies to a text query with no explicit sort (MEMP-174); otherwise the existing
+        // lexical/structured path runs unchanged.
+        var hybrid = useFts && sortBody is null && string.Equals(rank, "hybrid", StringComparison.OrdinalIgnoreCase);
 
         using var connection = _connectionFactory.Create();
         var total = Count(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens);
-        var items = Page(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload, sortBody, exactKey, phrase, negTokens);
+        var items = hybrid
+            ? HybridPage(connection, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload, exactKey, phrase, negTokens, explain)
+            : Page(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload, sortBody, exactKey, phrase, negTokens);
         if (includeLinks)
         {
             items = items.Select(item => item with { Links = Links(item.Id) }).ToList();
@@ -118,6 +126,75 @@ public sealed partial class NotesReader
         }
 
         return results;
+    }
+
+    // Hybrid relevance (MEMP-174): pull a bounded BM25 candidate pool (with link-degree + payload), re-rank it by
+    // RRF over relevance/recency/link-degree/importance in C#, then page within the re-ranked pool. exact-key matches
+    // still float to the top. Deep paging past the pool returns nothing (recall uses small limits) — the pool caps cost.
+    private static IReadOnlyList<SearchResult> HybridPage(
+        SqliteConnection connection, IReadOnlyList<string> tokens,
+        string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
+        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, int limit, int offset,
+        bool includePayload, string? exactKey, bool phrase, IReadOnlyList<string> negTokens, bool explain)
+    {
+        using var command = connection.CreateCommand();
+        var where = ApplyFilters(command, true, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens);
+        command.Parameters.AddWithValue("$pool", RankingWeights.PoolSize);
+        command.CommandText =
+            "SELECT n.id, n.title, n.type, n.domain, n.body, bm25(notes_fts) AS score, n.status, n.payload_json, " +
+            "n.tags_json, n.dedup_key, n.updated_utc, n.project, " +
+            "(SELECT count(*) FROM note_links l WHERE l.from_id = n.id OR l.to_id = n.id) AS degree " +
+            $"FROM notes_fts JOIN notes n ON n.rowid = notes_fts.rowid WHERE {where} " +
+            "ORDER BY bm25(notes_fts) LIMIT $pool;";
+
+        var rows = new List<RankRow>();
+        using (var reader = command.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                var title = reader.IsDBNull(1) ? null : reader.GetString(1);
+                var body = reader.IsDBNull(4) ? null : reader.GetString(4);
+                var bm25 = reader.GetDouble(5);
+                var payloadJson = reader.IsDBNull(7) ? null : reader.GetString(7);
+                var tagsJson = reader.IsDBNull(8) ? null : reader.GetString(8);
+                var dedupKey = reader.IsDBNull(9) ? null : reader.GetString(9);
+                var updatedUtc = reader.GetString(10);
+                var degree = reader.GetInt64(12);
+                var result = new SearchResult(
+                    reader.GetString(0), title, SnippetBuilder.Build(title, body, tokens),
+                    reader.GetString(2), reader.GetString(3), bm25,
+                    includePayload ? reader.GetString(6) : null,
+                    includePayload ? payloadJson : null,
+                    includePayload ? tagsJson : null,
+                    includePayload ? dedupKey : null,
+                    includePayload ? updatedUtc : null,
+                    reader.IsDBNull(11) ? null : reader.GetString(11));
+                rows.Add(new RankRow(
+                    result, ExactKeyTier(dedupKey, title, exactKey), -bm25,
+                    HybridRanker.RecencyGoodness(updatedUtc), degree, HybridRanker.ImportanceGoodness(payloadJson, tagsJson)));
+            }
+        }
+
+        var fused = HybridRanker.Fuse(rows, RankingWeights.Default);
+        return fused.Skip(offset).Take(limit)
+            .Select(item => explain ? item.Result with { Explain = item.Breakdown } : item.Result)
+            .ToList();
+    }
+
+    // Exact-key tier used to keep a searched key/title on top of any ranking (MEMP-159/160).
+    private static int ExactKeyTier(string? dedupKey, string? title, string? exactKey)
+    {
+        if (exactKey is null)
+        {
+            return 2;
+        }
+
+        if (dedupKey is not null && string.Equals(dedupKey, exactKey, StringComparison.OrdinalIgnoreCase))
+        {
+            return 0;
+        }
+
+        return title is not null && string.Equals(title.Trim(), exactKey, StringComparison.OrdinalIgnoreCase) ? 1 : 2;
     }
 
     // Splits a query into its positive text and the '-term' exclusions (MEMP-169). A lone '-' is kept as text.

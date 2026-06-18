@@ -32,7 +32,8 @@ public sealed class ContextAssembler
     /// <param name="includeLinks">Include one-hop neighbors in the recall.</param>
     /// <param name="scope">The caller's request scope.</param>
     /// <param name="project">Optional project: its skills override the domain-general ones of the same key.</param>
-    public ContextBlock? Assemble(string query, string domain, int limit, bool includeLinks, RequestScope scope, string? project = null)
+    /// <param name="budgetChars">When set, pack recall hits to this snippet-char budget instead of a fixed count (MEMP-176).</param>
+    public ContextBlock? Assemble(string query, string domain, int limit, bool includeLinks, RequestScope scope, string? project = null, int? budgetChars = null)
     {
         var guard = new ScopeGuard(scope);
         if (!guard.IsAllowed(domain))
@@ -77,7 +78,7 @@ public sealed class ContextAssembler
             warnings.Add($"{stale} included rule(s) may be outdated (unverified past their window) — verify or deprecate them.");
         }
 
-        var recall = _notes.Recall(query, domain, limit, guard.RestrictionForSearch(domain), includeLinks, 1);
+        var recall = _notes.Recall(query, domain, limit, guard.RestrictionForSearch(domain), includeLinks, 1, budgetChars);
         return new ContextBlock(domain, ranked, dedupedSkills, recall, AdvisoryPolicy, warnings);
     }
 

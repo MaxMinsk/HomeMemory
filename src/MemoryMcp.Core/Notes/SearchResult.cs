@@ -14,7 +14,9 @@ namespace MemoryMcp.Core.Notes;
 /// <param name="UpdatedUtc">Last-update timestamp; populated only when the caller requests payload (else null).</param>
 /// <param name="Project">Project sub-axis within the domain (envelope), or null.</param>
 /// <param name="Links">The note's links (both directions); populated only when the caller requests includeLinks (else null).</param>
+/// <param name="Explain">Hybrid-ranking score breakdown; populated only when the caller requests explain on a hybrid recall/search (else null).</param>
 public sealed record SearchResult(
     string Id, string? Title, string? Snippet, string Type, string Domain, double Score,
     string? Status = null, string? PayloadJson = null, string? TagsJson = null,
-    string? DedupKey = null, string? UpdatedUtc = null, string? Project = null, IReadOnlyList<LinkView>? Links = null);
+    string? DedupKey = null, string? UpdatedUtc = null, string? Project = null, IReadOnlyList<LinkView>? Links = null,
+    ScoreBreakdown? Explain = null);

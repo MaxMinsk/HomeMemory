@@ -68,8 +68,8 @@ public sealed class NotesRepository
     /// <inheritdoc cref="NotesReader.Recall"/>
     public RecallResult Recall(
         string? query, string? domain, int limit, IReadOnlyCollection<string>? restrictToDomains,
-        bool includeLinks = true, int maxHops = 1)
-        => _reader.Recall(query, domain, limit, restrictToDomains, includeLinks, maxHops);
+        bool includeLinks = true, int maxHops = 1, int? budgetChars = null, bool explain = false)
+        => _reader.Recall(query, domain, limit, restrictToDomains, includeLinks, maxHops, budgetChars, explain);
 
     /// <inheritdoc cref="NotesReader.Related"/>
     public IReadOnlyList<RelatedNote> Related(string id, int limit, IReadOnlyCollection<string>? restrictToDomains)
@@ -142,6 +142,7 @@ public sealed class NotesRepository
         string? query = null, string? domain = null, string? type = null,
         IReadOnlyCollection<string>? tags = null, string status = "active",
         int limit = NotesReader.DefaultLimit, int offset = 0, IReadOnlyCollection<string>? restrictToDomains = null,
-        string? filter = null, bool includePayload = false, bool includeLinks = false, string? sort = null)
-        => _reader.Search(query, domain, type, tags, status, limit, offset, restrictToDomains, filter, includePayload, includeLinks, sort);
+        string? filter = null, bool includePayload = false, bool includeLinks = false, string? sort = null,
+        string? rank = null, bool explain = false)
+        => _reader.Search(query, domain, type, tags, status, limit, offset, restrictToDomains, filter, includePayload, includeLinks, sort, rank, explain);
 }

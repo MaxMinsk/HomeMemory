@@ -395,26 +395,61 @@ public class NotesReadMutateTests
     }
 
     [Fact]
-    public void Related_ranks_candidates_by_shared_tag_count()
+    public void Related_ranks_by_shared_tag_count_above_weaker_signals()
     {
         using var temp = new TempDatabase();
         var (repo, _) = NewRepo(temp);
+        // Seed defaults each title to its key, so every note is also faintly text-similar (shared key tokens).
         var a = Seed(repo, "MEMP-200", "ready", tags: """["topic:x", "topic:y"]""");
-        var b = Seed(repo, "MEMP-201", "ready", tags: """["topic:x", "topic:y"]""");   // 2 shared
-        var c = Seed(repo, "MEMP-202", "ready", tags: """["topic:x"]""");               // 1 shared
-        Seed(repo, "MEMP-203", "ready", tags: """["topic:z"]""");                       // 0 shared
+        var b = Seed(repo, "MEMP-201", "ready", tags: """["topic:x", "topic:y"]""");   // 2 shared tags
+        var c = Seed(repo, "MEMP-202", "ready", tags: """["topic:x"]""");               // 1 shared tag
+        var d = Seed(repo, "MEMP-203", "ready", tags: """["topic:z"]""");               // 0 shared tags
 
         var related = repo.Related(a, 10, restrictToDomains: null);
 
-        Assert.Equal(2, related.Count);          // self and the zero-overlap note excluded
-        Assert.Equal(b, related[0].Id);          // most shared tags first
+        Assert.Equal(3, related.Count);          // self excluded; d now surfaces by text similarity
+        Assert.Equal(b, related[0].Id);          // most shared tags first — tags dominate text
         Assert.Equal(c, related[1].Id);
+        Assert.Equal(d, related[2].Id);          // text-only, ranked last
         Assert.Equal(2, related[0].SharedTags.Count);
         Assert.Contains("topic:x", related[0].SharedTags);
+        Assert.Contains("tags", related[0].Reasons);
+        Assert.Equal(new[] { "text" }, related[2].Reasons); // d surfaced purely by lexical similarity
+        Assert.Empty(related[2].SharedTags);
     }
 
     [Fact]
-    public void Related_is_empty_when_the_note_has_no_tags()
+    public void Related_surfaces_lexically_similar_untagged_note()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        var a = Seed(repo, "MEMP-200", "ready", title: "Hybrid ranking design", tags: """["topic:rank"]""");
+        var b = Seed(repo, "MEMP-201", "ready", title: "Hybrid ranking rollout");  // no tags, no link
+        Seed(repo, "MEMP-202", "ready", title: "Unrelated kitchen recipe");
+
+        var related = repo.Related(a, 10, restrictToDomains: null);
+
+        var hit = Assert.Single(related, candidate => candidate.Id == b);
+        Assert.Equal(new[] { "text" }, hit.Reasons);
+        Assert.Empty(hit.SharedTags);
+        Assert.DoesNotContain(related, candidate => candidate.Title == "Unrelated kitchen recipe");
+    }
+
+    [Fact]
+    public void Related_surfaces_linked_note_with_no_other_overlap()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        var a = Seed(repo, "MEMP-200", "ready", title: "Alpha");
+        var b = Seed(repo, "MEMP-201", "ready", title: "Beta");   // no shared tags, no shared words
+        repo.Link(a, b, "depends_on");
+
+        var hit = Assert.Single(repo.Related(a, 10, restrictToDomains: null), candidate => candidate.Id == b);
+        Assert.Contains("link", hit.Reasons);
+    }
+
+    [Fact]
+    public void Related_is_empty_when_nothing_overlaps()
     {
         using var temp = new TempDatabase();
         var (repo, _) = NewRepo(temp);
