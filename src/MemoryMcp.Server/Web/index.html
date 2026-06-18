@@ -23,6 +23,8 @@
   .item:hover { background:#1d2230; }
   .item .t { font-weight:600; }
   .item .m { color:var(--muted); font-size:12px; }
+  .item .snip { color:var(--muted); font-size:12px; margin:2px 0; line-height:1.4; }
+  mark { background:#4a4500; color:#ffe9a8; border-radius:2px; padding:0 1px; }
   .badge { display:inline-block; background:#222838; color:var(--muted); border-radius:4px; padding:0 6px; font-size:11px; margin-right:4px; }
   .grouphdr { padding:6px 12px; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); background:#13161d; border-bottom:1px solid var(--line); position:sticky; top:0; }
   .finding { border-left:3px solid var(--line); }
@@ -92,6 +94,12 @@ async function api(path) {
   return r.json();
 }
 function esc(s){ return (s==null?'':String(s)).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// Render a search snippet: escape, then turn the [match] markers from the server into <mark> highlights (MEMP-162).
+function snip(s){ return esc(s).replace(/\[([^\]]*)\]/g, '<mark>$1</mark>'); }
+// Relative "updated" time for list rows (MEMP-163); browser-side, so Date is fine.
+function rel(ts){ if(!ts) return ''; const s=(Date.now()-new Date(ts).getTime())/1000;
+  if(s<60)return 'just now'; if(s<3600)return Math.floor(s/60)+'m ago'; if(s<86400)return Math.floor(s/3600)+'h ago';
+  if(s<2592000)return Math.floor(s/86400)+'d ago'; return new Date(ts).toISOString().slice(0,10); }
 // Minimal, self-contained Markdown -> HTML for note bodies. Input is HTML-escaped FIRST (XSS-safe), then a small
 // block/inline subset is applied: fenced code, headings, tables, lists, blockquote, hr, paragraphs; inline code,
 // bold, italic, and http(s)/relative links only. Good enough for our own note bodies; no external dependency.
@@ -166,7 +174,8 @@ async function loadStats() {
 function itemHtml(it){
   let tags = []; try { tags = it.tagsJson ? JSON.parse(it.tagsJson) : []; } catch {}
   return `<div class="item" onclick="open_('${it.id}')"><div class="t">${esc(it.title)||'<i>untitled</i>'}</div>` +
-    `<div class="m"><span class="badge">${esc(it.type)}</span><span class="badge">${esc(it.domain)}</span>${it.project?`<span class="badge">${esc(it.project)}</span>`:''}${esc(it.status||'')}</div>` +
+    (it.snippet ? `<div class="snip">${snip(it.snippet)}</div>` : '') +
+    `<div class="m"><span class="badge">${esc(it.type)}</span><span class="badge">${esc(it.domain)}</span>${it.project?`<span class="badge">${esc(it.project)}</span>`:''}${esc(it.status||'')}${it.updatedUtc?` · <span class="k">${esc(rel(it.updatedUtc))}</span>`:''}</div>` +
     (tags.length ? `<div>${tags.map(t=>`<span class="tag" data-tag="${esc(t)}" title="filter by this tag">${esc(t)}</span>`).join('')}</div>` : '') + `</div>`;
 }
 
