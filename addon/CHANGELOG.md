@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.46.0
+
+Sprint 39 — tech-debt + curation (MEMP-103, MEMP-083). Internal/maintenance release — no behavior or API change.
+
+- **Code maintainability (MEMP-103):** the two largest classes were split into partial classes by concern, with
+  no behavior change — `NotesReader` (963 lines) → core reads + `NotesReader.Search` + `NotesReader.Discovery`;
+  `MemoryTools` (588) → constructor/helpers + `MemoryTools.Reads` (read tools) + `MemoryTools.Writes` (mutating
+  tools). Easier to navigate; the tool surface and runtime are identical.
+- **Tagging audit (MEMP-083):** audited tag coverage across domains — the corpus is already well-tagged (kitchen
+  recipes curated by the kitchen agent; development knowledge notes and backlog items tagged), so no mass re-tag
+  was applied. No code change.
+
+(Owner: this release has no functional change — updating the add-on is optional, only to keep `serverVersion` current.)
+
 ## 0.45.0
 
 Sprint 36 — consolidation & scoping hygiene (MEMP-027, MEMP-036, MEMP-117).
