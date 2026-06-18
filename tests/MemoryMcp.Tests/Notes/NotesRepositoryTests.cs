@@ -529,6 +529,47 @@ public class NotesRepositoryTests
     }
 
     [Fact]
+    public void Search_filter_supports_numeric_comparison_operators()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        repo.Upsert("development", "memory_rule", "low", null, """{ "description": "a", "priority": 2 }""", null, "c-low", "me");
+        repo.Upsert("development", "memory_rule", "mid", null, """{ "description": "b", "priority": 5 }""", null, "c-mid", "me");
+        repo.Upsert("development", "memory_rule", "top", null, """{ "description": "c", "priority": 10 }""", null, "c-top", "me");
+
+        var page = repo.Search(domain: "development", type: "memory_rule", filter: "payload.priority >= 5");
+
+        Assert.Equal(2, page.Total); // 5 and 10 (numeric, not lexical where '10' < '5')
+    }
+
+    [Fact]
+    public void TagFacets_counts_tags_scoped_to_a_domain()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        repo.Upsert("development", "backlog_item", "A", null, """{ "key": "MEMP-900", "status": "ready" }""", """["x","y"]""", "a", "me");
+        repo.Upsert("development", "backlog_item", "B", null, """{ "key": "MEMP-901", "status": "ready" }""", """["x"]""", "b", "me");
+        repo.Upsert("kitchen", "backlog_item", "K", null, """{ "key": "MEMP-902", "status": "ready" }""", """["x"]""", "k", "me");
+
+        var facets = repo.TagFacets("development", null);
+
+        Assert.Equal(2L, facets["x"]); // kitchen's 'x' is not counted
+        Assert.Equal(1L, facets["y"]);
+    }
+
+    [Fact]
+    public void Search_quoted_phrase_matches_adjacent_ordered_words_only()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        repo.Upsert("development", "backlog_item", "A", "the quick brown fox", """{ "key": "MEMP-900", "status": "ready" }""", null, "a", "me");
+        repo.Upsert("development", "backlog_item", "B", "brown then later quick", """{ "key": "MEMP-901", "status": "ready" }""", null, "b", "me");
+
+        Assert.Equal("A", Assert.Single(repo.Search(query: "\"quick brown\"", domain: "development").Items).Title); // phrase: adjacent + ordered
+        Assert.Equal(2, repo.Search(query: "quick brown", domain: "development").Total);                            // unquoted: independent tokens
+    }
+
+    [Fact]
     public void Search_rejects_an_unsortable_or_injected_field()
     {
         using var temp = new TempDatabase();

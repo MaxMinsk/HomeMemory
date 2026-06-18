@@ -22,7 +22,7 @@ public sealed partial class MemoryTools
         [Description("Envelope status filter; defaults to active")] string status = "active",
         [Description("Page size, 1-100 (default 20; larger values are clamped)")] int limit = 20,
         [Description("Results to skip for pagination (default 0). Use the returned total/hasMore to page.")] int offset = 0,
-        [Description("Optional filter DSL: field op value joined by AND/OR with parentheses. Fields: domain/type/status/title/... and payload.<x>. Ops: == != in, 'contains' (case-insensitive substring), and 'is null'/'is not null'. E.g. \"payload.sprint is null\" (general backlog), \"payload.subject contains 'STU-12'\", or \"payload.sprint == 'S1' AND payload.status in ('ready','next')\".")] string? filter = null,
+        [Description("Optional filter DSL: field op value joined by AND/OR with parentheses. Fields: domain/type/status/title/... and payload.<x>. Ops: == != &lt; &lt;= &gt; &gt;= in, 'contains' (case-insensitive substring), and 'is null'/'is not null'. E.g. \"payload.sprint is null\" (general backlog), \"payload.subject contains 'STU-12'\", or \"payload.sprint == 'S1' AND payload.status in ('ready','next')\".")] string? filter = null,
         [Description("When true, each hit also includes its envelope status and payload JSON (still no body), so you can render a board without a get per row.")] bool includePayload = false,
         [Description("When true, each hit also includes its links (both directions), so you can render a graph without a notes_links call per row.")] bool includeLinks = false,
         [Description("Order results by a field instead of relevance/recency: \"<field> asc|desc\" (default desc). Sortable: payload.<field> (numeric fields sort numerically), title, updated_utc, created_utc. NULLs last. Or sort=\"recency\" for type-aware recency decay — freshest-relative-to-its-type first, so ephemeral types (episode/journal) fade in days while durable ones (recipe/reference/skill) stay near the top. E.g. top 10 hottest: type=pepper, sort=\"payload.spice_level desc\", limit=10.")] string? sort = null)
@@ -70,6 +70,13 @@ public sealed partial class MemoryTools
         [Description("Type filter (optional)")] string? type = null,
         [Description("Page size (default 50, max 100)")] int limit = 50)
         => Translate(() => _notes.Changes(since, domain, type, limit, _authz.ReadRestriction(domain)));
+
+    /// <summary>Lists distinct tags with counts (facet discovery), scope-restricted.</summary>
+    [McpServerTool(Name = "notes_tags", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("List distinct tags with their counts (most-used first) for facet discovery, scope-restricted, optionally within one domain — to see the existing tag vocabulary before tagging or filtering by tag.")]
+    public IReadOnlyDictionary<string, long> NotesTags(
+        [Description("Domain filter (optional)")] string? domain = null)
+        => Translate(() => _notes.TagFacets(domain, _authz.ReadRestriction(domain)));
 
     /// <summary>Gets a note (envelope + payload + size metadata) by id, if it is in scope.</summary>
     [McpServerTool(Name = "notes_get", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]

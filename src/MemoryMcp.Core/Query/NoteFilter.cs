@@ -18,7 +18,7 @@ public sealed record CompiledFilter(string Sql, IReadOnlyList<FilterParameter> P
 /// Compiles a small, safe filter DSL into parameterized SQL over the <c>n</c> (notes) alias.
 /// Grammar: <c>expr := or; or := and (OR and)*; and := primary (AND primary)*;
 /// primary := '(' expr ')' | field op value; field := ident | payload.ident;
-/// op := == | != | in | contains | is [not] null; value := string | number; (in takes a parenthesized list,
+/// op := == | != | &lt; | &lt;= | &gt; | &gt;= | in | contains | is [not] null; value := string | number; (in takes a parenthesized list,
 /// contains takes a string and matches a case-insensitive substring)</c>.
 /// Values are always bound as parameters; field names are whitelisted (envelope) or validated
 /// (payload.&lt;key&gt;) — user input never reaches the SQL text directly.
@@ -51,7 +51,7 @@ public static class NoteFilter
         return new CompiledFilter(sql, parser.Parameters);
     }
 
-    private enum Kind { LParen, RParen, Comma, Eq, NotEq, And, Or, In, Is, Not, Null, Contains, Ident, Str, Num, End }
+    private enum Kind { LParen, RParen, Comma, Eq, NotEq, Lt, Le, Gt, Ge, And, Or, In, Is, Not, Null, Contains, Ident, Str, Num, End }
 
     private readonly record struct Token(Kind Kind, string Text);
 
@@ -63,24 +63,7 @@ public static class NoteFilter
         {
             var c = input[i];
             if (char.IsWhiteSpace(c)) { i++; continue; }
-            switch (c)
-            {
-                case '(': tokens.Add(new Token(Kind.LParen, "(")); i++; continue;
-                case ')': tokens.Add(new Token(Kind.RParen, ")")); i++; continue;
-                case ',': tokens.Add(new Token(Kind.Comma, ",")); i++; continue;
-                case '=':
-                    i += i + 1 < input.Length && input[i + 1] == '=' ? 2 : 1; // accept = or ==
-                    tokens.Add(new Token(Kind.Eq, "=="));
-                    continue;
-                case '!':
-                    if (i + 1 < input.Length && input[i + 1] == '=') { tokens.Add(new Token(Kind.NotEq, "!=")); i += 2; continue; }
-                    throw new FilterException("Invalid filter: expected '!=' after '!'.");
-                case '\'':
-                case '"':
-                    i = ReadString(input, i, tokens);
-                    continue;
-            }
-
+            if (TryPunctuation(input, ref i, tokens)) { continue; }
             if (char.IsDigit(c)) { i = ReadNumber(input, i, tokens); continue; }
             if (char.IsLetter(c) || c == '_') { i = ReadWord(input, i, tokens); continue; }
 
@@ -89,6 +72,27 @@ public static class NoteFilter
 
         tokens.Add(new Token(Kind.End, string.Empty));
         return tokens;
+    }
+
+    // Consumes one punctuation/operator token; returns false (leaving i unchanged) for non-punctuation.
+    private static bool TryPunctuation(string input, ref int i, List<Token> tokens)
+    {
+        var next = i + 1 < input.Length ? input[i + 1] : '\0';
+        switch (input[i])
+        {
+            case '(': tokens.Add(new Token(Kind.LParen, "(")); i++; return true;
+            case ')': tokens.Add(new Token(Kind.RParen, ")")); i++; return true;
+            case ',': tokens.Add(new Token(Kind.Comma, ",")); i++; return true;
+            case '=': i += next == '=' ? 2 : 1; tokens.Add(new Token(Kind.Eq, "==")); return true; // accept = or ==
+            case '!':
+                if (next == '=') { tokens.Add(new Token(Kind.NotEq, "!=")); i += 2; return true; }
+                throw new FilterException("Invalid filter: expected '!=' after '!'.");
+            case '<': tokens.Add(new Token(next == '=' ? Kind.Le : Kind.Lt, next == '=' ? "<=" : "<")); i += next == '=' ? 2 : 1; return true;
+            case '>': tokens.Add(new Token(next == '=' ? Kind.Ge : Kind.Gt, next == '=' ? ">=" : ">")); i += next == '=' ? 2 : 1; return true;
+            case '\'':
+            case '"': i = ReadString(input, i, tokens); return true;
+            default: return false;
+        }
     }
 
     private static int ReadNumber(string input, int start, List<Token> tokens)
@@ -207,6 +211,14 @@ public static class NoteFilter
                     return $"{column} = {AddParam(ParseScalar())}";
                 case Kind.NotEq:
                     return $"{column} <> {AddParam(ParseScalar())}";
+                case Kind.Lt:
+                    return $"{column} < {AddParam(ParseScalar())}";
+                case Kind.Le:
+                    return $"{column} <= {AddParam(ParseScalar())}";
+                case Kind.Gt:
+                    return $"{column} > {AddParam(ParseScalar())}";
+                case Kind.Ge:
+                    return $"{column} >= {AddParam(ParseScalar())}";
                 case Kind.In:
                     Expect(Kind.LParen);
                     var placeholders = new List<string> { AddParam(ParseScalar()) };
@@ -239,7 +251,7 @@ public static class NoteFilter
                         .Replace("%", "\\%", StringComparison.Ordinal).Replace("_", "\\_", StringComparison.Ordinal) + "%";
                     return $"{column} LIKE {AddParam(pattern)} ESCAPE '\\'";
                 default:
-                    throw new FilterException($"Invalid filter: expected an operator (== != in contains, is null), got '{op.Text}'.");
+                    throw new FilterException($"Invalid filter: expected an operator (== != < <= > >= in contains, is null), got '{op.Text}'.");
             }
         }
 

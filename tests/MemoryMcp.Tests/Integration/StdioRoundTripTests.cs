@@ -16,7 +16,7 @@ public class StdioRoundTripTests
         "notes_patch", "notes_links", "notes_assemble", "notes_recall", "notes_recent", "notes_related",
         "notes_graph", "notes_suggest_capture", "notes_get_by_key", "artifacts_find_text",
         "memory_capabilities", "schema_provenance", "domain_manifest", "memory_context", "skill_consolidate_plan",
-        "notes_changes",
+        "notes_changes", "notes_tags",
     };
 
     [Fact]

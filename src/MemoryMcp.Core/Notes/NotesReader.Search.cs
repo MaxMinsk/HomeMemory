@@ -42,10 +42,11 @@ public sealed partial class NotesReader
         // With no explicit sort, a note whose dedup_key IS the query ranks first (MEMP-159): searching a key
         // (e.g. "HPA-008") should surface that note above ones that merely mention it.
         var exactKey = sortBody is null && !string.IsNullOrWhiteSpace(query) ? query!.Trim() : null;
+        var phrase = useFts && IsQuotedPhrase(query); // a fully-quoted query is an exact phrase (MEMP-166)
 
         using var connection = _connectionFactory.Create();
-        var total = Count(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter);
-        var items = Page(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload, sortBody, exactKey);
+        var total = Count(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase);
+        var items = Page(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload, sortBody, exactKey, phrase);
         if (includeLinks)
         {
             items = items.Select(item => item with { Links = Links(item.Id) }).ToList();
@@ -57,10 +58,10 @@ public sealed partial class NotesReader
     private static int Count(
         SqliteConnection connection, bool useFts, IReadOnlyList<string> tokens,
         string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
-        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter)
+        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, bool phrase = false)
     {
         using var command = connection.CreateCommand();
-        var where = ApplyFilters(command, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter);
+        var where = ApplyFilters(command, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase);
         command.CommandText = useFts
             ? $"SELECT count(*) FROM notes_fts JOIN notes n ON n.rowid = notes_fts.rowid WHERE {where};"
             : $"SELECT count(*) FROM notes n WHERE {where};";
@@ -70,10 +71,10 @@ public sealed partial class NotesReader
     private static IReadOnlyList<SearchResult> Page(
         SqliteConnection connection, bool useFts, IReadOnlyList<string> tokens,
         string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
-        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, int limit, int offset, bool includePayload, string? sortBody = null, string? exactKey = null)
+        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, int limit, int offset, bool includePayload, string? sortBody = null, string? exactKey = null, bool phrase = false)
     {
         using var command = connection.CreateCommand();
-        var where = ApplyFilters(command, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter);
+        var where = ApplyFilters(command, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase);
         command.Parameters.AddWithValue("$limit", limit);
         command.Parameters.AddWithValue("$offset", offset);
         // envelope extras are always selected (cheap); they reach the caller only when includePayload is set.
@@ -116,25 +117,47 @@ public sealed partial class NotesReader
         return results;
     }
 
+    // True when the whole query is a single double-quoted segment (an exact-phrase request).
+    private static bool IsQuotedPhrase(string? query)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return false;
+        }
+
+        var q = query.Trim();
+        return q.Length >= 3 && q[0] == '"' && q[^1] == '"' && q.IndexOf('"', 1) == q.Length - 1;
+    }
+
     // Binds all filter parameters to the command and returns the shared WHERE clause (reused by Count + Page).
     private static string ApplyFilters(
         SqliteCommand command, bool useFts, IReadOnlyList<string> tokens,
         string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
-        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter)
+        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, bool phrase = false)
     {
         var filters = new List<string>();
 
         if (useFts)
         {
-            // Raw part (current behavior): each token a quoted FTS5 prefix phrase, ANDed across all columns —
-            // preserves exact/ID/code/prefix matching. Stems part (MEMP-024): the stemmed tokens ANDed against the
-            // `stems` sidecar column, so word forms match (ANRs/ANR, Russian cases). The two are ORed, so the raw
-            // path always still wins; stems only ADD recall. Tokens are quoted so input can't break MATCH syntax.
-            var raw = string.Join(' ', tokens.Select(token => $"\"{token}\"*"));
-            var stemmed = SearchStems.StemQueryTokens(tokens);
-            var match = stemmed.Count == 0
-                ? raw
-                : $"({raw}) OR (stems : ({string.Join(' ', stemmed.Select(stem => $"\"{stem}\""))}))";
+            string match;
+            if (phrase)
+            {
+                // A fully-quoted query is an exact ordered phrase (MEMP-166): no prefix, no stem expansion.
+                match = $"\"{string.Join(' ', tokens)}\"";
+            }
+            else
+            {
+                // Raw part (current behavior): each token a quoted FTS5 prefix phrase, ANDed across all columns —
+                // preserves exact/ID/code/prefix matching. Stems part (MEMP-024): the stemmed tokens ANDed against the
+                // `stems` sidecar column, so word forms match (ANRs/ANR, Russian cases). The two are ORed, so the raw
+                // path always still wins; stems only ADD recall. Tokens are quoted so input can't break MATCH syntax.
+                var raw = string.Join(' ', tokens.Select(token => $"\"{token}\"*"));
+                var stemmed = SearchStems.StemQueryTokens(tokens);
+                match = stemmed.Count == 0
+                    ? raw
+                    : $"({raw}) OR (stems : ({string.Join(' ', stemmed.Select(stem => $"\"{stem}\""))}))";
+            }
+
             filters.Add("notes_fts MATCH $q");
             command.Parameters.AddWithValue("$q", match);
         }

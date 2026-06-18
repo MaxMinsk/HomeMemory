@@ -90,13 +90,30 @@ public sealed partial class NotesReader
     }
 
     /// <summary>Returns distinct tags across live notes with their counts (facet discovery), most-used first.</summary>
-    public IReadOnlyDictionary<string, long> TagCounts()
+    public IReadOnlyDictionary<string, long> TagCounts() => TagFacets(null, null);
+
+    /// <summary>
+    /// Distinct tags with their counts across active notes (facet discovery, most-used first), scope-restricted and
+    /// optionally limited to one domain (MEMP-165).
+    /// </summary>
+    /// <param name="domain">Optional domain filter.</param>
+    /// <param name="restrictToDomains">Auth scope; null = unrestricted, empty = nothing.</param>
+    public IReadOnlyDictionary<string, long> TagFacets(string? domain, IReadOnlyCollection<string>? restrictToDomains)
     {
+        domain = Identifiers.NormalizeOptional(domain);
         using var connection = _connectionFactory.Create();
         using var command = connection.CreateCommand();
+        var filters = new List<string> { "notes.deleted = 0", "notes.status = 'active'", "notes.tags_json IS NOT NULL" };
+        if (domain is not null)
+        {
+            filters.Add("notes.domain = $d");
+            command.Parameters.AddWithValue("$d", domain);
+        }
+
+        AppendScopeIn(command, filters, "notes.domain", restrictToDomains);
         command.CommandText =
             "SELECT json_each.value AS tag, count(*) AS n FROM notes, json_each(notes.tags_json) " +
-            "WHERE notes.deleted = 0 AND notes.tags_json IS NOT NULL GROUP BY tag ORDER BY n DESC, tag;";
+            $"WHERE {string.Join(" AND ", filters)} GROUP BY tag ORDER BY n DESC, tag;";
 
         var counts = new Dictionary<string, long>(StringComparer.Ordinal);
         using var reader = command.ExecuteReader();

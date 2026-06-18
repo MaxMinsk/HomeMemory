@@ -89,6 +89,10 @@ public sealed class NotesRepository
     /// <inheritdoc cref="NotesReader.TagCounts"/>
     public IReadOnlyDictionary<string, long> TagCounts() => _reader.TagCounts();
 
+    /// <inheritdoc cref="NotesReader.TagFacets"/>
+    public IReadOnlyDictionary<string, long> TagFacets(string? domain, IReadOnlyCollection<string>? restrictToDomains)
+        => _reader.TagFacets(domain, restrictToDomains);
+
     /// <inheritdoc cref="NotesReader.Get"/>
     public Note? Get(string id) => _reader.Get(id);
 
