@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.53.0
+
+Sprint 46 — concurrency safety (MEMP-179–183).
+
+- **Optimistic concurrency on `notes_upsert`** (MEMP-179): pass `expectedRevision` (the `updated_utc` from a prior
+  get/upsert) and the write is rejected if another writer changed the note meanwhile (or it's gone) — no silent
+  clobber. Omit it for the previous blind-upsert behavior.
+- **Bulk upsert** (MEMP-180): new `notes_upsert_many` upserts an array of notes in ONE transaction, all-or-nothing —
+  every payload is validated first, a bad item names its index and rolls the whole batch back. Returns a per-item
+  result. Up to 100 items.
+- **Bulk link** (MEMP-181): new `notes_link_many` creates many links in one transaction, all-or-nothing and
+  idempotent; returns `created` vs `alreadyPresent`. Up to 100 links.
+- **Richer conflict info** (MEMP-182): a concurrency conflict (upsert or patch) now reports the current revision,
+  the last writer, and which fields your write would change — so you can re-read and reconcile, not blind-retry.
+- **Idempotent no-op** (MEMP-183): re-upserting identical content is a quiet no-op — `unchanged=true`, no revision
+  bump, no change event/MQTT publish. Makes retries and concurrent identical writes safe and noise-free.
+
 ## 0.52.0
 
 Sprint 45 — recall quality (MEMP-174–178).
