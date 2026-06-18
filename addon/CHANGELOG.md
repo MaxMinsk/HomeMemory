@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.52.0
+
+Sprint 45 — recall quality (MEMP-174–178).
+
+- **Hybrid recall ranking** (MEMP-174): `notes_recall` and `memory_context` now rank by Reciprocal Rank Fusion
+  over relevance (BM25), recency, and link-degree — surfacing notes that are useful, not just lexically closest.
+  `notes_search` gains `rank=hybrid` (default stays `lexical`, pure BM25); an exact key/title match still wins.
+- **Importance / pin boost** (MEMP-175): a `pinned` tag (or `payload.pinned`) and an `importance:N` tag (or
+  `payload.importance`) lift a note in the hybrid blend. Default-neutral — notes without it rank exactly as before.
+- **Budgeted context packing** (MEMP-176): `notes_recall` and `memory_context` accept `budgetChars` to pack the
+  highest-ranked hits that fit a character budget (≈ tokens × 4) instead of a fixed count; they report
+  `usedChars`/`droppedCount` and trim the last snippet to fit.
+- **Explain ranking** (MEMP-177): pass `explain=true` to a hybrid `notes_search`/`notes_recall` to get a per-hit
+  score breakdown (lexical/recency/link/importance ranks + the fused score). Off by default.
+- **Blended `notes_related`** (MEMP-178): related suggestions now combine shared tags, lexical similarity, and
+  direct links (with `reasons`), so even an untagged note gets useful "more like this" candidates.
+
 ## 0.51.0
 
 Sprint 44 — search & viewer polish (MEMP-169–173).
