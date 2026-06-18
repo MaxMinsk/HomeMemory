@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.51.0
+
+Sprint 44 — search & viewer polish (MEMP-169–173).
+
+- **Exclude terms from search** (MEMP-169): a `-term` in the query removes matches, e.g. `anr -mintegral`.
+- **Tag facets in `domain_manifest`** (MEMP-170): the manifest now includes the domain's most-used tags with counts.
+- **Tag-facet sidebar in the viewer** (MEMP-171): the result list shows the domain's top tags (with counts); click
+  one to filter. Backed by a new `GET /api/tags`.
+- **Export/Import in the admin panel** (MEMP-172): one-click NDJSON Export (download) and Import (paste →
+  dry-run → Apply) over the existing admin endpoints.
+- **Copy buttons** (MEMP-173): the note detail offers copy-to-clipboard for the note id, dedupKey, and a permalink.
+
 ## 0.50.0
 
 Sprint 43 — search & viewer polish (MEMP-164–168).
