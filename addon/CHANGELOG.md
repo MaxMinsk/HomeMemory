@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.54.0
+
+Sprint 47 — reactivity & views (MEMP-184–188).
+
+- **HTTP webhook** (MEMP-184): an opt-in webhook POSTs each note-change event (the same body-free facets MQTT
+  sends) as JSON to `webhook_url`; when `webhook_secret` is set, an `X-Memory-Signature: sha256=…` header lets the
+  receiver verify it. MQTT and the webhook can run together. Best-effort — a slow endpoint never blocks a write.
+- **Saved searches** (MEMP-185): a new `saved_search` note type stores a named query; `notes_saved_search_run`
+  runs it (query/domain/type/tags/filter/sort/rank/limit). List them with `notes_search type=saved_search`.
+- **Activity stats** (MEMP-186): `notes_activity` summarizes recent write activity over the last N days — total
+  plus counts by operation and by type, scope-filtered.
+- **Viewer** (MEMP-187): a Saved Searches list (click to run) and an Activity overview panel in `/ui`.
+- **Webhook test** (MEMP-188): a root-only admin action (and a viewer button) sends a synthetic event to the
+  webhook and reports the delivered status, so you can verify the config; deliveries are logged.
+
 ## 0.53.0
 
 Sprint 46 — concurrency safety (MEMP-179–183).
