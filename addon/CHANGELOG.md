@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.50.0
+
+Sprint 43 — search & viewer polish (MEMP-164–168).
+
+- **Range filters** (MEMP-164): the filter DSL gains `<`, `<=`, `>`, `>=` — e.g. `payload.priority >= 5` or
+  `updated_utc > '2026-06-01'` (numeric-aware, parameterized).
+- **`notes_tags`** (MEMP-165): new read-only tool listing distinct tags with counts (facet discovery),
+  scope-restricted and optionally within one domain — to see the tag vocabulary before tagging/filtering.
+- **Exact phrase search** (MEMP-166): a fully double-quoted query (e.g. `"thread exhaustion"`) matches the exact
+  adjacent, ordered phrase instead of independent prefix tokens.
+- **Viewer keyboard navigation** (MEMP-167): `/` focuses search, `j`/`k` (or arrows) move the result selection,
+  Enter opens, Esc blurs.
+- **Payload as a table** (MEMP-168): the note detail renders the payload as a readable key/value table with a
+  collapsible raw-JSON toggle.
+
 ## 0.49.0
 
 Sprint 42 — search & viewer polish (MEMP-159, MEMP-160, MEMP-161, MEMP-162, MEMP-163).
