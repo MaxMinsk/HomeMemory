@@ -25,5 +25,6 @@ public static class SchemaMigrations
         new Migration0012NoteProject(),
         new Migration0013ContentHash(),
         new Migration0014SearchStems(),
+        new Migration0015PayloadValuesFts(),
     };
 }

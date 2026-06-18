@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.44.0
+
+Sprint 38 — cut payload-search noise (MEMP-152).
+
+- **Searching a field name no longer matches every note.** The full-text index over a note's payload now indexes
+  the field **values**, not the field **names**. Previously the whole `payload_json` (keys + values) was indexed,
+  so a query like `status` or `priority` matched every note that merely *has* that field. Now those key names
+  drop out while all values stay fully searchable (including Cyrillic values like a recipe's `russian_name`).
+  Implemented in SQL via `json_tree(payload_json) WHERE type='text'`; migration 0015 recreates the FTS triggers
+  and reindexes existing notes. (Complements 0.43.0's stemmed sidecar, which already indexed values, not keys.)
+
 ## 0.43.0
 
 Sprint 37 — bilingual stemmed search (MEMP-024).

@@ -37,4 +37,20 @@ public class PayloadFtsTests
         Assert.Single(repo.Search(query: Borshch, domain: "kitchen").Items);  // another payload token
         Assert.Single(repo.Search(query: UkrFem, domain: "kitchen").Items);   // MEMP-024: declensions now match via the stemmed sidecar
     }
+
+    [Fact]
+    public void Payload_field_VALUES_are_searchable_but_field_NAMES_are_not()
+    {
+        using var temp = new TempDatabase();
+        var factory = new SqliteConnectionFactory(temp.FilePath);
+        new Migrator(factory, SchemaMigrations.All).Migrate();
+        var repo = new NotesRepository(factory, SchemaRegistry.FromEmbeddedResources());
+
+        repo.Upsert("development", "backlog_item", "Task A", null, """{ "key": "MEMP-500", "status": "ready" }""", null, "MEMP-500", "me");
+
+        // MEMP-152: a field NAME (key) no longer matches; a field VALUE still does.
+        Assert.Empty(repo.Search(query: "status", domain: "development").Items);    // "status" is a key -> not indexed
+        Assert.Single(repo.Search(query: "ready", domain: "development").Items);    // "ready" is a value -> found
+        Assert.Single(repo.Search(query: "MEMP-500", domain: "development").Items); // a value (the key field) -> found
+    }
 }
