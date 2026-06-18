@@ -28,8 +28,13 @@ public sealed class NotesRepository
     /// <inheritdoc cref="NotesWriter.Upsert"/>
     public UpsertResult Upsert(
         string domain, string type, string? title, string? body,
-        string? payloadJson, string? tagsJson, string? dedupKey, string? sourceAgent, string? project = null)
-        => _writer.Upsert(domain, type, title, body, payloadJson, tagsJson, dedupKey, sourceAgent, project);
+        string? payloadJson, string? tagsJson, string? dedupKey, string? sourceAgent, string? project = null,
+        string? expectedRevision = null)
+        => _writer.Upsert(domain, type, title, body, payloadJson, tagsJson, dedupKey, sourceAgent, project, expectedRevision);
+
+    /// <inheritdoc cref="NotesWriter.UpsertMany"/>
+    public IReadOnlyList<UpsertResult> UpsertMany(IReadOnlyList<NoteUpsertInput> inputs, string? sourceAgent)
+        => _writer.UpsertMany(inputs, sourceAgent);
 
     /// <inheritdoc cref="NotesWriter.AppendJournal"/>
     public string AppendJournal(string domain, string text, string? title = null, string? tagsJson = null, string? sourceAgent = null)
@@ -37,6 +42,9 @@ public sealed class NotesRepository
 
     /// <inheritdoc cref="NotesWriter.Link"/>
     public void Link(string fromId, string toId, string rel) => _writer.Link(fromId, toId, rel);
+
+    /// <inheritdoc cref="NotesWriter.LinkMany"/>
+    public LinkManyResult LinkMany(IReadOnlyList<LinkInput> links) => _writer.LinkMany(links);
 
     /// <inheritdoc cref="NotesWriter.Assemble"/>
     public AssembleResult Assemble(

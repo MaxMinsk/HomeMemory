@@ -16,7 +16,7 @@ public class StdioRoundTripTests
         "notes_patch", "notes_links", "notes_assemble", "notes_recall", "notes_recent", "notes_related",
         "notes_graph", "notes_suggest_capture", "notes_get_by_key", "artifacts_find_text",
         "memory_capabilities", "schema_provenance", "domain_manifest", "memory_context", "skill_consolidate_plan",
-        "notes_changes", "notes_tags",
+        "notes_changes", "notes_tags", "notes_upsert_many", "notes_link_many",
     };
 
     [Fact]
@@ -59,6 +59,39 @@ public class StdioRoundTripTests
         await AssertSkillRoundTrip(client, cts.Token);
         await AssertArtifactRoundTrip(client, cts.Token);
         await AssertValidationErrorCarriesSkillHint(client, cts.Token);
+        await AssertBulkUpsert(client, cts.Token);
+    }
+
+    // notes_upsert_many binds an ARRAY of items whose payload is a nested JSON object — verify the SDK schema/binding
+    // round-trips end-to-end (MEMP-180), not just the Core path.
+    private static async Task AssertBulkUpsert(McpClient client, CancellationToken ct)
+    {
+        var batch = await client.CallToolAsync("notes_upsert_many", new Dictionary<string, object?>
+        {
+            ["items"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["domain"] = "memory-mcp", ["type"] = "fact", ["title"] = "Bulk one",
+                    ["payload"] = new Dictionary<string, object?> { ["statement"] = "bulk inserted fact one" },
+                    ["dedupKey"] = "BULK-1",
+                },
+                new Dictionary<string, object?>
+                {
+                    ["domain"] = "memory-mcp", ["type"] = "fact", ["title"] = "Bulk two",
+                    ["payload"] = new Dictionary<string, object?> { ["statement"] = "bulk inserted fact two" },
+                    ["dedupKey"] = "BULK-2",
+                },
+            },
+        }, cancellationToken: ct);
+
+        Assert.True(batch.IsError is not true, "notes_upsert_many reported an error: " + Text(batch));
+        var found = await client.CallToolAsync("notes_search", new Dictionary<string, object?>
+        {
+            ["query"] = "bulk inserted fact",
+            ["domain"] = "memory-mcp",
+        }, cancellationToken: ct);
+        Assert.Contains("Bulk", Text(found), StringComparison.Ordinal);
     }
 
     private static async Task AssertArtifactRoundTrip(McpClient client, CancellationToken ct)

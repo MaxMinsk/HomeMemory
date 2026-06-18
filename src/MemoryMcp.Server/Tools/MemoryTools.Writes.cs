@@ -12,7 +12,7 @@ public sealed partial class MemoryTools
 {
     /// <summary>Creates or updates a note, validating the payload against the type schema.</summary>
     [McpServerTool(Name = "notes_upsert", Destructive = false, Idempotent = true, UseStructuredContent = true)]
-    [Description("Create or update a note by (domain, type, dedup_key). Validates payload against the type schema.")]
+    [Description("Create or update a note by (domain, type, dedup_key). Validates payload against the type schema. Pass `expectedRevision` (the updated_utc from a prior get/upsert) for optimistic concurrency — the update is rejected if another writer changed the note meanwhile. Re-upserting identical content is a quiet no-op (unchanged=true, revision unchanged, no event).")]
     public UpsertResult NotesUpsert(
         [Description("Namespace, e.g. memory-mcp")] string domain,
         [Description("Schema type, e.g. backlog_item")] string type,
@@ -22,12 +22,13 @@ public sealed partial class MemoryTools
         [Description("Tags as a JSON array (a JSON array string is also accepted)")] JsonElement? tags = null,
         [Description("Stable upsert key (e.g. MEMP-001)")] string? dedupKey = null,
         [Description("Who is writing (provenance)")] string? sourceAgent = null,
-        [Description("Project within the domain (sub-axis, e.g. unity-solitaire). Filter with the DSL field `project`. Organizational only — scope stays at the domain.")] string? project = null)
+        [Description("Project within the domain (sub-axis, e.g. unity-solitaire). Filter with the DSL field `project`. Organizational only — scope stays at the domain.")] string? project = null,
+        [Description("Optional optimistic-concurrency guard: the expected current updated_utc. If it no longer matches, the write is rejected with the current revision so you can re-read and reconcile.")] string? expectedRevision = null)
     {
         try
         {
             _authz.AuthorizeWrite(domain);
-            return _notes.Upsert(domain, type, title, body, JsonArg(payload), JsonArg(tags), dedupKey, sourceAgent ?? "mcp", project);
+            return _notes.Upsert(domain, type, title, body, JsonArg(payload), JsonArg(tags), dedupKey, sourceAgent ?? "mcp", project, expectedRevision);
         }
         catch (NoteValidationException exception)
         {
@@ -38,7 +39,44 @@ public sealed partial class MemoryTools
         {
             throw new McpException(exception.Message);
         }
+        catch (ConcurrencyException exception)
+        {
+            throw new McpException(exception.Message);
+        }
     }
+
+    /// <summary>Upserts many notes in one transaction (all-or-nothing), scope-checked per item.</summary>
+    [McpServerTool(Name = "notes_upsert_many", Destructive = false, Idempotent = true, UseStructuredContent = true)]
+    [Description("Upsert an ARRAY of notes in ONE transaction, all-or-nothing: every payload is validated first, so an invalid item (or a concurrency conflict) aborts the whole batch (the error names the offending index) and nothing is written. Returns one result per item (id, created/unchanged, revision), in order. Use to import or sync many notes at once instead of many round-trips. Max 100 items.")]
+    public IReadOnlyList<UpsertResult> NotesUpsertMany(
+        [Description("Notes to upsert: each {domain, type, title?, body?, payload?, tags?, dedupKey?, project?, expectedRevision?}")] UpsertItem[] items,
+        [Description("Who is writing (provenance)")] string? sourceAgent = null)
+        => Translate(() =>
+        {
+            var inputs = (items ?? Array.Empty<UpsertItem>()).Select(item =>
+            {
+                _authz.AuthorizeWrite(item.Domain);
+                return new NoteUpsertInput(item.Domain, item.Type, item.Title, item.Body, JsonArg(item.Payload),
+                    JsonArg(item.Tags), item.DedupKey, item.Project, item.ExpectedRevision);
+            }).ToList();
+            return _notes.UpsertMany(inputs, sourceAgent ?? "mcp");
+        });
+
+    /// <summary>Creates many links in one transaction (all-or-nothing), each endpoint scope-checked.</summary>
+    [McpServerTool(Name = "notes_link_many", Destructive = false, Idempotent = true, UseStructuredContent = true)]
+    [Description("Create an ARRAY of directed links in ONE transaction, all-or-nothing: every relation is validated and every endpoint must exist and be in scope, else nothing is created (the error names the offending index). Idempotent — a duplicate link is a no-op. Returns {created, alreadyPresent}. Max 100 links.")]
+    public LinkManyResult NotesLinkMany(
+        [Description("Links to create: each {fromId, toId, rel} with an active-voice lower_snake_case rel")] LinkItem[] links)
+        => Translate(() =>
+        {
+            var inputs = (links ?? Array.Empty<LinkItem>()).Select(link =>
+            {
+                AuthorizeNote(link.FromId);
+                AuthorizeNote(link.ToId);
+                return new LinkInput(link.FromId, link.ToId, link.Rel);
+            }).ToList();
+            return _notes.LinkMany(inputs);
+        });
 
     /// <summary>Creates a note and its outgoing links atomically (all-or-nothing).</summary>
     [McpServerTool(Name = "notes_assemble", Destructive = false, UseStructuredContent = true)]
@@ -190,3 +228,23 @@ public sealed partial class MemoryTools
             return $"{definition.Type}@{definition.Version}";
         });
 }
+
+/// <summary>One item of a <c>notes_upsert_many</c> batch (payload/tags accept an object/array or a JSON string).</summary>
+/// <param name="Domain">Namespace, e.g. memory-mcp.</param>
+/// <param name="Type">Schema type, e.g. backlog_item.</param>
+/// <param name="Title">Human-readable title.</param>
+/// <param name="Body">Free-text body.</param>
+/// <param name="Payload">Typed payload (object or JSON string).</param>
+/// <param name="Tags">Tags (array or JSON array string).</param>
+/// <param name="DedupKey">Stable upsert key.</param>
+/// <param name="Project">Project sub-axis within the domain.</param>
+/// <param name="ExpectedRevision">Optional optimistic-concurrency guard (prior updated_utc).</param>
+public sealed record UpsertItem(
+    string Domain, string Type, string? Title = null, string? Body = null, JsonElement? Payload = null,
+    JsonElement? Tags = null, string? DedupKey = null, string? Project = null, string? ExpectedRevision = null);
+
+/// <summary>One edge of a <c>notes_link_many</c> batch.</summary>
+/// <param name="FromId">Source note id.</param>
+/// <param name="ToId">Target note id.</param>
+/// <param name="Rel">Relationship verb (active-voice lower_snake_case).</param>
+public sealed record LinkItem(string FromId, string ToId, string Rel);

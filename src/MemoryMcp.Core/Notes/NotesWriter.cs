@@ -48,10 +48,13 @@ public sealed class NotesWriter
     /// <param name="dedupKey">Stable key for upsert; when null, always inserts.</param>
     /// <param name="sourceAgent">Provenance: who is writing.</param>
     /// <param name="project">Optional project sub-axis within the domain; null leaves it unchanged on update.</param>
+    /// <param name="expectedRevision">Optional optimistic-concurrency guard: the prior <c>updated_utc</c>; when given,
+    /// the dedup-matched note is updated only if its revision still matches, else <see cref="ConcurrencyException"/>.</param>
     /// <returns>The note id and whether it was created.</returns>
     public UpsertResult Upsert(
         string domain, string type, string? title, string? body,
-        string? payloadJson, string? tagsJson, string? dedupKey, string? sourceAgent, string? project = null)
+        string? payloadJson, string? tagsJson, string? dedupKey, string? sourceAgent, string? project = null,
+        string? expectedRevision = null)
     {
         domain = Identifiers.Normalize(domain);
         type = Identifiers.Normalize(type);
@@ -71,45 +74,156 @@ public sealed class NotesWriter
 
         using var connection = _connectionFactory.Create();
         using var transaction = connection.BeginTransaction();
-        var (id, created) = PersistNote(connection, transaction, domain, type, title, body, payloadJson, tagsJson, dedupKey, sourceAgent, schemaVer, nowUtc, project);
+        var (id, created, unchanged, revision) = PersistNote(connection, transaction, domain, type, title, body, payloadJson, tagsJson, dedupKey, sourceAgent, schemaVer, nowUtc, project, expectedRevision);
         transaction.Commit();
-        Emit(id, domain, type, project, tagsJson, created ? "create" : "update", nowUtc);
-        return new UpsertResult(id, created, nowUtc, type, dedupKey);
+        if (!unchanged)
+        {
+            Emit(id, domain, type, project, tagsJson, created ? "create" : "update", nowUtc);
+        }
+
+        return new UpsertResult(id, created, revision, type, dedupKey, unchanged);
     }
 
+    /// <summary>Largest number of items a single bulk upsert/link may carry, so a batch can't run unbounded.</summary>
+    public const int MaxBatch = 100;
+
+    /// <summary>
+    /// Upserts many notes in ONE transaction, all-or-nothing (MEMP-180): every payload is validated up front, so an
+    /// invalid item (or a concurrency conflict) aborts the whole batch — the error names the offending index and
+    /// nothing is persisted. On success, returns one <see cref="UpsertResult"/> per input (in order). Events are
+    /// emitted after commit for the items that actually changed.
+    /// </summary>
+    /// <param name="inputs">The notes to upsert (≤ <see cref="MaxBatch"/>).</param>
+    /// <param name="sourceAgent">Provenance: who is writing.</param>
+    public IReadOnlyList<UpsertResult> UpsertMany(IReadOnlyList<NoteUpsertInput> inputs, string? sourceAgent)
+    {
+        if (inputs.Count == 0)
+        {
+            return Array.Empty<UpsertResult>();
+        }
+
+        if (inputs.Count > MaxBatch)
+        {
+            throw new AssembleException($"Too many items: {inputs.Count} exceeds the {MaxBatch} per-batch limit.");
+        }
+
+        var nowUtc = NowUtc();
+        var prepared = PrepareBatch(inputs); // validate every item up front, before any write
+        var results = new List<UpsertResult>(inputs.Count);
+        var pendingEmits = new List<(string Id, string Domain, string Type, string? Project, string? Tags, string Op)>();
+        using (var connection = _connectionFactory.Create())
+        using (var transaction = connection.BeginTransaction())
+        {
+            for (var i = 0; i < prepared.Count; i++)
+            {
+                var item = prepared[i];
+                var (id, created, unchanged, revision) = PersistBatchItem(connection, transaction, item, sourceAgent, nowUtc, i);
+                results.Add(new UpsertResult(id, created, revision, item.Type, item.Input.DedupKey, unchanged));
+                if (!unchanged)
+                {
+                    pendingEmits.Add((id, item.Domain, item.Type, item.Project, item.Tags, created ? "create" : "update"));
+                }
+            }
+
+            transaction.Commit();
+        }
+
+        foreach (var emit in pendingEmits)
+        {
+            Emit(emit.Id, emit.Domain, emit.Type, emit.Project, emit.Tags, emit.Op, nowUtc);
+        }
+
+        return results;
+    }
+
+    // Normalizes and schema-validates every batch item before any write, so an invalid item aborts the whole batch.
+    private List<PreparedUpsert> PrepareBatch(IReadOnlyList<NoteUpsertInput> inputs)
+    {
+        var prepared = new List<PreparedUpsert>(inputs.Count);
+        for (var i = 0; i < inputs.Count; i++)
+        {
+            var input = inputs[i];
+            var domain = Identifiers.Normalize(input.Domain);
+            var type = Identifiers.Normalize(input.Type);
+            var tags = Identifiers.NormalizeTags(input.TagsJson);
+            var project = Identifiers.NormalizeOptional(input.Project ?? PayloadProject(input.PayloadJson));
+
+            var validation = _validator.Validate(type, PayloadForValidation(input.PayloadJson));
+            if (!validation.IsValid)
+            {
+                throw new NoteValidationException(validation.Errors.Select(error => $"item[{i}] ({domain}/{type}): {error}").ToList());
+            }
+
+            prepared.Add(new PreparedUpsert(input, domain, type, tags, project, _registry.GetLatest(type)!.Version));
+        }
+
+        return prepared;
+    }
+
+    // Persists one prepared batch item, tagging any concurrency conflict with its index for a readable error.
+    private static (string Id, bool Created, bool Unchanged, string Revision) PersistBatchItem(
+        SqliteConnection connection, SqliteTransaction transaction, PreparedUpsert item, string? sourceAgent, string nowUtc, int index)
+    {
+        try
+        {
+            return PersistNote(connection, transaction, item.Domain, item.Type, item.Input.Title, item.Input.Body,
+                item.Input.PayloadJson, item.Tags, item.Input.DedupKey, sourceAgent, item.SchemaVer, nowUtc, item.Project, item.Input.ExpectedRevision);
+        }
+        catch (ConcurrencyException conflict)
+        {
+            throw new ConcurrencyException($"item[{index}]: {conflict.Message}", conflict.CurrentRevision, conflict.CurrentSourceAgent, conflict.ChangedFields);
+        }
+    }
+
+    private sealed record PreparedUpsert(NoteUpsertInput Input, string Domain, string Type, string? Tags, string? Project, int SchemaVer);
+
     // Inserts a new note or dedup-updates the existing one, plus its audit event, within an existing
-    // transaction (the caller commits). Shared by Upsert and Assemble.
-    private static (string Id, bool Created) PersistNote(
+    // transaction (the caller commits). Shared by Upsert and Assemble. When expectedRevision is given it is an
+    // optimistic-concurrency guard (MEMP-179); an update whose new content equals the stored content is a no-op
+    // (MEMP-183) — no row write, no audit event — and Revision returns the unchanged revision.
+    private static (string Id, bool Created, bool Unchanged, string Revision) PersistNote(
         SqliteConnection connection, SqliteTransaction transaction,
         string domain, string type, string? title, string? body,
-        string? payloadJson, string? tagsJson, string? dedupKey, string? sourceAgent, int schemaVer, string nowUtc, string? project = null)
+        string? payloadJson, string? tagsJson, string? dedupKey, string? sourceAgent, int schemaVer, string nowUtc,
+        string? project = null, string? expectedRevision = null)
     {
         var existing = dedupKey is null ? null : FindByDedup(connection, transaction, domain, type, dedupKey);
 
         var contentHash = ContentHash.Compute(type, title, body, payloadJson, tagsJson);
         var searchStems = SearchStems.For(title, body, tagsJson, payloadJson);
 
-        string id;
-        bool created;
-        JsonObject? before = null;
         if (existing is null)
         {
-            id = Guid.NewGuid().ToString("N");
-            created = true;
-            Insert(connection, transaction, id, domain, type, title, body, payloadJson, tagsJson, dedupKey, sourceAgent, schemaVer, nowUtc, contentHash, searchStems, project);
-        }
-        else
-        {
-            id = existing.Id;
-            created = false;
-            before = NoteAudit.Snapshot(existing.Title, existing.Body, existing.PayloadJson, existing.TagsJson, existing.Status, existing.SchemaVer);
-            Update(connection, transaction, id, title, body, payloadJson, tagsJson, sourceAgent, schemaVer, nowUtc, contentHash, searchStems, project);
+            if (expectedRevision is not null)
+            {
+                throw ConcurrencyException.Missing(); // caller expected to update an existing note, but there is none
+            }
+
+            var newId = Guid.NewGuid().ToString("N");
+            Insert(connection, transaction, newId, domain, type, title, body, payloadJson, tagsJson, dedupKey, sourceAgent, schemaVer, nowUtc, contentHash, searchStems, project);
+            var createdAfter = NoteAudit.Snapshot(title, body, payloadJson, tagsJson, "active", schemaVer);
+            NoteAudit.Append(connection, transaction, newId, "create", sourceAgent, nowUtc, NoteAudit.BuildDiff("create", null, createdAfter));
+            return (newId, true, false, nowUtc);
         }
 
-        var after = NoteAudit.Snapshot(title, body, payloadJson, tagsJson, existing?.Status ?? "active", schemaVer);
-        var op = created ? "create" : "update";
-        NoteAudit.Append(connection, transaction, id, op, sourceAgent, nowUtc, NoteAudit.BuildDiff(op, before, after));
-        return (id, created);
+        if (expectedRevision is not null && !string.Equals(expectedRevision, existing.UpdatedUtc, StringComparison.Ordinal))
+        {
+            throw ConcurrencyException.Stale(existing.UpdatedUtc, existing.SourceAgent,
+                ChangedFields(existing.Title, existing.Body, existing.PayloadJson, existing.TagsJson, title, body, payloadJson, tagsJson));
+        }
+
+        // Identical content (and project unchanged) → a quiet no-op: don't bump the revision or emit an event.
+        var projectUnchanged = project is null || string.Equals(project, existing.Project, StringComparison.Ordinal);
+        if (projectUnchanged && string.Equals(existing.ContentHash, contentHash, StringComparison.Ordinal))
+        {
+            return (existing.Id, false, true, existing.UpdatedUtc);
+        }
+
+        var before = NoteAudit.Snapshot(existing.Title, existing.Body, existing.PayloadJson, existing.TagsJson, existing.Status, existing.SchemaVer);
+        Update(connection, transaction, existing.Id, title, body, payloadJson, tagsJson, sourceAgent, schemaVer, nowUtc, contentHash, searchStems, project);
+        var after = NoteAudit.Snapshot(title, body, payloadJson, tagsJson, existing.Status, schemaVer);
+        NoteAudit.Append(connection, transaction, existing.Id, "update", sourceAgent, nowUtc, NoteAudit.BuildDiff("update", before, after));
+        return (existing.Id, false, false, nowUtc);
     }
 
     /// <summary>
@@ -138,7 +252,7 @@ public sealed class NotesWriter
         var project = Identifiers.NormalizeOptional(PayloadProject(payloadJson)); // lift the project axis from payload (MEMP-154)
         using var connection = _connectionFactory.Create();
         using var transaction = connection.BeginTransaction();
-        var (id, created) = PersistNote(connection, transaction, domain, type, title, body, payloadJson, tagsJson, dedupKey, sourceAgent, schemaVer, nowUtc, project);
+        var (id, created, _, _) = PersistNote(connection, transaction, domain, type, title, body, payloadJson, tagsJson, dedupKey, sourceAgent, schemaVer, nowUtc, project);
 
         foreach (var link in specs)
         {
@@ -169,7 +283,9 @@ public sealed class NotesWriter
         return Convert.ToInt64(command.ExecuteScalar()) != 0;
     }
 
-    private static void InsertLinkRow(SqliteConnection connection, SqliteTransaction transaction, string fromId, string toId, string rel, string nowUtc)
+    // Inserts a directed link (idempotent) and audits it; returns true when a new edge was created, false when it
+    // already existed. Callers that don't care about the distinction can ignore the result.
+    private static bool InsertLinkRow(SqliteConnection connection, SqliteTransaction transaction, string fromId, string toId, string rel, string nowUtc)
     {
         int inserted;
         using (var command = connection.CreateCommand())
@@ -185,11 +301,12 @@ public sealed class NotesWriter
 
         if (inserted == 0)
         {
-            return; // the link already existed (idempotent) — no new edge, no audit event
+            return false; // the link already existed (idempotent) — no new edge, no audit event
         }
 
         NoteAudit.Append(connection, transaction, fromId, "link", null, nowUtc,
             new JsonObject { ["op"] = "link", ["to"] = toId, ["rel"] = rel }.ToJsonString());
+        return true;
     }
 
     /// <summary>
@@ -282,6 +399,56 @@ public sealed class NotesWriter
 
         InsertLinkRow(connection, transaction, fromId, toId, rel, nowUtc);
         transaction.Commit();
+    }
+
+    /// <summary>
+    /// Creates many directed links in ONE transaction, all-or-nothing (MEMP-181): every relation is validated and
+    /// every endpoint must exist, else nothing is persisted and the error names the offending index. Idempotent —
+    /// a duplicate edge is a no-op. Returns how many edges were newly created vs already present.
+    /// </summary>
+    /// <param name="links">The edges to create (≤ <see cref="MaxBatch"/>).</param>
+    public LinkManyResult LinkMany(IReadOnlyList<LinkInput> links)
+    {
+        if (links.Count == 0)
+        {
+            return new LinkManyResult(0, 0);
+        }
+
+        if (links.Count > MaxBatch)
+        {
+            throw new AssembleException($"Too many links: {links.Count} exceeds the {MaxBatch} per-batch limit.");
+        }
+
+        var nowUtc = NowUtc();
+        var created = 0;
+        using var connection = _connectionFactory.Create();
+        using var transaction = connection.BeginTransaction();
+        for (var i = 0; i < links.Count; i++)
+        {
+            var link = links[i];
+            if (!RelationName.IsValid(link.Rel))
+            {
+                throw new AssembleException($"link[{i}]: invalid relation '{link.Rel}': {RelationName.Expectation}.");
+            }
+
+            if (!NoteExists(connection, transaction, link.FromId))
+            {
+                throw new AssembleException($"link[{i}]: source '{link.FromId}' does not exist; nothing was created.");
+            }
+
+            if (!NoteExists(connection, transaction, link.ToId))
+            {
+                throw new AssembleException($"link[{i}]: target '{link.ToId}' does not exist; nothing was created.");
+            }
+
+            if (InsertLinkRow(connection, transaction, link.FromId, link.ToId, link.Rel, nowUtc))
+            {
+                created++;
+            }
+        }
+
+        transaction.Commit();
+        return new LinkManyResult(created, links.Count - created);
     }
 
     /// <summary>Soft-archives a note (status = archived). Returns false if no active note has that id.</summary>
@@ -378,16 +545,16 @@ public sealed class NotesWriter
             return null;
         }
 
-        if (expectedUpdatedUtc is not null && !string.Equals(expectedUpdatedUtc, current.UpdatedUtc, StringComparison.Ordinal))
-        {
-            throw new ConcurrencyException(
-                $"Stale update: this note changed since you read it (current revision {current.UpdatedUtc}). Re-read and retry.");
-        }
-
         var newTitle = title ?? current.Title;
         var newBody = body ?? current.Body;
         var newTags = tagsJson ?? current.Tags;
         var newPayload = MergePayload(current.Payload, payloadJson);
+
+        if (expectedUpdatedUtc is not null && !string.Equals(expectedUpdatedUtc, current.UpdatedUtc, StringComparison.Ordinal))
+        {
+            throw ConcurrencyException.Stale(current.UpdatedUtc, current.SourceAgent,
+                ChangedFields(current.Title, current.Body, current.Payload, current.Tags, newTitle, newBody, newPayload, newTags));
+        }
 
         if (_registry.GetLatest(current.Type) is not null)
         {
@@ -427,7 +594,7 @@ public sealed class NotesWriter
         using var select = connection.CreateCommand();
         select.Transaction = transaction;
         select.CommandText =
-            "SELECT domain, type, title, body, payload_json, tags_json, dedup_key, status, created_utc, updated_utc, schema_ver " +
+            "SELECT domain, type, title, body, payload_json, tags_json, dedup_key, status, created_utc, updated_utc, schema_ver, source_agent " +
             "FROM notes WHERE id = $id AND deleted = 0 LIMIT 1;";
         select.Parameters.AddWithValue("$id", id);
         using var reader = select.ExecuteReader();
@@ -441,11 +608,12 @@ public sealed class NotesWriter
             reader.IsDBNull(2) ? null : reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3),
             reader.IsDBNull(4) ? null : reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetString(5),
             reader.IsDBNull(6) ? null : reader.GetString(6), reader.GetString(7),
-            reader.GetString(8), reader.GetString(9), reader.GetInt32(10));
+            reader.GetString(8), reader.GetString(9), reader.GetInt32(10),
+            reader.IsDBNull(11) ? null : reader.GetString(11));
     }
 
     private sealed record PatchSource(string Domain, string Type, string? Title, string? Body, string? Payload,
-        string? Tags, string? DedupKey, string Status, string CreatedUtc, string UpdatedUtc, int SchemaVer);
+        string? Tags, string? DedupKey, string Status, string CreatedUtc, string UpdatedUtc, int SchemaVer, string? SourceAgent);
 
     // Shallow-merges a JSON patch object into the current payload (patch keys win). Null patch -> unchanged.
     private static string? MergePayload(string? current, string? patch)
@@ -616,7 +784,7 @@ public sealed class NotesWriter
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText =
-            "SELECT id, title, body, payload_json, tags_json, status, schema_ver " +
+            "SELECT id, title, body, payload_json, tags_json, status, schema_ver, updated_utc, content_hash, project, source_agent " +
             "FROM notes WHERE domain = $d AND type = $t AND dedup_key = $k LIMIT 1;";
         command.Parameters.AddWithValue("$d", domain);
         command.Parameters.AddWithValue("$t", type);
@@ -635,7 +803,11 @@ public sealed class NotesWriter
             reader.IsDBNull(3) ? null : reader.GetString(3),
             reader.IsDBNull(4) ? null : reader.GetString(4),
             reader.GetString(5),
-            reader.GetInt32(6));
+            reader.GetInt32(6),
+            reader.GetString(7),
+            reader.IsDBNull(8) ? null : reader.GetString(8),
+            reader.IsDBNull(9) ? null : reader.GetString(9),
+            reader.IsDBNull(10) ? null : reader.GetString(10));
     }
 
     private static void Insert(
@@ -747,5 +919,34 @@ public sealed class NotesWriter
     }
 
     private sealed record ExistingNote(
-        string Id, string? Title, string? Body, string? PayloadJson, string? TagsJson, string Status, int SchemaVer);
+        string Id, string? Title, string? Body, string? PayloadJson, string? TagsJson, string Status, int SchemaVer,
+        string UpdatedUtc, string? ContentHash, string? Project, string? SourceAgent);
+
+    // Fields among {title,body,payload,tags} where an incoming write differs from the current copy (conflict hint, MEMP-182).
+    private static IReadOnlyList<string> ChangedFields(string? curTitle, string? curBody, string? curPayload, string? curTags,
+        string? newTitle, string? newBody, string? newPayload, string? newTags)
+    {
+        var changed = new List<string>(4);
+        if (!string.Equals(curTitle, newTitle, StringComparison.Ordinal))
+        {
+            changed.Add("title");
+        }
+
+        if (!string.Equals(curBody, newBody, StringComparison.Ordinal))
+        {
+            changed.Add("body");
+        }
+
+        if (!string.Equals(curPayload, newPayload, StringComparison.Ordinal))
+        {
+            changed.Add("payload");
+        }
+
+        if (!string.Equals(curTags, newTags, StringComparison.Ordinal))
+        {
+            changed.Add("tags");
+        }
+
+        return changed;
+    }
 }
