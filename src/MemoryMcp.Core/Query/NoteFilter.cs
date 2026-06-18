@@ -18,7 +18,8 @@ public sealed record CompiledFilter(string Sql, IReadOnlyList<FilterParameter> P
 /// Compiles a small, safe filter DSL into parameterized SQL over the <c>n</c> (notes) alias.
 /// Grammar: <c>expr := or; or := and (OR and)*; and := primary (AND primary)*;
 /// primary := '(' expr ')' | field op value; field := ident | payload.ident;
-/// op := == | != | in; value := string | number; (in takes a parenthesized list)</c>.
+/// op := == | != | in | contains | is [not] null; value := string | number; (in takes a parenthesized list,
+/// contains takes a string and matches a case-insensitive substring)</c>.
 /// Values are always bound as parameters; field names are whitelisted (envelope) or validated
 /// (payload.&lt;key&gt;) — user input never reaches the SQL text directly.
 /// </summary>
@@ -50,7 +51,7 @@ public static class NoteFilter
         return new CompiledFilter(sql, parser.Parameters);
     }
 
-    private enum Kind { LParen, RParen, Comma, Eq, NotEq, And, Or, In, Is, Not, Null, Ident, Str, Num, End }
+    private enum Kind { LParen, RParen, Comma, Eq, NotEq, And, Or, In, Is, Not, Null, Contains, Ident, Str, Num, End }
 
     private readonly record struct Token(Kind Kind, string Text);
 
@@ -111,6 +112,7 @@ public static class NoteFilter
             "is" => Kind.Is,
             "not" => Kind.Not,
             "null" => Kind.Null,
+            "contains" => Kind.Contains,
             _ => Kind.Ident,
         };
         tokens.Add(new Token(kind, word));
@@ -226,8 +228,18 @@ public static class NoteFilter
 
                     Expect(Kind.Null);
                     return $"{column} IS NULL";
+                case Kind.Contains:
+                    if (ParseScalar() is not string substring)
+                    {
+                        throw new FilterException("Invalid filter: 'contains' needs a string value, e.g. payload.subject contains 'STU-12'.");
+                    }
+
+                    // Case-insensitive (ASCII) substring via LIKE; escape the LIKE wildcards in the value.
+                    var pattern = "%" + substring.Replace("\\", "\\\\", StringComparison.Ordinal)
+                        .Replace("%", "\\%", StringComparison.Ordinal).Replace("_", "\\_", StringComparison.Ordinal) + "%";
+                    return $"{column} LIKE {AddParam(pattern)} ESCAPE '\\'";
                 default:
-                    throw new FilterException($"Invalid filter: expected an operator (== != in, is null), got '{op.Text}'.");
+                    throw new FilterException($"Invalid filter: expected an operator (== != in contains, is null), got '{op.Text}'.");
             }
         }
 

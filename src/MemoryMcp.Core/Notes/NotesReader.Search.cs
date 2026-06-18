@@ -83,8 +83,10 @@ public sealed partial class NotesReader
         var orderBy = sortBody ?? (useFts ? "score" : "n.updated_utc DESC"); // explicit sort overrides relevance/recency
         if (exactKey is not null)
         {
+            // Rank an exact dedup_key first (MEMP-159), then an exact title (MEMP-160), then relevance/recency.
             command.Parameters.AddWithValue("$exactkey", exactKey);
-            orderBy = $"(CASE WHEN n.dedup_key IS NOT NULL AND lower(n.dedup_key) = lower($exactkey) THEN 0 ELSE 1 END), {orderBy}"; // exact dedup_key first
+            orderBy = "(CASE WHEN n.dedup_key IS NOT NULL AND lower(n.dedup_key) = lower($exactkey) THEN 0 " +
+                "WHEN n.title IS NOT NULL AND lower(trim(n.title)) = lower($exactkey) THEN 1 ELSE 2 END), " + orderBy;
         }
         command.CommandText =
             $"SELECT {string.Format(System.Globalization.CultureInfo.InvariantCulture, columns, scoreExpr)} " +

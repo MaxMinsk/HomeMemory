@@ -490,6 +490,45 @@ public class NotesRepositoryTests
     }
 
     [Fact]
+    public void Search_boosts_an_exact_title_match()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        repo.Upsert("development", "backlog_item", "widget widget widget", "widget widget body", """{ "key": "MEMP-900", "status": "ready" }""", null, "m", "me");
+        repo.Upsert("development", "backlog_item", "widget", "plain", """{ "key": "MEMP-901", "status": "ready" }""", null, "w", "me");
+
+        var page = repo.Search(query: "widget", domain: "development", includePayload: true);
+
+        Assert.Equal("widget", page.Items[0].Title); // exact title beats raw term frequency (MEMP-160)
+    }
+
+    [Fact]
+    public void Search_filter_contains_matches_a_substring()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        repo.Upsert("development", "fact", "A", null, """{ "statement": "ticket STU-12345 is open" }""", null, "a", "me");
+        repo.Upsert("development", "fact", "B", null, """{ "statement": "ticket ABC-9 is open" }""", null, "b", "me");
+
+        var page = repo.Search(domain: "development", filter: "payload.statement contains 'STU-12'", includePayload: true);
+
+        Assert.Equal("A", Assert.Single(page.Items).Title);
+    }
+
+    [Fact]
+    public void Search_filter_contains_escapes_like_wildcards()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        repo.Upsert("development", "fact", "P", null, """{ "statement": "100% done" }""", null, "p", "me");
+        repo.Upsert("development", "fact", "Q", null, """{ "statement": "1000 done" }""", null, "q", "me");
+
+        var page = repo.Search(domain: "development", filter: "payload.statement contains '100%'", includePayload: true);
+
+        Assert.Equal("P", Assert.Single(page.Items).Title); // '%' is escaped to a literal, not a LIKE wildcard
+    }
+
+    [Fact]
     public void Search_rejects_an_unsortable_or_injected_field()
     {
         using var temp = new TempDatabase();
