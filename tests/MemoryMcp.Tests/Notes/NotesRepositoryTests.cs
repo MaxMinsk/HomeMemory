@@ -216,6 +216,65 @@ public class NotesRepositoryTests
     }
 
     [Fact]
+    public void Changes_returns_events_oldest_first_with_a_resumable_cursor()
+    {
+        using var temp = new TempDatabase();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var (repo, _) = NewRepo(temp, clock);
+        clock.Advance(TimeSpan.FromSeconds(1)); repo.Upsert("development", "backlog_item", "A", null, """{ "key": "MEMP-900", "status": "ready" }""", null, "chg-a", "me");
+        clock.Advance(TimeSpan.FromSeconds(1)); repo.Upsert("development", "backlog_item", "B", null, """{ "key": "MEMP-901", "status": "ready" }""", null, "chg-b", "me");
+
+        var first = repo.Changes(null, "development", null, 50, null);
+        Assert.Equal(2, first.Changes.Count);
+        Assert.Equal("A", first.Changes[0].Title);  // oldest first
+        Assert.Equal("B", first.Changes[1].Title);
+        Assert.All(first.Changes, c => Assert.Equal("create", c.Op));
+        Assert.False(first.HasMore);
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        repo.Upsert("development", "backlog_item", "B", null, """{ "key": "MEMP-901", "status": "in_progress" }""", null, "chg-b", "me"); // update
+
+        var next = repo.Changes(first.NextCursor, "development", null, 50, null);
+        var change = Assert.Single(next.Changes);
+        Assert.Equal("update", change.Op);
+        Assert.Equal("B", change.Title);
+    }
+
+    [Fact]
+    public void Changes_paginates_with_hasMore()
+    {
+        using var temp = new TempDatabase();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var (repo, _) = NewRepo(temp, clock);
+        for (var i = 0; i < 3; i++)
+        {
+            clock.Advance(TimeSpan.FromSeconds(1));
+            repo.Upsert("development", "backlog_item", "N" + i, null, $$"""{ "key": "MEMP-90{{i}}", "status": "ready" }""", null, "chg-" + i, "me");
+        }
+
+        var page1 = repo.Changes(null, "development", null, 2, null);
+        Assert.Equal(2, page1.Changes.Count);
+        Assert.True(page1.HasMore);
+        var page2 = repo.Changes(page1.NextCursor, "development", null, 2, null);
+        Assert.Single(page2.Changes);
+        Assert.False(page2.HasMore);
+    }
+
+    [Fact]
+    public void Changes_excludes_out_of_scope_domains()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        repo.Upsert("development", "backlog_item", "D", null, """{ "key": "MEMP-900", "status": "ready" }""", null, "chg-d", "me");
+        repo.Upsert("kitchen", "backlog_item", "K", null, """{ "key": "MEMP-901", "status": "ready" }""", null, "chg-k", "me");
+
+        var page = repo.Changes(null, null, null, 50, new[] { "development" });
+
+        Assert.Contains(page.Changes, c => c.Title == "D");
+        Assert.DoesNotContain(page.Changes, c => c.Domain == "kitchen");
+    }
+
+    [Fact]
     public void ScopedPurge_refuses_an_unscoped_purge()
     {
         using var temp = new TempDatabase();

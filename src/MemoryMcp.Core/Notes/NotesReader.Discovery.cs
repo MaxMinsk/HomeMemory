@@ -6,6 +6,89 @@ namespace MemoryMcp.Core.Notes;
 
 public sealed partial class NotesReader
 {
+    private const char CursorSeparator = '~'; // not present in ISO timestamps or hex event ids
+
+    /// <summary>
+    /// Changefeed (MEMP-155): note changes after the opaque <paramref name="since"/> cursor, oldest-first, from the
+    /// append-only event log — for polling-based "subscriptions". The cursor is (ts, event_id); pass back the
+    /// returned <c>NextCursor</c> to resume. Scope-restricted; optional domain/type filter. Hard-deleted (purged)
+    /// notes' events are skipped (no note row to resolve).
+    /// </summary>
+    /// <param name="since">Opaque cursor from a prior call (null/empty = from the beginning).</param>
+    /// <param name="domain">Optional domain filter.</param>
+    /// <param name="type">Optional type filter.</param>
+    /// <param name="limit">Page size (clamped to [1, <see cref="MaxLimit"/>]).</param>
+    /// <param name="restrictToDomains">Auth scope; null = unrestricted, empty = nothing.</param>
+    public NoteChangePage Changes(string? since, string? domain, string? type, int limit, IReadOnlyCollection<string>? restrictToDomains)
+    {
+        domain = Identifiers.NormalizeOptional(domain);
+        type = Identifiers.NormalizeOptional(type);
+        limit = Math.Clamp(limit, 1, MaxLimit);
+
+        var (sinceTs, sinceEvent) = SplitCursor(since);
+
+        using var connection = _connectionFactory.Create();
+        using var command = connection.CreateCommand();
+        var filters = new List<string>
+        {
+            "n.deleted = 0",
+            "(e.ts > $ts OR (e.ts = $ts AND e.event_id > $eid))", // (ts, event_id) cursor: stable across same-ts ties
+        };
+        command.Parameters.AddWithValue("$ts", sinceTs);
+        command.Parameters.AddWithValue("$eid", sinceEvent);
+        if (domain is not null)
+        {
+            filters.Add("n.domain = $domain");
+            command.Parameters.AddWithValue("$domain", domain);
+        }
+
+        if (type is not null)
+        {
+            filters.Add("n.type = $type");
+            command.Parameters.AddWithValue("$type", type);
+        }
+
+        AppendScopeIn(command, filters, "n.domain", restrictToDomains);
+        command.CommandText =
+            "SELECT e.event_id, e.op, e.ts, e.note_id, n.title, n.type, n.domain, n.project, n.status " +
+            "FROM note_events e JOIN notes n ON n.id = e.note_id " +
+            $"WHERE {string.Join(" AND ", filters)} ORDER BY e.ts, e.event_id LIMIT $limit;";
+        command.Parameters.AddWithValue("$limit", limit + 1); // fetch one extra to detect hasMore
+
+        var changes = new List<NoteChange>();
+        using (var reader = command.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                changes.Add(new NoteChange(
+                    reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
+                    reader.IsDBNull(4) ? null : reader.GetString(4), reader.GetString(5), reader.GetString(6),
+                    reader.IsDBNull(7) ? null : reader.GetString(7), reader.GetString(8)));
+            }
+        }
+
+        var hasMore = changes.Count > limit;
+        if (hasMore)
+        {
+            changes.RemoveAt(changes.Count - 1); // drop the lookahead row
+        }
+
+        var nextCursor = changes.Count == 0 ? since : changes[^1].Ts + CursorSeparator + changes[^1].EventId;
+        return new NoteChangePage(changes, nextCursor, hasMore);
+    }
+
+    // Splits the opaque "<ts><sep><eventId>" cursor; empty halves => from the beginning.
+    private static (string Ts, string Event) SplitCursor(string? cursor)
+    {
+        if (string.IsNullOrEmpty(cursor))
+        {
+            return (string.Empty, string.Empty);
+        }
+
+        var parts = cursor.Split(CursorSeparator, 2);
+        return (parts[0], parts.Length > 1 ? parts[1] : string.Empty);
+    }
+
     /// <summary>Returns distinct tags across live notes with their counts (facet discovery), most-used first.</summary>
     public IReadOnlyDictionary<string, long> TagCounts()
     {

@@ -61,6 +61,16 @@ public sealed partial class MemoryTools
         => Translate(() => _notes.Recent(domain, type, limit, _authz.ReadRestriction(domain),
             string.Equals(sort, "used", StringComparison.OrdinalIgnoreCase)));
 
+    /// <summary>Changefeed: notes changed since a cursor (for polling-based subscriptions), scope-restricted.</summary>
+    [McpServerTool(Name = "notes_changes", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("Changefeed for polling-based 'subscriptions': returns notes changed since a cursor (create/update/supersede/archive), OLDEST-first. Pass the previous nextCursor as `since` (omit for the beginning); store nextCursor and poll again (immediately if hasMore). Each change has eventId, op, ts, noteId, title, type, domain, project, status. Scope-restricted; optional domain/type filter.")]
+    public NoteChangePage NotesChanges(
+        [Description("Opaque cursor from the previous call (omit/empty = from the beginning)")] string? since = null,
+        [Description("Domain filter (optional)")] string? domain = null,
+        [Description("Type filter (optional)")] string? type = null,
+        [Description("Page size (default 50, max 100)")] int limit = 50)
+        => Translate(() => _notes.Changes(since, domain, type, limit, _authz.ReadRestriction(domain)));
+
     /// <summary>Gets a note (envelope + payload + size metadata) by id, if it is in scope.</summary>
     [McpServerTool(Name = "notes_get", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
     [Description("Get a note (envelope + payload) by id, plus size metadata (bodyChars, attachmentCount, linkCount). By default the full body is returned. For a large note, pass includeBody=false to peek (no body) or bodyMaxChars to cap it — check `truncated`/`bodyChars` and use notes_read/notes_outline to read the rest.")]
