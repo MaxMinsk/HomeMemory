@@ -14,6 +14,7 @@ using MemoryMcp.Core.Skills;
 using MemoryMcp.Core.Storage;
 using MemoryMcp.Server.Logging;
 using MemoryMcp.Server.Mqtt;
+using MemoryMcp.Server.Webhook;
 using MemoryMcp.Server.Security;
 using MemoryMcp.Server.Tools;
 using MemoryMcp.Server.Web;
@@ -226,7 +227,7 @@ static void RegisterServices(IServiceCollection services, string dbPath)
     services.AddSingleton(TimeProvider.System);
     services.AddSingleton<ISqliteConnectionFactory>(new SqliteConnectionFactory(dbPath));
     services.AddSingleton(SchemaRegistry.FromEmbeddedResources());
-    RegisterMqtt(services);
+    RegisterEventSinks(services);
     services.AddSingleton(provider => new NotesRepository(
         provider.GetRequiredService<ISqliteConnectionFactory>(),
         provider.GetRequiredService<SchemaRegistry>(),
@@ -257,21 +258,47 @@ static void RegisterServices(IServiceCollection services, string dbPath)
         provider.GetRequiredService<TokenStore>()));
 }
 
-// MQTT is opt-in (MEMP-156 / MEMP-056). When disabled, the no-op sink is used and nothing connects to a
-// broker. When enabled, register the shared connection, the note-change sink, and the HA discovery service.
-static void RegisterMqtt(IServiceCollection services)
+// Push event sinks are opt-in (MEMP-156 / MEMP-056 / MEMP-184). MQTT and the HTTP webhook can each be enabled
+// independently; when both are on a composite fans out to both. When neither is on, the no-op sink is used.
+static void RegisterEventSinks(IServiceCollection services)
 {
     var mqtt = MqttOptions.FromEnvironment();
-    if (!mqtt.Enabled || string.IsNullOrWhiteSpace(mqtt.Host))
+    var mqttOn = mqtt.Enabled && !string.IsNullOrWhiteSpace(mqtt.Host);
+    if (mqttOn)
     {
-        services.AddSingleton<INoteEventSink>(NullNoteEventSink.Instance);
-        return;
+        services.AddSingleton(mqtt);
+        services.AddSingleton<MqttConnection>();
+        services.AddSingleton<MqttNoteEventSink>();
+        services.AddHostedService<HomeAssistantDiscoveryService>();
     }
 
-    services.AddSingleton(mqtt);
-    services.AddSingleton<MqttConnection>();
-    services.AddSingleton<INoteEventSink, MqttNoteEventSink>();
-    services.AddHostedService<HomeAssistantDiscoveryService>();
+    var webhook = WebhookOptions.FromEnvironment();
+    if (webhook.Enabled)
+    {
+        services.AddSingleton(webhook);
+        services.AddSingleton<WebhookNoteEventSink>();
+    }
+
+    services.AddSingleton<INoteEventSink>(provider =>
+    {
+        var sinks = new List<INoteEventSink>();
+        if (mqttOn)
+        {
+            sinks.Add(provider.GetRequiredService<MqttNoteEventSink>());
+        }
+
+        if (webhook.Enabled)
+        {
+            sinks.Add(provider.GetRequiredService<WebhookNoteEventSink>());
+        }
+
+        return sinks.Count switch
+        {
+            0 => NullNoteEventSink.Instance,
+            1 => sinks[0],
+            _ => new CompositeNoteEventSink(sinks),
+        };
+    });
 }
 
 static void Bootstrap(IServiceProvider services)

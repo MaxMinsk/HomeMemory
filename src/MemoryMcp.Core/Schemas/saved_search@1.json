@@ -1,0 +1,18 @@
+{
+  "$id": "saved_search@1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["name"],
+  "additionalProperties": false,
+  "properties": {
+    "name": { "type": "string", "description": "Human-readable name of the saved search/view." },
+    "query": { "type": "string", "description": "Full-text query to run (optional)." },
+    "domain": { "type": "string", "description": "Domain to search in (optional; defaults to the note's own domain when run)." },
+    "type": { "type": "string", "description": "Type filter (optional)." },
+    "tags": { "type": "array", "items": { "type": "string" }, "description": "Tags filter — every tag must be present (optional)." },
+    "filter": { "type": "string", "description": "Filter DSL expression (optional)." },
+    "sort": { "type": "string", "description": "Sort spec, e.g. 'updated_utc desc' or 'recency' (optional)." },
+    "rank": { "enum": ["lexical", "hybrid"], "description": "Relevance mode for a text query (optional)." },
+    "limit": { "type": "integer", "minimum": 1, "maximum": 100, "description": "Page size (optional)." }
+  }
+}

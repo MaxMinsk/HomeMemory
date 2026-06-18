@@ -43,5 +43,14 @@ if bashio::config.true 'mqtt_enabled'; then
   bashio::log.info "MQTT publishing enabled (host=${MEMORY_MQTT_HOST}:${MEMORY_MQTT_PORT}, prefix=${MEMORY_MQTT_TOPIC_PREFIX})"
 fi
 
+# Opt-in HTTP webhook for note-change events (MEMP-184). Disabled by default: with no URL nothing is posted.
+if bashio::config.has_value 'webhook_url'; then
+  export MEMORY_WEBHOOK_URL="$(bashio::config 'webhook_url')"
+  if bashio::config.has_value 'webhook_secret'; then
+    export MEMORY_WEBHOOK_SECRET="$(bashio::config 'webhook_secret')"
+  fi
+  bashio::log.info "Webhook publishing enabled (url=${MEMORY_WEBHOOK_URL})"
+fi
+
 bashio::log.info "Starting Memory MCP (HTTP on :8099, db=${MEMORY_DB_PATH})"
 exec /opt/memory-mcp/MemoryMcp.Server

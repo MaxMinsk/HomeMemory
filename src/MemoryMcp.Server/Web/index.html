@@ -84,6 +84,8 @@
       <input type="text" id="tag" placeholder="tag (e.g. loc:summer-kitchen)" />
       <button onclick="search()">Search</button>
       <button onclick="inbox()" title="Review queue: lint findings (unstructured / stale / possible secret / no tags / duplicate / broken link)" style="background:#3a2f12;color:#e0c074">Inbox</button>
+      <button onclick="savedSearches()" title="Saved searches (named views) — click one to run it">Saved</button>
+      <button onclick="activity()" title="Recent write activity by operation and type">Activity</button>
     </div>
     <div id="tagbar"></div>
     <div id="list"><div class="empty">Enter token, then Search.</div></div>
@@ -285,6 +287,54 @@ async function inbox() {
   } catch(e){ list.innerHTML = '<div class="empty">'+esc(e.message)+'</div>'; }
 }
 
+// Saved searches (MEMP-185/187): list saved_search notes; click one to load its params and run it.
+async function savedSearches() {
+  const dom = $('#domain').value;
+  const list = $('#list');
+  try {
+    const sp = new URLSearchParams(); sp.set('type','saved_search'); sp.set('limit','100');
+    if (dom) sp.set('domain', dom);
+    const page = await api('/api/search?' + sp.toString());
+    list.innerHTML = page.items.length
+      ? `<div class="grouphdr">saved searches · ${page.items.length}</div>` + page.items.map(it => {
+          let p = {}; try { p = it.payloadJson ? JSON.parse(it.payloadJson) : {}; } catch {}
+          const bits = [p.query && `q:${p.query}`, p.type && `type:${p.type}`, p.tags && p.tags.length && `tags:${p.tags.join(',')}`, p.filter, p.sort && `sort:${p.sort}`].filter(Boolean);
+          return `<div class="item" onclick="runSaved('${it.id}')"><div class="t">${esc(p.name)||esc(it.title)||'<i>untitled</i>'}</div>` +
+            `<div class="m"><span class="badge">${esc(it.domain)}</span>${bits.length?esc(bits.join(' · ')):'<span class="k">empty view</span>'}</div></div>`;
+        }).join('')
+      : '<div class="empty">No saved searches. Create one with notes_upsert type=saved_search.</div>';
+  } catch(e){ list.innerHTML = '<div class="empty">'+esc(e.message)+'</div>'; }
+}
+
+// Apply a saved_search note's params to the filters and run it.
+async function runSaved(id) {
+  try {
+    const { note } = await api('/api/notes/' + encodeURIComponent(id));
+    let p = {}; try { p = note.payloadJson ? JSON.parse(note.payloadJson) : {}; } catch {}
+    $('#q').value = p.query || '';
+    $('#type').value = p.type || '';
+    $('#domain').value = p.domain || note.domain || '';
+    $('#tag').value = (p.tags && p.tags.length) ? p.tags[0] : '';
+    $('#status').value = 'active';
+    search();
+  } catch(e){ $('#list').innerHTML = '<div class="empty">'+esc(e.message)+'</div>'; }
+}
+
+// Recent activity overview (MEMP-186/187): counts by op and type over a window, into the detail pane.
+async function activity() {
+  const dom = $('#domain').value;
+  const det = $('#detail');
+  try {
+    const a = await api('/api/activity?days=30' + (dom ? '&domain=' + encodeURIComponent(dom) : ''));
+    const rows = o => Object.entries(o||{}).sort((x,y)=>y[1]-x[1]).map(([k,v])=>`<tr><td>${esc(k)}</td><td style="text-align:right">${v}</td></tr>`).join('') || '<tr><td class="k" colspan="2">none</td></tr>';
+    det.dataset.sel = '';
+    det.innerHTML = `<h2>Activity · last 30 days${dom?` · ${esc(dom)}`:''}</h2>` +
+      `<p class="k">${a.total} change(s) since ${esc((a.sinceUtc||'').slice(0,10))}.</p>` +
+      `<h3>By operation</h3><table class="kv">${rows(a.byOp)}</table>` +
+      `<h3>By type</h3><table class="kv">${rows(a.byType)}</table>`;
+  } catch(e){ det.innerHTML = '<div class="empty">'+esc(e.message)+'</div>'; }
+}
+
 // Owner maintenance panel (root token only): run the CLI ops from the UI. Dry-run first, then Apply.
 function admin() {
   $('#detail').innerHTML =
@@ -319,6 +369,8 @@ function admin() {
     `<div class="meta"><textarea id="importtext" class="fld" rows="4" placeholder="paste NDJSON to import" style="width:100%;font-family:monospace"></textarea><br>` +
     `<button onclick="adminImport(false)">Dry-run</button> ` +
     `<button class="btn-reject" onclick="adminImport(true)">Apply</button></div>` +
+    `<div class="meta"><b>Webhook</b> <span class="k">— send a test event to the configured webhook_url (verify delivery)</span><br>` +
+    `<button onclick="adminWebhookTest()">Send test event</button></div>` +
     `<h3>output</h3><pre id="adminout" class="k">—</pre>` +
     `<h3>Tokens</h3>` +
     `<div class="meta"><input id="tlabel" class="fld" type="text" placeholder="label (optional)"> ` +
@@ -435,6 +487,17 @@ async function adminRun(op, apply) {
   const out = $('#adminout'); if (out) out.textContent = 'running…';
   try {
     const r = await fetch('/api/admin/' + op + '?apply=' + apply, { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
+    if (r.status === 403) { out.textContent = '403 — requires the root (all-domains) token.'; return; }
+    if (!r.ok) throw new Error(r.status + ' ' + (await r.text()).slice(0,300));
+    out.textContent = JSON.stringify(await r.json(), null, 2);
+  } catch(e){ out.textContent = e.message; }
+}
+
+// Send a synthetic event to the configured webhook and show the delivered status (MEMP-188).
+async function adminWebhookTest() {
+  const out = $('#adminout'); if (out) out.textContent = 'sending…';
+  try {
+    const r = await fetch('/api/admin/webhook-test', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
     if (r.status === 403) { out.textContent = '403 — requires the root (all-domains) token.'; return; }
     if (!r.ok) throw new Error(r.status + ' ' + (await r.text()).slice(0,300));
     out.textContent = JSON.stringify(await r.json(), null, 2);

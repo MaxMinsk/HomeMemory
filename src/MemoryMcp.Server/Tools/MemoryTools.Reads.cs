@@ -76,6 +76,38 @@ public sealed partial class MemoryTools
         [Description("Page size (default 50, max 100)")] int limit = 50)
         => Translate(() => _notes.Changes(since, domain, type, limit, _authz.ReadRestriction(domain)));
 
+    /// <summary>Runs a saved search (named view) by its stable key, scope-restricted.</summary>
+    [McpServerTool(Name = "notes_saved_search_run", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("Run a saved search (a saved_search note) by its key: resolves the named view and executes notes_search with its stored params (query/domain/type/tags/filter/sort/rank/limit), returning a normal page of hits. Define views once with notes_upsert type=saved_search; list them with notes_search type=saved_search. Null if the saved search is missing or out of scope.")]
+    public SearchPage? NotesSavedSearchRun(
+        [Description("Domain the saved_search note lives in")] string domain,
+        [Description("The saved_search note's dedupKey")] string key)
+    {
+        var note = _notes.GetByDedupKey(domain, "saved_search", key);
+        if (note is null || !_authz.CanRead(note.Domain))
+        {
+            return null;
+        }
+
+        var spec = SavedSearchSpec.Parse(note.PayloadJson);
+        var target = string.IsNullOrWhiteSpace(spec.Domain) ? note.Domain : spec.Domain;
+        return Translate(() => _notes.Search(spec.Query, target, spec.Type, spec.Tags, "active",
+            spec.Limit ?? 20, 0, _authz.ReadRestriction(target), spec.Filter, includePayload: true, false, spec.Sort, spec.Rank));
+    }
+
+    /// <summary>Summarizes recent write activity (counts by op/type over a window), scope-restricted.</summary>
+    [McpServerTool(Name = "notes_activity", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("Summarize recent write activity from the change log over the last N days: total changes plus a breakdown by operation (create/update/supersede/archive/...) and by note type, scope-restricted and optionally within one domain. Counts only (no bodies). Use to see what's been changing lately.")]
+    public ActivityReport NotesActivity(
+        [Description("Domain filter (optional; default = all in scope)")] string? domain = null,
+        [Description("Look back this many days (default 7, max 365)")] int days = 7)
+    {
+        var window = Math.Clamp(days, 1, 365);
+        var since = TimeProvider.System.GetUtcNow().UtcDateTime.AddDays(-window)
+            .ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+        return Translate(() => _notes.Activity(domain, since, _authz.ReadRestriction(domain)));
+    }
+
     /// <summary>Lists distinct tags with counts (facet discovery), scope-restricted.</summary>
     [McpServerTool(Name = "notes_tags", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
     [Description("List distinct tags with their counts (most-used first) for facet discovery, scope-restricted, optionally within one domain — to see the existing tag vocabulary before tagging or filtering by tag.")]

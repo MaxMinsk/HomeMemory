@@ -89,6 +89,51 @@ public sealed partial class NotesReader
         return (parts[0], parts.Length > 1 ? parts[1] : string.Empty);
     }
 
+    /// <summary>
+    /// Summarizes recent write activity from the note-event log (MEMP-186): total events at/after
+    /// <paramref name="sinceUtc"/> plus counts by operation and by note type, scope-restricted and optionally
+    /// limited to one domain. Counts only — never bodies. Events for purged notes (no note row) are skipped.
+    /// </summary>
+    /// <param name="domain">Optional domain filter.</param>
+    /// <param name="sinceUtc">Window start as an ISO-8601 timestamp (compare against <c>note_events.ts</c>).</param>
+    /// <param name="restrictToDomains">Auth scope; null = unrestricted, empty = nothing.</param>
+    public ActivityReport Activity(string? domain, string sinceUtc, IReadOnlyCollection<string>? restrictToDomains)
+    {
+        domain = Identifiers.NormalizeOptional(domain);
+        using var connection = _connectionFactory.Create();
+        var byOp = ActivityCounts(connection, "e.op", domain, sinceUtc, restrictToDomains);
+        var byType = ActivityCounts(connection, "n.type", domain, sinceUtc, restrictToDomains);
+        return new ActivityReport(domain, sinceUtc, byOp.Values.Sum(), byOp, byType);
+    }
+
+    // Counts events at/after the cutoff grouped by a single column (op or type), scope/domain filtered.
+    private static IReadOnlyDictionary<string, long> ActivityCounts(
+        SqliteConnection connection, string groupColumn, string? domain, string sinceUtc, IReadOnlyCollection<string>? restrictToDomains)
+    {
+        using var command = connection.CreateCommand();
+        var filters = new List<string> { "n.deleted = 0", "e.ts >= $since" };
+        command.Parameters.AddWithValue("$since", sinceUtc);
+        if (domain is not null)
+        {
+            filters.Add("n.domain = $d");
+            command.Parameters.AddWithValue("$d", domain);
+        }
+
+        AppendScopeIn(command, filters, "n.domain", restrictToDomains);
+        command.CommandText =
+            $"SELECT {groupColumn} AS k, count(*) AS n FROM note_events e JOIN notes n ON n.id = e.note_id " +
+            $"WHERE {string.Join(" AND ", filters)} GROUP BY k ORDER BY n DESC, k;";
+
+        var counts = new Dictionary<string, long>(StringComparer.Ordinal);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            counts[reader.GetString(0)] = reader.GetInt64(1);
+        }
+
+        return counts;
+    }
+
     /// <summary>Returns distinct tags across live notes with their counts (facet discovery), most-used first.</summary>
     public IReadOnlyDictionary<string, long> TagCounts() => TagFacets(null, null);
 

@@ -34,6 +34,8 @@ options:
   mqtt_username: ""
   mqtt_password: ""
   mqtt_topic_prefix: "memory"
+  webhook_url: ""
+  webhook_secret: ""
 schema:
   db_path: str
   bearer_token: password?
@@ -47,3 +49,5 @@ schema:
   mqtt_username: str?
   mqtt_password: password?
   mqtt_topic_prefix: str?
+  webhook_url: str?
+  webhook_secret: password?

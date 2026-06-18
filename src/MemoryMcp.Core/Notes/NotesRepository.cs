@@ -94,6 +94,10 @@ public sealed class NotesRepository
     public NoteEventDetail? Event(string noteId, string eventId, int? maxChars = null, string? fields = null)
         => _reader.Event(noteId, eventId, maxChars, fields);
 
+    /// <inheritdoc cref="NotesReader.Activity"/>
+    public ActivityReport Activity(string? domain, string sinceUtc, IReadOnlyCollection<string>? restrictToDomains)
+        => _reader.Activity(domain, sinceUtc, restrictToDomains);
+
     /// <inheritdoc cref="NotesReader.TagCounts"/>
     public IReadOnlyDictionary<string, long> TagCounts() => _reader.TagCounts();
 

@@ -37,6 +37,41 @@ internal static class ViewerEndpoints
         app.MapAdminActions();
         app.MapTokenAdmin();
 
+        app.MapSearch();
+
+        app.MapGet("/api/tags", (NotesRepository notes, RequestAuthorizer authz, string? domain) =>
+        {
+            try
+            {
+                return Results.Json(notes.TagFacets(domain, authz.ReadRestriction(domain)));
+            }
+            catch (ScopeForbiddenException)
+            {
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            }
+        });
+
+        app.MapActivity();
+
+        app.MapGet("/api/notes/{id}", (string id, NotesRepository notes, ArtifactsService artifacts, ArtifactUrlSigner signer, RequestAuthorizer authz) =>
+        {
+            var note = notes.Get(id);
+            if (note is null || !authz.CanRead(note.Domain))
+            {
+                return Results.NotFound(); // out-of-scope notes are indistinguishable from missing
+            }
+
+            // Each attachment carries a short-lived signed URL; the bearer never goes into the link.
+            var attachments = artifacts.List(note.Domain, id)
+                .Select(a => new { a.Id, a.Filename, a.ContentType, a.SizeBytes, a.Sha256, url = signer.BuildPath(a.Id) });
+            return Results.Json(new { note, attachments, links = notes.Links(id) });
+        });
+
+        app.MapArtifactBytes();
+    }
+
+    // Full-text + structured search, scope-checked (403 on an explicit out-of-scope domain).
+    private static void MapSearch(this IEndpointRouteBuilder app) =>
         app.MapGet("/api/search", (
             NotesRepository notes, RequestAuthorizer authz,
             string? q, string? domain, string? type, string? tags, string? filter, string? status, int? limit, int? offset, string? sort) =>
@@ -59,34 +94,24 @@ internal static class ViewerEndpoints
             return Results.Json(page);
         });
 
-        app.MapGet("/api/tags", (NotesRepository notes, RequestAuthorizer authz, string? domain) =>
+    // Recent write-activity summary (MEMP-186), scope-checked like the rest of the read API.
+    private static void MapActivity(this IEndpointRouteBuilder app) =>
+        app.MapGet("/api/activity", (NotesRepository notes, RequestAuthorizer authz, string? domain, int? days) =>
         {
+            IReadOnlyCollection<string>? restrict;
             try
             {
-                return Results.Json(notes.TagFacets(domain, authz.ReadRestriction(domain)));
+                restrict = authz.ReadRestriction(domain);
             }
             catch (ScopeForbiddenException)
             {
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
             }
+
+            var window = Math.Clamp(days ?? 7, 1, 365);
+            var since = DateTime.UtcNow.AddDays(-window).ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+            return Results.Json(notes.Activity(domain, since, restrict));
         });
-
-        app.MapGet("/api/notes/{id}", (string id, NotesRepository notes, ArtifactsService artifacts, ArtifactUrlSigner signer, RequestAuthorizer authz) =>
-        {
-            var note = notes.Get(id);
-            if (note is null || !authz.CanRead(note.Domain))
-            {
-                return Results.NotFound(); // out-of-scope notes are indistinguishable from missing
-            }
-
-            // Each attachment carries a short-lived signed URL; the bearer never goes into the link.
-            var attachments = artifacts.List(note.Domain, id)
-                .Select(a => new { a.Id, a.Filename, a.ContentType, a.SizeBytes, a.Sha256, url = signer.BuildPath(a.Id) });
-            return Results.Json(new { note, attachments, links = notes.Links(id) });
-        });
-
-        app.MapArtifactBytes();
-    }
 
     // Unauthenticated liveness/readiness probe (MEMP-144) for the HA watchdog / Docker healthcheck.
     // 200 only if the database answers; no version or other detail is leaked to an unauthenticated caller.
@@ -172,7 +197,35 @@ internal static class ViewerEndpoints
             var ndjson = await reader.ReadToEndAsync();
             return Results.Json(NotesImport.Run(notes, ndjson, apply ?? false));
         });
+        app.MapWebhookTest();
     }
+
+    // Root-only: send a synthetic event to the configured webhook and report the delivered status (MEMP-188).
+    private static void MapWebhookTest(this IEndpointRouteBuilder app) =>
+        app.MapPost("/api/admin/webhook-test", async (RequestAuthorizer authz, IServiceProvider services) =>
+        {
+            if (RequireRoot(authz) is { } denied)
+            {
+                return denied;
+            }
+
+            if (services.GetService(typeof(Webhook.WebhookNoteEventSink)) is not Webhook.WebhookNoteEventSink sink)
+            {
+                return Results.Json(new { ok = false, configured = false, message = "No webhook configured (set webhook_url)." });
+            }
+
+            var probe = new NoteChangedEvent("webhook-test", "memory-mcp", "diagnostic", null,
+                Array.Empty<string>(), "test", DateTime.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
+            try
+            {
+                var status = await sink.TrySendAsync(probe);
+                return Results.Json(new { ok = status is >= 200 and < 300, configured = true, status });
+            }
+            catch (Exception ex)
+            {
+                return Results.Json(new { ok = false, configured = true, error = ex.Message });
+            }
+        });
 
     // Maintenance is global and mutating — only the unrestricted (root/all-domains) token may run it.
     private static IResult? RequireRoot(RequestAuthorizer authz) =>
