@@ -13,7 +13,7 @@ public sealed partial class MemoryTools
 {
     /// <summary>Searches notes by optional full-text query plus structured filters (scope-restricted, paginated).</summary>
     [McpServerTool(Name = "notes_search", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
-    [Description("Search notes by an optional full-text query plus filters. Returns ONE page of hits (snippets + BM25 scores, never the full body) with total/hasMore — paginate with offset; do not try to fetch everything at once. Pass `sort` to order by a field instead of relevance/recency (e.g. top-N by a payload value).")]
+    [Description("Search notes by an optional full-text query plus filters. Returns ONE page of hits (snippets + BM25 scores, never the full body) with total/hasMore — paginate with offset; do not try to fetch everything at once. Query syntax: words are matched by prefix + RU/EN stemming; a fully \"double-quoted\" query is an exact phrase; a -term excludes matches. Pass `sort` to order by a field instead of relevance/recency (e.g. top-N by a payload value).")]
     public SearchPage NotesSearch(
         [Description("Full-text query (optional)")] string? query = null,
         [Description("Domain filter, e.g. memory-mcp")] string? domain = null,
@@ -285,7 +285,9 @@ public sealed partial class MemoryTools
 
         var ruleFilter = string.IsNullOrWhiteSpace(project) ? null : $"project == '{project}' OR project is null";
         var rules = _notes.Search(null, domain, "memory_rule", null, "active", 100, 0, _authz.ReadRestriction(domain), ruleFilter, includePayload: true).Items;
-        return new DomainManifest(domain, _notes.CountByTypeInDomain(domain), _skills.List(domain, null, project), rules);
+        var topTags = _notes.TagFacets(domain, _authz.ReadRestriction(domain))
+            .OrderByDescending(tag => tag.Value).Take(25).ToDictionary(tag => tag.Key, tag => tag.Value, StringComparer.Ordinal);
+        return new DomainManifest(domain, _notes.CountByTypeInDomain(domain), _skills.List(domain, null, project), rules, topTags);
     }
 
     /// <summary>Lists tags (facets) with their counts, most-used first.</summary>

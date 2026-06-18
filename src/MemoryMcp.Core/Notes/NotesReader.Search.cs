@@ -35,18 +35,21 @@ public sealed partial class NotesReader
         tags = tags?.Select(Identifiers.Normalize).ToList();
         limit = Math.Clamp(limit, 1, MaxLimit);
         offset = Math.Max(0, offset);
-        var tokens = string.IsNullOrWhiteSpace(query) ? new List<string>() : SnippetBuilder.Tokenize(query!);
+        var phrase = !string.IsNullOrWhiteSpace(query) && IsQuotedPhrase(query!); // a fully-quoted query is an exact phrase (MEMP-166)
+        // Split off '-term' exclusions (MEMP-169); a quoted phrase is taken verbatim (no exclusion parsing).
+        var (positives, negatives) = phrase ? (query!, new List<string>()) : SplitQuery(query);
+        var tokens = string.IsNullOrWhiteSpace(positives) ? new List<string>() : SnippetBuilder.Tokenize(positives);
+        var negTokens = negatives.SelectMany(SnippetBuilder.Tokenize).Distinct(StringComparer.Ordinal).ToList();
         var useFts = tokens.Count > 0;
         var compiledFilter = string.IsNullOrWhiteSpace(filter) ? null : NoteFilter.Compile(filter!);
         var sortBody = SortOrder.Compile(sort);
         // With no explicit sort, a note whose dedup_key IS the query ranks first (MEMP-159): searching a key
         // (e.g. "HPA-008") should surface that note above ones that merely mention it.
-        var exactKey = sortBody is null && !string.IsNullOrWhiteSpace(query) ? query!.Trim() : null;
-        var phrase = useFts && IsQuotedPhrase(query); // a fully-quoted query is an exact phrase (MEMP-166)
+        var exactKey = sortBody is null && !string.IsNullOrWhiteSpace(positives) ? positives.Trim() : null;
 
         using var connection = _connectionFactory.Create();
-        var total = Count(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase);
-        var items = Page(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload, sortBody, exactKey, phrase);
+        var total = Count(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens);
+        var items = Page(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload, sortBody, exactKey, phrase, negTokens);
         if (includeLinks)
         {
             items = items.Select(item => item with { Links = Links(item.Id) }).ToList();
@@ -58,10 +61,10 @@ public sealed partial class NotesReader
     private static int Count(
         SqliteConnection connection, bool useFts, IReadOnlyList<string> tokens,
         string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
-        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, bool phrase = false)
+        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, bool phrase = false, IReadOnlyList<string>? negTokens = null)
     {
         using var command = connection.CreateCommand();
-        var where = ApplyFilters(command, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase);
+        var where = ApplyFilters(command, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens);
         command.CommandText = useFts
             ? $"SELECT count(*) FROM notes_fts JOIN notes n ON n.rowid = notes_fts.rowid WHERE {where};"
             : $"SELECT count(*) FROM notes n WHERE {where};";
@@ -71,10 +74,10 @@ public sealed partial class NotesReader
     private static IReadOnlyList<SearchResult> Page(
         SqliteConnection connection, bool useFts, IReadOnlyList<string> tokens,
         string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
-        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, int limit, int offset, bool includePayload, string? sortBody = null, string? exactKey = null, bool phrase = false)
+        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, int limit, int offset, bool includePayload, string? sortBody = null, string? exactKey = null, bool phrase = false, IReadOnlyList<string>? negTokens = null)
     {
         using var command = connection.CreateCommand();
-        var where = ApplyFilters(command, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase);
+        var where = ApplyFilters(command, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens);
         command.Parameters.AddWithValue("$limit", limit);
         command.Parameters.AddWithValue("$offset", offset);
         // envelope extras are always selected (cheap); they reach the caller only when includePayload is set.
@@ -117,6 +120,29 @@ public sealed partial class NotesReader
         return results;
     }
 
+    // Splits a query into its positive text and the '-term' exclusions (MEMP-169). A lone '-' is kept as text.
+    private static (string Positives, List<string> Negatives) SplitQuery(string? query)
+    {
+        var positives = new List<string>();
+        var negatives = new List<string>();
+        if (!string.IsNullOrWhiteSpace(query))
+        {
+            foreach (var chunk in query.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (chunk.Length > 1 && chunk[0] == '-')
+                {
+                    negatives.Add(chunk[1..]);
+                }
+                else
+                {
+                    positives.Add(chunk);
+                }
+            }
+        }
+
+        return (string.Join(' ', positives), negatives);
+    }
+
     // True when the whole query is a single double-quoted segment (an exact-phrase request).
     private static bool IsQuotedPhrase(string? query)
     {
@@ -133,7 +159,7 @@ public sealed partial class NotesReader
     private static string ApplyFilters(
         SqliteCommand command, bool useFts, IReadOnlyList<string> tokens,
         string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
-        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, bool phrase = false)
+        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, bool phrase = false, IReadOnlyList<string>? negTokens = null)
     {
         var filters = new List<string>();
 
@@ -156,6 +182,12 @@ public sealed partial class NotesReader
                 match = stemmed.Count == 0
                     ? raw
                     : $"({raw}) OR (stems : ({string.Join(' ', stemmed.Select(stem => $"\"{stem}\""))}))";
+            }
+
+            if (negTokens is { Count: > 0 })
+            {
+                // Exclude notes matching any '-term' (MEMP-169): FTS5 `(match) NOT (a* b* ...)`.
+                match = $"({match}) NOT ({string.Join(' ', negTokens.Select(token => $"\"{token}\"*"))})";
             }
 
             filters.Add("notes_fts MATCH $q");

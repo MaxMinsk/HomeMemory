@@ -570,6 +570,19 @@ public class NotesRepositoryTests
     }
 
     [Fact]
+    public void Search_excludes_negative_terms()
+    {
+        using var temp = new TempDatabase();
+        var (repo, _) = NewRepo(temp);
+        repo.Upsert("development", "backlog_item", "A", "anr spike mintegral overhead", """{ "key": "MEMP-900", "status": "ready" }""", null, "a", "me");
+        repo.Upsert("development", "backlog_item", "B", "anr spike webview", """{ "key": "MEMP-901", "status": "ready" }""", null, "b", "me");
+
+        var page = repo.Search(query: "anr -mintegral", domain: "development");
+
+        Assert.Equal("B", Assert.Single(page.Items).Title); // both match 'anr'; A is excluded by '-mintegral' (MEMP-169)
+    }
+
+    [Fact]
     public void Search_rejects_an_unsortable_or_injected_field()
     {
         using var temp = new TempDatabase();

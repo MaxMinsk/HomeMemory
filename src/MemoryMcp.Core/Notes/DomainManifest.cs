@@ -9,8 +9,10 @@ namespace MemoryMcp.Core.Notes;
 /// <param name="NotesByType">Active note counts grouped by type.</param>
 /// <param name="Skills">The domain's skills (metadata only, no bodies).</param>
 /// <param name="Rules">Active <c>memory_rule</c> notes in the domain (with payload), the rules in force.</param>
+/// <param name="TopTags">The domain's most-used tags with counts (facet vocabulary), most-used first.</param>
 public sealed record DomainManifest(
     string Domain,
     IReadOnlyDictionary<string, long> NotesByType,
     IReadOnlyList<Skill> Skills,
-    IReadOnlyList<SearchResult> Rules);
+    IReadOnlyList<SearchResult> Rules,
+    IReadOnlyDictionary<string, long> TopTags);
