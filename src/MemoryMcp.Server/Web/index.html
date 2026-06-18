@@ -37,6 +37,18 @@
   .tag { display:inline-block; background:#1f3556; color:#9cc4ff; border-radius:4px; padding:0 7px; font-size:12px; margin:0 5px 3px 0; cursor:pointer; }
   .tag:hover { background:#2a4d82; color:#cfe1ff; }
   a { color:var(--accent); }
+  .md { line-height:1.55; }
+  .md > :first-child { margin-top:0; }
+  .md h1,.md h2,.md h3,.md h4 { margin:1em 0 .4em; line-height:1.25; }
+  .md h1 { font-size:1.4em; } .md h2 { font-size:1.2em; } .md h3 { font-size:1.05em; } .md h4 { font-size:1em; color:var(--muted); }
+  .md p { margin:.5em 0; } .md ul,.md ol { margin:.5em 0; padding-left:1.4em; } .md li { margin:.15em 0; }
+  .md code { background:#222838; border-radius:4px; padding:1px 5px; font-size:.92em; }
+  .md pre { margin:.6em 0; } .md pre code { background:none; padding:0; }
+  .md blockquote { margin:.6em 0; padding:2px 12px; border-left:3px solid var(--line); color:var(--muted); }
+  .md hr { border:0; border-top:1px solid var(--line); margin:1em 0; }
+  .md table { border-collapse:collapse; margin:.6em 0; display:block; overflow:auto; }
+  .md th,.md td { border:1px solid var(--line); padding:5px 9px; text-align:left; }
+  .md th { background:#13161d; }
   .empty { color:var(--muted); padding:40px; text-align:center; }
 </style>
 </head>
@@ -80,6 +92,41 @@ async function api(path) {
   return r.json();
 }
 function esc(s){ return (s==null?'':String(s)).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// Minimal, self-contained Markdown -> HTML for note bodies. Input is HTML-escaped FIRST (XSS-safe), then a small
+// block/inline subset is applied: fenced code, headings, tables, lists, blockquote, hr, paragraphs; inline code,
+// bold, italic, and http(s)/relative links only. Good enough for our own note bodies; no external dependency.
+function mdInline(s){
+  return s
+    .replace(/`([^`]+)`/g,'<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
+    .replace(/\b_([^_]+)_\b/g,'<em>$1</em>')
+    .replace(/\*([^*\n]+)\*/g,'<em>$1</em>')
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g,(m,t,u)=> /^(https?:\/\/|\/|#)/i.test(u)?'<a href="'+u+'" target="_blank" rel="noopener">'+t+'</a>':m);
+}
+function mdToHtml(src){
+  const L = esc(src).split('\n');
+  const isSep = s => /\|/.test(s) && /^\s*\|?\s*:?-{2,}/.test(s);
+  const blockAt = i => { const s=L[i]||''; return /^```/.test(s)||/^(#{1,6})\s+/.test(s)||/^\s*(---|\*\*\*|___)\s*$/.test(s)||/^>\s?/.test(s)||/^\s*[-*+]\s+/.test(s)||/^\s*\d+\.\s+/.test(s)||(s.includes('|')&&isSep(L[i+1]||'')); };
+  let html='', i=0;
+  while(i<L.length){
+    const s=L[i];
+    if(/^```/.test(s)){ const c=[]; i++; while(i<L.length&&!/^```/.test(L[i])){c.push(L[i]);i++;} i++; html+='<pre><code>'+c.join('\n')+'</code></pre>'; continue; }
+    if(s.includes('|')&&isSep(L[i+1]||'')){
+      const row=r=>r.replace(/^\s*\|/,'').replace(/\|\s*$/,'').split('|').map(x=>x.trim());
+      const head=row(s); i+=2; let body='';
+      while(i<L.length&&L[i].includes('|')&&L[i].trim()!==''){ body+='<tr>'+row(L[i]).map(c=>'<td>'+mdInline(c)+'</td>').join('')+'</tr>'; i++; }
+      html+='<table><thead><tr>'+head.map(c=>'<th>'+mdInline(c)+'</th>').join('')+'</tr></thead><tbody>'+body+'</tbody></table>'; continue;
+    }
+    const h=s.match(/^(#{1,6})\s+(.*)$/); if(h){ const n=h[1].length; html+='<h'+n+'>'+mdInline(h[2])+'</h'+n+'>'; i++; continue; }
+    if(/^\s*(---|\*\*\*|___)\s*$/.test(s)){ html+='<hr>'; i++; continue; }
+    if(/^>\s?/.test(s)){ const q=[]; while(i<L.length&&/^>\s?/.test(L[i])){q.push(L[i].replace(/^>\s?/,''));i++;} html+='<blockquote>'+mdInline(q.join(' '))+'</blockquote>'; continue; }
+    if(/^\s*[-*+]\s+/.test(s)){ let it=''; while(i<L.length&&/^\s*[-*+]\s+/.test(L[i])){it+='<li>'+mdInline(L[i].replace(/^\s*[-*+]\s+/,''))+'</li>';i++;} html+='<ul>'+it+'</ul>'; continue; }
+    if(/^\s*\d+\.\s+/.test(s)){ let it=''; while(i<L.length&&/^\s*\d+\.\s+/.test(L[i])){it+='<li>'+mdInline(L[i].replace(/^\s*\d+\.\s+/,''))+'</li>';i++;} html+='<ol>'+it+'</ol>'; continue; }
+    if(s.trim()===''){ i++; continue; }
+    const p=[]; while(i<L.length&&L[i].trim()!==''&&!blockAt(i)){ p.push(L[i]); i++; } html+='<p>'+mdInline(p.join(' '))+'</p>';
+  }
+  return html;
+}
 function logout(){ localStorage.removeItem('memtoken'); location.hash=''; location.reload(); }
 
 // Click any tag chip (list or detail) to filter the search by that tag. Capture phase so it wins
@@ -336,7 +383,7 @@ async function open_(id) {
       `<div class="meta"><span class="lbl">tags</span>${tags.length ? tags.map(t=>`<span class="tag" data-tag="${esc(t)}" title="filter by this tag">${esc(t)}</span>`).join('') : '<i class="k">none</i>'}</div>` +
       `<p class="k">key: ${esc(n.dedupKey||'—')} · updated: ${esc(n.updatedUtc)} · by: ${esc(n.sourceAgent||'—')}</p>` +
       (payload ? `<h3>payload</h3><pre>${esc(payload)}</pre>` : '') +
-      (n.body ? `<h3>body</h3><pre>${esc(n.body)}</pre>` : '') +
+      (n.body ? `<h3>body</h3><div class="md">${mdToHtml(n.body)}</div>` : '') +
       linkSection('outgoing links', outs) +
       linkSection('incoming links (backlinks)', ins) +
       (atts ? `<h3>attachments</h3><ul>${atts}</ul>` : '');
