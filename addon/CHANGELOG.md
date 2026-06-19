@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.56.0
+
+Sprint 49 — RU morphology (MEMP-192), finishing the lexical side of the search report MEMP-189.
+
+- **Fleeting-vowel matching**: a Russian dictionary form now matches its own inflections even when Snowball
+  leaves them on different stems — the fleeting vowel (perec/perca/percev: the nominative keeps an -ets that
+  oblique forms drop to -ts). The stemmer folds yo-&gt;ye and collapses a trailing -ets to -ts, so all forms share one
+  key. Non-fleeting words (hleb, mesyac) are untouched. Migration 0016 reindexes existing notes' stems.
+
+Remaining from MEMP-189: semantic/vector search (MEMP-196) — deferred.
+
 ## 0.55.0
 
 Sprint 48 — search & recall overhaul (MEMP-190–195; addresses the external-consumer report MEMP-189).
