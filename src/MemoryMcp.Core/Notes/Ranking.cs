@@ -12,7 +12,8 @@ namespace MemoryMcp.Core.Notes;
 /// <param name="Recency">Weight of the newest-first signal.</param>
 /// <param name="Link">Weight of the more-connected-first signal.</param>
 /// <param name="Importance">Weight of the pinned/importance boost signal.</param>
-public sealed record RankingWeights(double Lexical = 1.0, double Recency = 1.0, double Link = 1.0, double Importance = 1.0)
+/// <param name="Type">Weight of the per-type signal (canonical types above ephemeral ones).</param>
+public sealed record RankingWeights(double Lexical = 1.0, double Recency = 1.0, double Link = 1.0, double Importance = 1.0, double Type = 1.0)
 {
     /// <summary>The default equal-weight blend.</summary>
     public static readonly RankingWeights Default = new();
@@ -33,8 +34,9 @@ public sealed record RankingWeights(double Lexical = 1.0, double Recency = 1.0, 
 /// <param name="RecencyRank">Rank by last-update time (1 = newest).</param>
 /// <param name="LinkRank">Rank by link-degree (1 = most connected).</param>
 /// <param name="ImportanceRank">Rank by pinned/importance (1 = most important; all-neutral pools tie at 1).</param>
+/// <param name="TypeRank">Rank by per-type weight (1 = most canonical type).</param>
 /// <param name="Fused">The fused RRF score (higher is better).</param>
-public sealed record ScoreBreakdown(int LexicalRank, int RecencyRank, int LinkRank, int ImportanceRank, double Fused);
+public sealed record ScoreBreakdown(int LexicalRank, int RecencyRank, int LinkRank, int ImportanceRank, int TypeRank, double Fused);
 
 /// <summary>
 /// One candidate in the hybrid re-rank pool: the result to return plus the raw signal values used to rank it.
@@ -47,7 +49,8 @@ public sealed record ScoreBreakdown(int LexicalRank, int RecencyRank, int LinkRa
 /// <param name="Recency">Recency goodness (Unix ms of the last update; higher = newer).</param>
 /// <param name="Link">Link goodness (link-degree; higher = more connected).</param>
 /// <param name="Importance">Importance goodness (pinned/importance; higher = more important).</param>
-internal readonly record struct RankRow(SearchResult Result, int Tier, double Lexical, double Recency, double Link, double Importance);
+/// <param name="Type">Type goodness (canonical types higher than ephemeral ones).</param>
+internal readonly record struct RankRow(SearchResult Result, int Tier, double Lexical, double Recency, double Link, double Importance, double Type);
 
 /// <summary>Reciprocal-rank-fusion re-ranker over a bounded candidate pool (MEMP-174). Pure and deterministic.</summary>
 internal static class HybridRanker
@@ -62,6 +65,7 @@ internal static class HybridRanker
         var recRanks = CompetitionRanks(rows, row => row.Recency);
         var linkRanks = CompetitionRanks(rows, row => row.Link);
         var impRanks = CompetitionRanks(rows, row => row.Importance);
+        var typeRanks = CompetitionRanks(rows, row => row.Type);
 
         var scored = new List<(SearchResult Result, int Tier, double Bm25, ScoreBreakdown Breakdown)>(rows.Count);
         for (var i = 0; i < rows.Count; i++)
@@ -70,9 +74,10 @@ internal static class HybridRanker
                 (weights.Lexical / (RankingWeights.K + lexRanks[i])) +
                 (weights.Recency / (RankingWeights.K + recRanks[i])) +
                 (weights.Link / (RankingWeights.K + linkRanks[i])) +
-                (weights.Importance / (RankingWeights.K + impRanks[i]));
+                (weights.Importance / (RankingWeights.K + impRanks[i])) +
+                (weights.Type / (RankingWeights.K + typeRanks[i]));
             scored.Add((rows[i].Result, rows[i].Tier, rows[i].Result.Score,
-                new ScoreBreakdown(lexRanks[i], recRanks[i], linkRanks[i], impRanks[i], fused)));
+                new ScoreBreakdown(lexRanks[i], recRanks[i], linkRanks[i], impRanks[i], typeRanks[i], fused)));
         }
 
         // Exact-key matches stay on top; then strongest fused score; BM25 then id break ties for a stable order.
@@ -201,4 +206,17 @@ internal static class HybridRanker
 
         return (pinned ? 1_000_000d : 0d) + importance;
     }
+
+    // Canonical, durable knowledge ranks above ephemeral logs at equal relevance (MEMP-193).
+    private static readonly HashSet<string> CanonicalTypes = new(StringComparer.Ordinal)
+    {
+        "memory_rule", "skill", "reference", "recipe", "decision", "project_state", "preference", "saved_search",
+    };
+
+    private static readonly HashSet<string> EphemeralTypes = new(StringComparer.Ordinal) { "journal", "episode" };
+
+    /// <summary>Per-type goodness: canonical knowledge (2) &gt; ordinary notes (1) &gt; ephemeral logs (0).</summary>
+    /// <param name="type">The note type.</param>
+    public static double TypeGoodness(string type) =>
+        CanonicalTypes.Contains(type) ? 2d : EphemeralTypes.Contains(type) ? 0d : 1d;
 }

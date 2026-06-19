@@ -215,7 +215,7 @@ public sealed partial class NotesReader
             }
         }
 
-        return new RecallResult(query, hits, neighbors, budget, used, dropped);
+        return new RecallResult(query, hits, neighbors, budget, used, dropped, page.Relaxed);
     }
 
     // Budget packing (MEMP-176): without a budget, just take the top `limit`. With one, walk the ranked hits and

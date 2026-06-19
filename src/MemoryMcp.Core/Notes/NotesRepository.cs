@@ -155,6 +155,6 @@ public sealed class NotesRepository
         IReadOnlyCollection<string>? tags = null, string status = "active",
         int limit = NotesReader.DefaultLimit, int offset = 0, IReadOnlyCollection<string>? restrictToDomains = null,
         string? filter = null, bool includePayload = false, bool includeLinks = false, string? sort = null,
-        string? rank = null, bool explain = false)
-        => _reader.Search(query, domain, type, tags, status, limit, offset, restrictToDomains, filter, includePayload, includeLinks, sort, rank, explain);
+        string? rank = null, bool explain = false, string? match = null)
+        => _reader.Search(query, domain, type, tags, status, limit, offset, restrictToDomains, filter, includePayload, includeLinks, sort, rank, explain, match);
 }

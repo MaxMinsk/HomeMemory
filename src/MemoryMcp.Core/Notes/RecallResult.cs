@@ -21,6 +21,7 @@ public sealed record RecallNeighbor(string Id, string? Title, string Type, strin
 /// <param name="BudgetChars">The snippet-char budget requested, or null when paging by row count (MEMP-176).</param>
 /// <param name="UsedChars">Sum of the included hits' snippet chars, when budgeted (else null).</param>
 /// <param name="DroppedCount">How many ranked hits the budget left out, when budgeted (else null).</param>
+/// <param name="Relaxed">True when the query matched nothing under AND and was auto-widened to ranked any-term (MEMP-190/195).</param>
 public sealed record RecallResult(
     string? Query, IReadOnlyList<SearchResult> Hits, IReadOnlyList<RecallNeighbor> Neighbors,
-    int? BudgetChars = null, int? UsedChars = null, int? DroppedCount = null);
+    int? BudgetChars = null, int? UsedChars = null, int? DroppedCount = null, bool Relaxed = false);

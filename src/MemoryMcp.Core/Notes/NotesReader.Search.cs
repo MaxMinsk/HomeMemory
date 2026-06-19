@@ -24,14 +24,15 @@ public sealed partial class NotesReader
     /// <param name="includePayload">When true, each hit also carries its envelope status and payload JSON (still no body), so callers can render a board without a follow-up get per row.</param>
     /// <param name="includeLinks">When true, each hit also carries its links (both directions), so callers can render a graph without a notes_links call per row.</param>
     /// <param name="sort">Optional order-by spec (e.g. <c>payload.spice_level desc</c>); overrides relevance/recency. See <see cref="Query.SortOrder"/>.</param>
-    /// <param name="rank">Relevance mode for text queries: <c>lexical</c> (default, pure BM25) or <c>hybrid</c> (RRF blend of relevance + recency + link-degree + importance, MEMP-174). Ignored when an explicit <paramref name="sort"/> is given or the query is structured-only.</param>
+    /// <param name="rank">Relevance mode for text queries: <c>hybrid</c> (default — RRF blend of relevance + recency + link-degree + importance + type weight, MEMP-174/193) or <c>lexical</c> (pure BM25). Ignored when an explicit <paramref name="sort"/> is given or the query is structured-only.</param>
     /// <param name="explain">When true (hybrid only), each hit carries its <see cref="ScoreBreakdown"/> (MEMP-177).</param>
+    /// <param name="match">Token combine mode for a text query: <c>all</c> (AND), <c>any</c> (OR, ranked), or <c>auto</c> (default — AND, falling back to any-term when AND finds nothing, MEMP-190).</param>
     public SearchPage Search(
         string? query = null, string? domain = null, string? type = null,
         IReadOnlyCollection<string>? tags = null, string status = "active",
         int limit = DefaultLimit, int offset = 0, IReadOnlyCollection<string>? restrictToDomains = null,
         string? filter = null, bool includePayload = false, bool includeLinks = false, string? sort = null,
-        string? rank = null, bool explain = false)
+        string? rank = null, bool explain = false, string? match = null)
     {
         domain = Identifiers.NormalizeOptional(domain);
         type = Identifiers.NormalizeOptional(type);
@@ -41,7 +42,13 @@ public sealed partial class NotesReader
         var phrase = !string.IsNullOrWhiteSpace(query) && IsQuotedPhrase(query!); // a fully-quoted query is an exact phrase (MEMP-166)
         // Split off '-term' exclusions (MEMP-169); a quoted phrase is taken verbatim (no exclusion parsing).
         var (positives, negatives) = phrase ? (query!, new List<string>()) : SplitQuery(query);
-        var tokens = string.IsNullOrWhiteSpace(positives) ? new List<string>() : SnippetBuilder.Tokenize(positives);
+        IReadOnlyList<string> tokens = string.IsNullOrWhiteSpace(positives) ? new List<string>() : SnippetBuilder.Tokenize(positives);
+        // Drop RU/EN stop words so a natural question reduces to content tokens (MEMP-191); never strip a phrase.
+        if (!phrase && tokens.Count > 0)
+        {
+            tokens = QueryNormalizer.StripStopWords(tokens);
+        }
+
         var negTokens = negatives.SelectMany(SnippetBuilder.Tokenize).Distinct(StringComparer.Ordinal).ToList();
         var useFts = tokens.Count > 0;
         var compiledFilter = string.IsNullOrWhiteSpace(filter) ? null : NoteFilter.Compile(filter!);
@@ -49,30 +56,41 @@ public sealed partial class NotesReader
         // With no explicit sort, a note whose dedup_key IS the query ranks first (MEMP-159): searching a key
         // (e.g. "HPA-008") should surface that note above ones that merely mention it.
         var exactKey = sortBody is null && !string.IsNullOrWhiteSpace(positives) ? positives.Trim() : null;
-        // Hybrid relevance only applies to a text query with no explicit sort (MEMP-174); otherwise the existing
-        // lexical/structured path runs unchanged.
-        var hybrid = useFts && sortBody is null && string.Equals(rank, "hybrid", StringComparison.OrdinalIgnoreCase);
+        // Hybrid relevance is the default for a text query with no explicit sort (MEMP-193); rank=lexical opts out.
+        var hybrid = useFts && sortBody is null && !string.Equals(rank, "lexical", StringComparison.OrdinalIgnoreCase);
+        // Match mode (MEMP-190): an explicit OR/| operator forces any-term; otherwise all|any|auto (default auto).
+        var mode = (match ?? "auto").ToLowerInvariant();
+        var any = string.Equals(mode, "any", StringComparison.Ordinal) || (!phrase && QueryNormalizer.HasOrOperator(positives));
 
         using var connection = _connectionFactory.Create();
-        var total = Count(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens);
+        var total = Count(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens, any);
+        // auto: an AND query that matched nothing is re-run as any-term ranked partials, flagged relaxed (MEMP-190).
+        var relaxed = false;
+        if (useFts && !any && total == 0 && string.Equals(mode, "auto", StringComparison.Ordinal) && tokens.Count > 1)
+        {
+            any = true;
+            relaxed = true;
+            total = Count(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens, any);
+        }
+
         var items = hybrid
-            ? HybridPage(connection, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload, exactKey, phrase, negTokens, explain)
-            : Page(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload, sortBody, exactKey, phrase, negTokens);
+            ? HybridPage(connection, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload, exactKey, phrase, negTokens, explain, any)
+            : Page(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload, sortBody, exactKey, phrase, negTokens, any);
         if (includeLinks)
         {
             items = items.Select(item => item with { Links = Links(item.Id) }).ToList();
         }
 
-        return new SearchPage(items, total, offset, limit, offset + items.Count < total);
+        return new SearchPage(items, total, offset, limit, offset + items.Count < total, relaxed);
     }
 
     private static int Count(
         SqliteConnection connection, bool useFts, IReadOnlyList<string> tokens,
         string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
-        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, bool phrase = false, IReadOnlyList<string>? negTokens = null)
+        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, bool phrase = false, IReadOnlyList<string>? negTokens = null, bool matchAny = false)
     {
         using var command = connection.CreateCommand();
-        var where = ApplyFilters(command, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens);
+        var where = ApplyFilters(command, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens, matchAny);
         command.CommandText = useFts
             ? $"SELECT count(*) FROM notes_fts JOIN notes n ON n.rowid = notes_fts.rowid WHERE {where};"
             : $"SELECT count(*) FROM notes n WHERE {where};";
@@ -82,10 +100,10 @@ public sealed partial class NotesReader
     private static IReadOnlyList<SearchResult> Page(
         SqliteConnection connection, bool useFts, IReadOnlyList<string> tokens,
         string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
-        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, int limit, int offset, bool includePayload, string? sortBody = null, string? exactKey = null, bool phrase = false, IReadOnlyList<string>? negTokens = null)
+        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, int limit, int offset, bool includePayload, string? sortBody = null, string? exactKey = null, bool phrase = false, IReadOnlyList<string>? negTokens = null, bool matchAny = false)
     {
         using var command = connection.CreateCommand();
-        var where = ApplyFilters(command, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens);
+        var where = ApplyFilters(command, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens, matchAny);
         command.Parameters.AddWithValue("$limit", limit);
         command.Parameters.AddWithValue("$offset", offset);
         // envelope extras are always selected (cheap); they reach the caller only when includePayload is set.
@@ -135,10 +153,10 @@ public sealed partial class NotesReader
         SqliteConnection connection, IReadOnlyList<string> tokens,
         string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
         IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, int limit, int offset,
-        bool includePayload, string? exactKey, bool phrase, IReadOnlyList<string> negTokens, bool explain)
+        bool includePayload, string? exactKey, bool phrase, IReadOnlyList<string> negTokens, bool explain, bool matchAny = false)
     {
         using var command = connection.CreateCommand();
-        var where = ApplyFilters(command, true, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens);
+        var where = ApplyFilters(command, true, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens, matchAny);
         command.Parameters.AddWithValue("$pool", RankingWeights.PoolSize);
         command.CommandText =
             "SELECT n.id, n.title, n.type, n.domain, n.body, bm25(notes_fts) AS score, n.status, n.payload_json, " +
@@ -171,7 +189,8 @@ public sealed partial class NotesReader
                     reader.IsDBNull(11) ? null : reader.GetString(11));
                 rows.Add(new RankRow(
                     result, ExactKeyTier(dedupKey, title, exactKey), -bm25,
-                    HybridRanker.RecencyGoodness(updatedUtc), degree, HybridRanker.ImportanceGoodness(payloadJson, tagsJson)));
+                    HybridRanker.RecencyGoodness(updatedUtc), degree, HybridRanker.ImportanceGoodness(payloadJson, tagsJson),
+                    HybridRanker.TypeGoodness(reader.GetString(2))));
             }
         }
 
@@ -236,7 +255,7 @@ public sealed partial class NotesReader
     private static string ApplyFilters(
         SqliteCommand command, bool useFts, IReadOnlyList<string> tokens,
         string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
-        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, bool phrase = false, IReadOnlyList<string>? negTokens = null)
+        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, bool phrase = false, IReadOnlyList<string>? negTokens = null, bool matchAny = false)
     {
         var filters = new List<string>();
 
@@ -250,15 +269,16 @@ public sealed partial class NotesReader
             }
             else
             {
-                // Raw part (current behavior): each token a quoted FTS5 prefix phrase, ANDed across all columns —
-                // preserves exact/ID/code/prefix matching. Stems part (MEMP-024): the stemmed tokens ANDed against the
-                // `stems` sidecar column, so word forms match (ANRs/ANR, Russian cases). The two are ORed, so the raw
-                // path always still wins; stems only ADD recall. Tokens are quoted so input can't break MATCH syntax.
-                var raw = string.Join(' ', tokens.Select(token => $"\"{token}\"*"));
+                // Each token a quoted FTS5 prefix phrase, combined across all columns. Default is AND (space);
+                // any-term mode (MEMP-190) joins with OR so partial matches return ranked. Stems part (MEMP-024):
+                // the stemmed tokens against the `stems` sidecar column with the same combiner, so word forms match
+                // (ANRs/ANR, Russian cases). Raw OR stems, so the raw path always still wins; stems only ADD recall.
+                var combiner = matchAny ? " OR " : " ";
+                var raw = string.Join(combiner, tokens.Select(token => $"\"{token}\"*"));
                 var stemmed = SearchStems.StemQueryTokens(tokens);
                 match = stemmed.Count == 0
                     ? raw
-                    : $"({raw}) OR (stems : ({string.Join(' ', stemmed.Select(stem => $"\"{stem}\""))}))";
+                    : $"({raw}) OR (stems : ({string.Join(combiner, stemmed.Select(stem => $"\"{stem}\""))}))";
             }
 
             if (negTokens is { Count: > 0 })

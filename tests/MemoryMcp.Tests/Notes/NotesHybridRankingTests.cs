@@ -32,15 +32,15 @@ public class NotesHybridRankingTests
     }
 
     [Fact]
-    public void Hybrid_default_lexical_search_is_unchanged()
+    public void Lexical_rank_is_pure_bm25_order()
     {
         using var temp = new TempDatabase();
         var repo = NewRepo(temp);
         var strong = Seed(repo, "MEMP-200", title: "alpha", body: "alpha alpha alpha");
         var weak = Seed(repo, "MEMP-201", title: "alpha", body: "alpha");
 
-        // No rank argument => pure BM25 order, exactly as before this feature.
-        var items = repo.Search("alpha", domain: "memory-mcp").Items;
+        // rank=lexical opts out of the (now default) hybrid blend => pure BM25 order.
+        var items = repo.Search("alpha", domain: "memory-mcp", rank: "lexical").Items;
         Assert.Equal(strong, items[0].Id);
         Assert.Equal(weak, items[1].Id);
     }
