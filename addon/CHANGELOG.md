@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.55.0
+
+Sprint 48 — search & recall overhaul (MEMP-190–195; addresses the external-consumer report MEMP-189).
+
+Natural-language recall used to return 0 (AND-only, function-word-sensitive) and LLMs hallucinated. Fixed:
+
+- **Any-term + auto fallback** (MEMP-190): `notes_search` gains `match=all|any|auto` (default **auto**) — it tries
+  AND, then automatically widens to ranked any-term partial matches when AND finds nothing (`relaxed: true` on the
+  page). A natural-language question now returns ranked partials instead of 0.
+- **Stop-word stripping** (MEMP-191): common RU+EN function words and punctuation are dropped, so
+  "how many peppers do I have?" effectively searches "peppers".
+- **Hybrid ranking by default** (MEMP-193): results are ordered by relevance + recency + link-degree +
+  importance/pinned + a per-type weight (canonical types above ephemeral) — *most important on top*. `rank=lexical`
+  for pure BM25.
+- **OR operator + documented DSL** (MEMP-194): `OR` / `|` force any-term; the full query syntax is documented on
+  the tool and in the new commons skill `memory-search-syntax`.
+- **Recall path** (MEMP-195): `notes_recall` / `memory_context` inherit the relaxed + stop-word + hybrid pipeline.
+
+Still planned: RU fleeting-vowel morphology (MEMP-192, e.g. perec/percev) and semantic/vector search (MEMP-196).
+
 ## 0.54.0
 
 Sprint 47 — reactivity & views (MEMP-184–188).
