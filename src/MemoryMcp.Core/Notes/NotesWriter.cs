@@ -270,8 +270,20 @@ public sealed class NotesWriter
         }
 
         transaction.Commit();
-        Emit(id, domain, type, project, tagsJson, created ? "create" : "update", nowUtc);
-        return new AssembleResult(id, created, nowUtc, specs.Count);
+        // Read the EFFECTIVE project back: on a dedup-update with no payload.project, the stored value is the
+        // COALESCE-preserved existing one, not the (null) derived `project` — so echo/emit the real value.
+        var effectiveProject = ReadNoteProject(connection, id);
+        Emit(id, domain, type, effectiveProject, tagsJson, created ? "create" : "update", nowUtc);
+        return new AssembleResult(id, created, nowUtc, specs.Count, effectiveProject);
+    }
+
+    // Reads a note's current envelope project (used to echo the effective scope after a write).
+    private static string? ReadNoteProject(SqliteConnection connection, string id)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT project FROM notes WHERE id = $id AND deleted = 0 LIMIT 1;";
+        command.Parameters.AddWithValue("$id", id);
+        return command.ExecuteScalar() as string;
     }
 
     private static bool NoteExists(SqliteConnection connection, SqliteTransaction transaction, string id)
@@ -586,7 +598,7 @@ public sealed class NotesWriter
         transaction.Commit();
 
         return new Note(id, current.Domain, current.Type, newTitle, newBody, newPayload, newTags,
-            current.DedupKey, current.Status, current.CreatedUtc, nowUtc, sourceAgent, current.SchemaVer, false);
+            current.DedupKey, current.Status, current.CreatedUtc, nowUtc, sourceAgent, current.SchemaVer, false, current.Project);
     }
 
     private static PatchSource? ReadForPatch(SqliteConnection connection, SqliteTransaction transaction, string id)
@@ -594,7 +606,7 @@ public sealed class NotesWriter
         using var select = connection.CreateCommand();
         select.Transaction = transaction;
         select.CommandText =
-            "SELECT domain, type, title, body, payload_json, tags_json, dedup_key, status, created_utc, updated_utc, schema_ver, source_agent " +
+            "SELECT domain, type, title, body, payload_json, tags_json, dedup_key, status, created_utc, updated_utc, schema_ver, source_agent, project " +
             "FROM notes WHERE id = $id AND deleted = 0 LIMIT 1;";
         select.Parameters.AddWithValue("$id", id);
         using var reader = select.ExecuteReader();
@@ -609,11 +621,12 @@ public sealed class NotesWriter
             reader.IsDBNull(4) ? null : reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetString(5),
             reader.IsDBNull(6) ? null : reader.GetString(6), reader.GetString(7),
             reader.GetString(8), reader.GetString(9), reader.GetInt32(10),
-            reader.IsDBNull(11) ? null : reader.GetString(11));
+            reader.IsDBNull(11) ? null : reader.GetString(11),
+            reader.IsDBNull(12) ? null : reader.GetString(12));
     }
 
     private sealed record PatchSource(string Domain, string Type, string? Title, string? Body, string? Payload,
-        string? Tags, string? DedupKey, string Status, string CreatedUtc, string UpdatedUtc, int SchemaVer, string? SourceAgent);
+        string? Tags, string? DedupKey, string Status, string CreatedUtc, string UpdatedUtc, int SchemaVer, string? SourceAgent, string? Project);
 
     // Shallow-merges a JSON patch object into the current payload (patch keys win). Null patch -> unchanged.
     private static string? MergePayload(string? current, string? patch)

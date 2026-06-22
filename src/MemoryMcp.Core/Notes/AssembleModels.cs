@@ -10,4 +10,5 @@ public sealed record AssembleLink(string ToId, string Rel);
 /// <param name="Created">True if the note was newly created (false if a dedup-update).</param>
 /// <param name="UpdatedUtc">The note's revision/etag after the write.</param>
 /// <param name="LinksCreated">Number of links created in the same transaction.</param>
-public sealed record AssembleResult(string Id, bool Created, string UpdatedUtc, int LinksCreated);
+/// <param name="Project">The note's project sub-axis (echoed so callers can confirm the scope was set/preserved).</param>
+public sealed record AssembleResult(string Id, bool Created, string UpdatedUtc, int LinksCreated, string? Project = null);

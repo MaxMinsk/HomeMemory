@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.56.1
+
+Hotfix (MEMP-197) — `notes_patch` / `notes_assemble` now return the note's envelope `project`.
+
+The patch/assemble responses were omitting the `project` field (it defaulted to null), which looked like the
+write had dropped the note out of its project scope. It had not — the patch `UPDATE` never touched the `project`
+column, so the stored value was always preserved. This only fixes the response: `notes_patch` returns the
+preserved project, and `notes_assemble` echoes the effective project (including the value preserved on a
+dedup-update whose payload omits `project`).
+
 ## 0.56.0
 
 Sprint 49 — RU morphology (MEMP-192), finishing the lexical side of the search report MEMP-189.
