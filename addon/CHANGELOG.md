@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.56.2
+
+Hotfix (MEMP-198) — types whose schema declares `project` (e.g. `project_state`) can be written again.
+
+The envelope-axis lift (0.47.0) stripped a top-level `project` from every payload before schema validation, so a
+type that legitimately defines `project` — `project_state` requires it — failed validation as "missing required
+property project" on both `notes_upsert` and `notes_upsert_many`. The lift is now schema-aware: it only removes
+`project` for types whose schema does not declare it (so `backlog_item` still carries `payload.project` to set the
+envelope), and keeps it for types that own the field.
+
 ## 0.56.1
 
 Hotfix (MEMP-197) — `notes_patch` / `notes_assemble` now return the note's envelope `project`.

@@ -63,7 +63,7 @@ public sealed class NotesWriter
         // its project in the typed payload (e.g. backlog_item) still gets the envelope axis set.
         project = Identifiers.NormalizeOptional(project ?? PayloadProject(payloadJson));
 
-        var validation = _validator.Validate(type, PayloadForValidation(payloadJson));
+        var validation = _validator.Validate(type, PayloadForValidation(type, payloadJson));
         if (!validation.IsValid)
         {
             throw new NoteValidationException(validation.Errors);
@@ -148,7 +148,7 @@ public sealed class NotesWriter
             var tags = Identifiers.NormalizeTags(input.TagsJson);
             var project = Identifiers.NormalizeOptional(input.Project ?? PayloadProject(input.PayloadJson));
 
-            var validation = _validator.Validate(type, PayloadForValidation(input.PayloadJson));
+            var validation = _validator.Validate(type, PayloadForValidation(type, input.PayloadJson));
             if (!validation.IsValid)
             {
                 throw new NoteValidationException(validation.Errors.Select(error => $"item[{i}] ({domain}/{type}): {error}").ToList());
@@ -239,7 +239,7 @@ public sealed class NotesWriter
         type = Identifiers.Normalize(type);
         tagsJson = Identifiers.NormalizeTags(tagsJson);
 
-        var validation = _validator.Validate(type, PayloadForValidation(payloadJson));
+        var validation = _validator.Validate(type, PayloadForValidation(type, payloadJson));
         if (!validation.IsValid)
         {
             throw new NoteValidationException(validation.Errors);
@@ -883,17 +883,26 @@ public sealed class NotesWriter
     /// Used for import dry-runs to report would-be-invalid notes without writing.</summary>
     /// <param name="type">The note type.</param>
     /// <param name="payloadJson">The payload to check.</param>
-    public bool IsValidPayload(string type, string? payloadJson) =>
-        _validator.Validate(Identifiers.Normalize(type), PayloadForValidation(payloadJson)).IsValid;
+    public bool IsValidPayload(string type, string? payloadJson)
+    {
+        var normalized = Identifiers.Normalize(type);
+        return _validator.Validate(normalized, PayloadForValidation(normalized, payloadJson)).IsValid;
+    }
 
-    // Payload to validate against the type schema, with a top-level "project" lifted out (MEMP-154): project is an
-    // ENVELOPE axis, so any type may carry payload.project to set it — even types whose schema forbids extra fields
-    // (e.g. reference). The original payload is still stored as-is; only the schema check sees the stripped copy.
-    private static string PayloadForValidation(string? payloadJson)
+    // Payload to validate against the type schema, with a top-level "project" lifted out (MEMP-154) ONLY for types
+    // whose schema does NOT declare `project` — so a schema-strict type (e.g. backlog_item) may carry payload.project
+    // to set the ENVELOPE axis, while a type that owns `project` (e.g. project_state) keeps it (MEMP-198). The
+    // original payload is always stored as-is; only the schema check sees the (possibly stripped) copy.
+    private string PayloadForValidation(string type, string? payloadJson)
     {
         if (string.IsNullOrWhiteSpace(payloadJson))
         {
             return "{}";
+        }
+
+        if (SchemaDefinesProject(type))
+        {
+            return payloadJson; // the type owns `project` — validate it as-is, don't lift
         }
 
         try
@@ -910,6 +919,28 @@ public sealed class NotesWriter
         }
 
         return payloadJson;
+    }
+
+    // True when the type's latest schema declares a top-level `project` property (so it owns the field and the
+    // envelope-axis lift must not strip it).
+    private bool SchemaDefinesProject(string type)
+    {
+        if (_registry.GetLatest(type) is not { } definition)
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(definition.Json);
+            return document.RootElement.TryGetProperty("properties", out var properties)
+                && properties.ValueKind == System.Text.Json.JsonValueKind.Object
+                && properties.TryGetProperty("project", out _);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return false;
+        }
     }
 
     // Reads a string "project" from the typed payload, if present (used to seed the envelope project axis).
