@@ -12,7 +12,7 @@ public sealed partial class MemoryTools
 {
     /// <summary>Creates or updates a note, validating the payload against the type schema.</summary>
     [McpServerTool(Name = "notes_upsert", Destructive = false, Idempotent = true, UseStructuredContent = true)]
-    [Description("Create or update a note by (domain, type, dedup_key). Validates payload against the type schema. Pass `expectedRevision` (the updated_utc from a prior get/upsert) for optimistic concurrency — the update is rejected if another writer changed the note meanwhile. Re-upserting identical content is a quiet no-op (unchanged=true, revision unchanged, no event).")]
+    [Description("Create or update a note by (domain, type, dedup_key). Before creating a NEW note, run notes_suggest_capture first to avoid duplicating shared memory; to EDIT an existing note prefer notes_patch (this upsert REPLACES the whole note). Validates payload against the type schema. Pass `expectedRevision` (the updated_utc from a prior get/upsert) for optimistic concurrency — the update is rejected if another writer changed the note meanwhile. Re-upserting identical content is a quiet no-op (unchanged=true, revision unchanged, no event). For a newly created note the result may include `related` (notes to consider linking) and a `nudge` if you wrote without recalling first.")]
     public UpsertResult NotesUpsert(
         [Description("Namespace, e.g. memory-mcp")] string domain,
         [Description("Schema type, e.g. backlog_item")] string type,
@@ -28,7 +28,14 @@ public sealed partial class MemoryTools
         try
         {
             _authz.AuthorizeWrite(domain);
-            return _notes.Upsert(domain, type, title, body, JsonArg(payload), JsonArg(tags), dedupKey, sourceAgent ?? "mcp", project, expectedRevision);
+            var result = _notes.Upsert(domain, type, title, body, JsonArg(payload), JsonArg(tags), dedupKey, sourceAgent ?? "mcp", project, expectedRevision);
+            if (result.Unchanged)
+            {
+                return result; // idempotent no-op: nothing was written, so no adoption hints
+            }
+
+            var (related, nudge) = AdoptionHints(result.Id, result.Created, domain, sourceAgent);
+            return result with { Related = related, Nudge = nudge };
         }
         catch (NoteValidationException exception)
         {
@@ -80,7 +87,7 @@ public sealed partial class MemoryTools
 
     /// <summary>Creates a note and its outgoing links atomically (all-or-nothing).</summary>
     [McpServerTool(Name = "notes_assemble", Destructive = false, UseStructuredContent = true)]
-    [Description("Create (or upsert by dedupKey) a note AND its outgoing links in ONE transaction — all-or-nothing. If any link's target is missing or its rel invalid, nothing is created (no half-built case). `links` is an array of {toId, rel} with an active-voice lower_snake_case rel. payload/tags accept an object/array or a JSON string.")]
+    [Description("Create (or upsert by dedupKey) a note AND its outgoing links in ONE transaction — all-or-nothing. Before creating a NEW note, run notes_suggest_capture first to avoid duplicates. If any link's target is missing or its rel invalid, nothing is created (no half-built case). `links` is an array of {toId, rel} with an active-voice lower_snake_case rel. payload/tags accept an object/array or a JSON string. For a newly created note the result may include `related` (more notes to consider linking) and a `nudge` if you wrote without recalling first.")]
     public AssembleResult NotesAssemble(
         [Description("Namespace, e.g. memory-mcp")] string domain,
         [Description("Schema type, e.g. backlog_item")] string type,
@@ -99,7 +106,9 @@ public sealed partial class MemoryTools
                 AuthorizeNote(link.ToId);
             }
 
-            return _notes.Assemble(domain, type, title, body, JsonArg(payload), JsonArg(tags), dedupKey, links, sourceAgent ?? "mcp");
+            var result = _notes.Assemble(domain, type, title, body, JsonArg(payload), JsonArg(tags), dedupKey, links, sourceAgent ?? "mcp");
+            var (related, nudge) = AdoptionHints(result.Id, result.Created, domain, sourceAgent);
+            return result with { Related = related, Nudge = nudge };
         });
 
     /// <summary>Appends a schema-less free-text journal note (capture-first) and returns its envelope.</summary>
@@ -175,7 +184,7 @@ public sealed partial class MemoryTools
 
     /// <summary>Partially updates a note by id (merge), with optional optimistic-concurrency check.</summary>
     [McpServerTool(Name = "notes_patch", Destructive = false, UseStructuredContent = true)]
-    [Description("Update a note by id WITHOUT replacing it: only the fields you pass change, and a `payload` is shallow-merged into the existing one (its keys win). Pass `expectedUpdatedUtc` (the revision from notes_get/upsert) to fail safely if another agent changed it meanwhile. Returns the updated note.")]
+    [Description("Prefer this over notes_upsert to EDIT an existing note: it updates a note by id WITHOUT replacing it — only the fields you pass change, and a `payload` is shallow-merged into the existing one (its keys win). Pass `expectedUpdatedUtc` (the revision from notes_get/upsert) to fail safely if another agent changed it meanwhile. Returns the updated note.")]
     public Note NotesPatch(
         [Description("Note id")] string id,
         [Description("New title (optional)")] string? title = null,

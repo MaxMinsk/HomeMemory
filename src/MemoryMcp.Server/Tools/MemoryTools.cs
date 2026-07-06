@@ -26,10 +26,13 @@ public sealed partial class MemoryTools
     private readonly SkillsService _skills;
     private readonly ConfirmationService _confirmations;
     private readonly ISqliteConnectionFactory _connectionFactory;
+    private readonly ReadActivityTracker _reads;
+    private readonly AdoptionOptions _adoption;
 
-    /// <summary>Creates the tool set over the repository, registry, diagnostics, request authorizer, skills, confirmations and database.</summary>
+    /// <summary>Creates the tool set over the repository, registry, diagnostics, request authorizer, skills, confirmations, database, read-activity tracker and adoption options.</summary>
     public MemoryTools(NotesRepository notes, SchemaRegistry schemas, DiagnosticsService diagnostics, RequestAuthorizer authz,
-        SkillsService skills, ConfirmationService confirmations, ISqliteConnectionFactory connectionFactory)
+        SkillsService skills, ConfirmationService confirmations, ISqliteConnectionFactory connectionFactory,
+        ReadActivityTracker reads, AdoptionOptions adoption)
     {
         _notes = notes;
         _schemas = schemas;
@@ -38,6 +41,41 @@ public sealed partial class MemoryTools
         _skills = skills;
         _confirmations = confirmations;
         _connectionFactory = connectionFactory;
+        _reads = reads;
+        _adoption = adoption;
+    }
+
+    // Post-write adoption hints (MEMP-204/205): for a newly created note, suggest a few related notes to link; and
+    // nudge an identified agent that wrote without a recent recall. Both advisory; both honour the adoption toggle.
+    private (IReadOnlyList<RelatedNote>? Related, string? Nudge) AdoptionHints(string id, bool created, string domain, string? sourceAgent)
+    {
+        if (!_adoption.Enabled)
+        {
+            return (null, null);
+        }
+
+        IReadOnlyList<RelatedNote>? related = null;
+        if (created)
+        {
+            var hits = _notes.Related(id, 3, _authz.ReadRestriction(domain));
+            related = hits.Count > 0 ? hits : null;
+        }
+
+        return (related, RecallNudge(sourceAgent));
+    }
+
+    // The nudge fires only for an agent that identifies itself (a real sourceAgent, not the anonymous "mcp"
+    // default) and has no recall recorded this session — so the default/anonymous caller is never nagged.
+    private string? RecallNudge(string? sourceAgent)
+    {
+        if (string.IsNullOrWhiteSpace(sourceAgent) || string.Equals(sourceAgent, "mcp", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        return _reads.HasRecentRead(sourceAgent)
+            ? null
+            : $"No recall/search recorded for '{sourceAgent}' before this write — consider memory_context/notes_recall first to build on existing notes and avoid duplicates.";
     }
 
     private string SkillHint(string domain, string type)

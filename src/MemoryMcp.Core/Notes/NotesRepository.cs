@@ -76,8 +76,9 @@ public sealed class NotesRepository
     /// <inheritdoc cref="NotesReader.Recall"/>
     public RecallResult Recall(
         string? query, string? domain, int limit, IReadOnlyCollection<string>? restrictToDomains,
-        bool includeLinks = true, int maxHops = 1, int? budgetChars = null, bool explain = false)
-        => _reader.Recall(query, domain, limit, restrictToDomains, includeLinks, maxHops, budgetChars, explain);
+        bool includeLinks = true, int maxHops = 1, int? budgetChars = null, bool explain = false,
+        string? project = null, bool projectOnly = false)
+        => _reader.Recall(query, domain, limit, restrictToDomains, includeLinks, maxHops, budgetChars, explain, project, projectOnly);
 
     /// <inheritdoc cref="NotesReader.Related"/>
     public IReadOnlyList<RelatedNote> Related(string id, int limit, IReadOnlyCollection<string>? restrictToDomains)
@@ -155,6 +156,7 @@ public sealed class NotesRepository
         IReadOnlyCollection<string>? tags = null, string status = "active",
         int limit = NotesReader.DefaultLimit, int offset = 0, IReadOnlyCollection<string>? restrictToDomains = null,
         string? filter = null, bool includePayload = false, bool includeLinks = false, string? sort = null,
-        string? rank = null, bool explain = false, string? match = null)
-        => _reader.Search(query, domain, type, tags, status, limit, offset, restrictToDomains, filter, includePayload, includeLinks, sort, rank, explain, match);
+        string? rank = null, bool explain = false, string? match = null,
+        string? boostProject = null, string? projectEquals = null)
+        => _reader.Search(query, domain, type, tags, status, limit, offset, restrictToDomains, filter, includePayload, includeLinks, sort, rank, explain, match, boostProject, projectEquals);
 }

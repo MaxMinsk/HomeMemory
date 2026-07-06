@@ -13,10 +13,18 @@ namespace MemoryMcp.Core.Notes;
 /// <param name="Link">Weight of the more-connected-first signal.</param>
 /// <param name="Importance">Weight of the pinned/importance boost signal.</param>
 /// <param name="Type">Weight of the per-type signal (canonical types above ephemeral ones).</param>
-public sealed record RankingWeights(double Lexical = 1.0, double Recency = 1.0, double Link = 1.0, double Importance = 1.0, double Type = 1.0)
+/// <param name="Project">Weight of the project-match signal (a requested project's notes lifted; MEMP-209).</param>
+public sealed record RankingWeights(double Lexical = 1.0, double Recency = 1.0, double Link = 1.0, double Importance = 1.0, double Type = 1.0, double Project = 1.0)
 {
     /// <summary>The default equal-weight blend.</summary>
     public static readonly RankingWeights Default = new();
+
+    /// <summary>
+    /// The blend used when a recall requests a project (MEMP-209): the project-match signal is up-weighted so a
+    /// note in the asked-for project edges out an equally-relevant note from another project, without burying a
+    /// genuinely more-relevant cross-project hit (the boost is a soft RRF signal, not a filter).
+    /// </summary>
+    public static readonly RankingWeights ProjectBoosted = Default with { Project = 2.0 };
 
     /// <summary>RRF damping constant (k): larger flattens the gap between top ranks. 60 is the common default.</summary>
     public const int K = 60;
@@ -35,8 +43,9 @@ public sealed record RankingWeights(double Lexical = 1.0, double Recency = 1.0, 
 /// <param name="LinkRank">Rank by link-degree (1 = most connected).</param>
 /// <param name="ImportanceRank">Rank by pinned/importance (1 = most important; all-neutral pools tie at 1).</param>
 /// <param name="TypeRank">Rank by per-type weight (1 = most canonical type).</param>
+/// <param name="ProjectRank">Rank by project-match (1 = in the requested project; all tie at 1 when no project is requested).</param>
 /// <param name="Fused">The fused RRF score (higher is better).</param>
-public sealed record ScoreBreakdown(int LexicalRank, int RecencyRank, int LinkRank, int ImportanceRank, int TypeRank, double Fused);
+public sealed record ScoreBreakdown(int LexicalRank, int RecencyRank, int LinkRank, int ImportanceRank, int TypeRank, int ProjectRank, double Fused);
 
 /// <summary>
 /// One candidate in the hybrid re-rank pool: the result to return plus the raw signal values used to rank it.
@@ -50,7 +59,8 @@ public sealed record ScoreBreakdown(int LexicalRank, int RecencyRank, int LinkRa
 /// <param name="Link">Link goodness (link-degree; higher = more connected).</param>
 /// <param name="Importance">Importance goodness (pinned/importance; higher = more important).</param>
 /// <param name="Type">Type goodness (canonical types higher than ephemeral ones).</param>
-internal readonly record struct RankRow(SearchResult Result, int Tier, double Lexical, double Recency, double Link, double Importance, double Type);
+/// <param name="Project">Project goodness (1 when the note is in the requested project, else 0; MEMP-209).</param>
+internal readonly record struct RankRow(SearchResult Result, int Tier, double Lexical, double Recency, double Link, double Importance, double Type, double Project);
 
 /// <summary>Reciprocal-rank-fusion re-ranker over a bounded candidate pool (MEMP-174). Pure and deterministic.</summary>
 internal static class HybridRanker
@@ -66,6 +76,7 @@ internal static class HybridRanker
         var linkRanks = CompetitionRanks(rows, row => row.Link);
         var impRanks = CompetitionRanks(rows, row => row.Importance);
         var typeRanks = CompetitionRanks(rows, row => row.Type);
+        var projRanks = CompetitionRanks(rows, row => row.Project);
 
         var scored = new List<(SearchResult Result, int Tier, double Bm25, ScoreBreakdown Breakdown)>(rows.Count);
         for (var i = 0; i < rows.Count; i++)
@@ -75,9 +86,10 @@ internal static class HybridRanker
                 (weights.Recency / (RankingWeights.K + recRanks[i])) +
                 (weights.Link / (RankingWeights.K + linkRanks[i])) +
                 (weights.Importance / (RankingWeights.K + impRanks[i])) +
-                (weights.Type / (RankingWeights.K + typeRanks[i]));
+                (weights.Type / (RankingWeights.K + typeRanks[i])) +
+                (weights.Project / (RankingWeights.K + projRanks[i]));
             scored.Add((rows[i].Result, rows[i].Tier, rows[i].Result.Score,
-                new ScoreBreakdown(lexRanks[i], recRanks[i], linkRanks[i], impRanks[i], typeRanks[i], fused)));
+                new ScoreBreakdown(lexRanks[i], recRanks[i], linkRanks[i], impRanks[i], typeRanks[i], projRanks[i], fused)));
         }
 
         // Exact-key matches stay on top; then strongest fused score; BM25 then id break ties for a stable order.
@@ -219,4 +231,14 @@ internal static class HybridRanker
     /// <param name="type">The note type.</param>
     public static double TypeGoodness(string type) =>
         CanonicalTypes.Contains(type) ? 2d : EphemeralTypes.Contains(type) ? 0d : 1d;
+
+    /// <summary>
+    /// Project-match goodness (MEMP-209): 1 when the note's envelope <paramref name="project"/> equals the
+    /// requested <paramref name="boostProject"/>, else 0. When no project is requested every note scores 0, so the
+    /// signal ties the whole pool at rank 1 and contributes nothing — a no-op, exactly like an all-neutral pool.
+    /// </summary>
+    /// <param name="project">The note's envelope project (may be null).</param>
+    /// <param name="boostProject">The project the recall asked to favour (may be null).</param>
+    public static double ProjectGoodness(string? project, string? boostProject) =>
+        boostProject is not null && string.Equals(project, boostProject, StringComparison.Ordinal) ? 1d : 0d;
 }

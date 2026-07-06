@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.57.0
+
+Sprint 50 — Adoption: make agents use memory well. Five items that push agents toward recalling before
+writing, linking new notes, keeping project state fresh, and staying in their project's context.
+
+- **Project-aware recall (MEMP-209)**: `memory_context` and `notes_recall` take a `project` and lift that
+  project's notes via a soft ranking signal — a note in the asked-for project edges out an equally-relevant
+  note from another project, but cross-project hits still appear. Pass `projectOnly` to hard-restrict the
+  recall to one project. Previously `project` affected only which skills/rules were loaded, not the recall.
+  The score breakdown (`explain`) gains a `projectRank`.
+- **Staleness hint (MEMP-206)**: `memory_context` now warns when the domain/project has a `project_state`
+  older than a default window (14 days, measured from its `updated` field), or any note past its own
+  `payload.stale_after_days` — with the note id and age, nudging you to refresh it at the end of the task.
+- **Post-write related hint (MEMP-205)**: creating a note with `notes_upsert` / `notes_assemble` now returns
+  up to three `related` notes (by shared tags / text / links) as a linking suggestion — so a new note gets
+  connected into the graph instead of sitting orphaned. Advisory; skipped on updates and idempotent no-ops.
+- **Recall-before-write nudge (MEMP-204)**: when an agent that identifies itself (a stable `sourceAgent`)
+  writes without having recalled/searched first this session, the write response carries an advisory `nudge`
+  to recall first. Pass `sourceAgent` on `memory_context` / `notes_recall` / `notes_search` so the server can
+  see you recalled. Non-blocking; the process-local tracking resets on restart.
+- **Tool-description imperatives (MEMP-210)**: the always-visible tool descriptions now say it outright —
+  `memory_context` is "CALL THIS FIRST", `notes_upsert` / `notes_assemble` point at `notes_suggest_capture`
+  before creating, and `notes_patch` says to prefer it over upsert for edits.
+
+Both write-time hints (nudge + related) can be turned off with the new `adoption_hints` add-on option
+(env `MEMORY_ADOPTION_HINTS`), on by default. No schema migration (through 0016).
+
 ## 0.56.2
 
 Hotfix (MEMP-198) — types whose schema declares `project` (e.g. `project_state`) can be written again.

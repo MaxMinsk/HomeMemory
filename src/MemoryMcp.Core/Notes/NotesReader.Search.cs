@@ -27,15 +27,20 @@ public sealed partial class NotesReader
     /// <param name="rank">Relevance mode for text queries: <c>hybrid</c> (default — RRF blend of relevance + recency + link-degree + importance + type weight, MEMP-174/193) or <c>lexical</c> (pure BM25). Ignored when an explicit <paramref name="sort"/> is given or the query is structured-only.</param>
     /// <param name="explain">When true (hybrid only), each hit carries its <see cref="ScoreBreakdown"/> (MEMP-177).</param>
     /// <param name="match">Token combine mode for a text query: <c>all</c> (AND), <c>any</c> (OR, ranked), or <c>auto</c> (default — AND, falling back to any-term when AND finds nothing, MEMP-190).</param>
+    /// <param name="boostProject">When set (hybrid only), notes in this envelope project are lifted via a soft RRF signal so they edge out equally-relevant notes from other projects, without hiding cross-project hits (MEMP-209).</param>
+    /// <param name="projectEquals">When set, a hard filter restricting results to this envelope project (the <c>projectOnly</c> recall mode); applies to every rank/sort.</param>
     public SearchPage Search(
         string? query = null, string? domain = null, string? type = null,
         IReadOnlyCollection<string>? tags = null, string status = "active",
         int limit = DefaultLimit, int offset = 0, IReadOnlyCollection<string>? restrictToDomains = null,
         string? filter = null, bool includePayload = false, bool includeLinks = false, string? sort = null,
-        string? rank = null, bool explain = false, string? match = null)
+        string? rank = null, bool explain = false, string? match = null,
+        string? boostProject = null, string? projectEquals = null)
     {
         domain = Identifiers.NormalizeOptional(domain);
         type = Identifiers.NormalizeOptional(type);
+        boostProject = Identifiers.NormalizeOptional(boostProject);
+        projectEquals = Identifiers.NormalizeOptional(projectEquals);
         tags = tags?.Select(Identifiers.Normalize).ToList();
         limit = Math.Clamp(limit, 1, MaxLimit);
         offset = Math.Max(0, offset);
@@ -63,19 +68,19 @@ public sealed partial class NotesReader
         var any = string.Equals(mode, "any", StringComparison.Ordinal) || (!phrase && QueryNormalizer.HasOrOperator(positives));
 
         using var connection = _connectionFactory.Create();
-        var total = Count(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens, any);
+        var total = Count(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens, any, projectEquals);
         // auto: an AND query that matched nothing is re-run as any-term ranked partials, flagged relaxed (MEMP-190).
         var relaxed = false;
         if (useFts && !any && total == 0 && string.Equals(mode, "auto", StringComparison.Ordinal) && tokens.Count > 1)
         {
             any = true;
             relaxed = true;
-            total = Count(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens, any);
+            total = Count(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens, any, projectEquals);
         }
 
         var items = hybrid
-            ? HybridPage(connection, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload, exactKey, phrase, negTokens, explain, any)
-            : Page(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload, sortBody, exactKey, phrase, negTokens, any);
+            ? HybridPage(connection, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload, exactKey, phrase, negTokens, explain, any, boostProject, projectEquals)
+            : Page(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload, sortBody, exactKey, phrase, negTokens, any, projectEquals);
         if (includeLinks)
         {
             items = items.Select(item => item with { Links = Links(item.Id) }).ToList();
@@ -87,10 +92,10 @@ public sealed partial class NotesReader
     private static int Count(
         SqliteConnection connection, bool useFts, IReadOnlyList<string> tokens,
         string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
-        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, bool phrase = false, IReadOnlyList<string>? negTokens = null, bool matchAny = false)
+        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, bool phrase = false, IReadOnlyList<string>? negTokens = null, bool matchAny = false, string? projectEquals = null)
     {
         using var command = connection.CreateCommand();
-        var where = ApplyFilters(command, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens, matchAny);
+        var where = ApplyFilters(command, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens, matchAny, projectEquals);
         command.CommandText = useFts
             ? $"SELECT count(*) FROM notes_fts JOIN notes n ON n.rowid = notes_fts.rowid WHERE {where};"
             : $"SELECT count(*) FROM notes n WHERE {where};";
@@ -100,10 +105,10 @@ public sealed partial class NotesReader
     private static IReadOnlyList<SearchResult> Page(
         SqliteConnection connection, bool useFts, IReadOnlyList<string> tokens,
         string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
-        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, int limit, int offset, bool includePayload, string? sortBody = null, string? exactKey = null, bool phrase = false, IReadOnlyList<string>? negTokens = null, bool matchAny = false)
+        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, int limit, int offset, bool includePayload, string? sortBody = null, string? exactKey = null, bool phrase = false, IReadOnlyList<string>? negTokens = null, bool matchAny = false, string? projectEquals = null)
     {
         using var command = connection.CreateCommand();
-        var where = ApplyFilters(command, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens, matchAny);
+        var where = ApplyFilters(command, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens, matchAny, projectEquals);
         command.Parameters.AddWithValue("$limit", limit);
         command.Parameters.AddWithValue("$offset", offset);
         // envelope extras are always selected (cheap); they reach the caller only when includePayload is set.
@@ -153,10 +158,11 @@ public sealed partial class NotesReader
         SqliteConnection connection, IReadOnlyList<string> tokens,
         string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
         IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, int limit, int offset,
-        bool includePayload, string? exactKey, bool phrase, IReadOnlyList<string> negTokens, bool explain, bool matchAny = false)
+        bool includePayload, string? exactKey, bool phrase, IReadOnlyList<string> negTokens, bool explain, bool matchAny = false,
+        string? boostProject = null, string? projectEquals = null)
     {
         using var command = connection.CreateCommand();
-        var where = ApplyFilters(command, true, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens, matchAny);
+        var where = ApplyFilters(command, true, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens, matchAny, projectEquals);
         command.Parameters.AddWithValue("$pool", RankingWeights.PoolSize);
         command.CommandText =
             "SELECT n.id, n.title, n.type, n.domain, n.body, bm25(notes_fts) AS score, n.status, n.payload_json, " +
@@ -187,14 +193,17 @@ public sealed partial class NotesReader
                     includePayload ? dedupKey : null,
                     includePayload ? updatedUtc : null,
                     reader.IsDBNull(11) ? null : reader.GetString(11));
+                var project = reader.IsDBNull(11) ? null : reader.GetString(11);
                 rows.Add(new RankRow(
                     result, ExactKeyTier(dedupKey, title, exactKey), -bm25,
                     HybridRanker.RecencyGoodness(updatedUtc), degree, HybridRanker.ImportanceGoodness(payloadJson, tagsJson),
-                    HybridRanker.TypeGoodness(reader.GetString(2))));
+                    HybridRanker.TypeGoodness(reader.GetString(2)), HybridRanker.ProjectGoodness(project, boostProject)));
             }
         }
 
-        var fused = HybridRanker.Fuse(rows, RankingWeights.Default);
+        // Up-weight the project signal only when a project was requested; otherwise it's a no-op tie (see ProjectGoodness).
+        var weights = boostProject is null ? RankingWeights.Default : RankingWeights.ProjectBoosted;
+        var fused = HybridRanker.Fuse(rows, weights);
         return fused.Skip(offset).Take(limit)
             .Select(item => explain ? item.Result with { Explain = item.Breakdown } : item.Result)
             .ToList();
@@ -255,7 +264,7 @@ public sealed partial class NotesReader
     private static string ApplyFilters(
         SqliteCommand command, bool useFts, IReadOnlyList<string> tokens,
         string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
-        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, bool phrase = false, IReadOnlyList<string>? negTokens = null, bool matchAny = false)
+        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, bool phrase = false, IReadOnlyList<string>? negTokens = null, bool matchAny = false, string? projectEquals = null)
     {
         var filters = new List<string>();
 
@@ -307,11 +316,24 @@ public sealed partial class NotesReader
             command.Parameters.AddWithValue("$type", type);
         }
 
+        AppendProjectFilter(command, filters, projectEquals);
         AppendTagFilters(command, filters, tags);
         AppendDomainRestriction(command, filters, restrictToDomains);
         AppendCompiledFilter(command, filters, compiledFilter);
 
         return string.Join(" AND ", filters);
+    }
+
+    // Hard project filter (projectOnly recall, MEMP-209): parameterized, so it composes with any rank/sort.
+    private static void AppendProjectFilter(SqliteCommand command, List<string> filters, string? projectEquals)
+    {
+        if (projectEquals is null)
+        {
+            return;
+        }
+
+        filters.Add("n.project = $projeq");
+        command.Parameters.AddWithValue("$projeq", projectEquals);
     }
 
     // Each supplied tag must be present in the note's JSON tag array.

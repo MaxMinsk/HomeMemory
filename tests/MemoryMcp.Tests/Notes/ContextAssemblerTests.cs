@@ -77,6 +77,38 @@ public class ContextAssemblerTests
         Assert.DoesNotContain("Other", titles); // another project's rule is excluded
     }
 
+    [Fact]
+    public void Assemble_warns_about_a_stale_project_state()
+    {
+        using var temp = new TempDatabase();
+        var (repo, skills) = New(temp);
+        repo.Upsert("development", "project_state", "memory-mcp state", null,
+            """{ "project": "memory-mcp", "state": "v0.56.2 in prod", "updated": "2026-01-01" }""", null, "state-memory-mcp", "me", project: "memory-mcp");
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 6, 1, 0, 0, 0, TimeSpan.Zero)); // ~150d after 'updated'
+
+        var block = new ContextAssembler(repo, skills, clock)
+            .Assemble("x", "development", 5, includeLinks: false, RequestScope.Unrestricted, project: "memory-mcp");
+
+        Assert.NotNull(block);
+        Assert.Contains(block!.Warnings, w => w.Contains("may be stale", StringComparison.Ordinal) && w.Contains("refresh", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Assemble_does_not_warn_about_a_fresh_project_state()
+    {
+        using var temp = new TempDatabase();
+        var (repo, skills) = New(temp);
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 6, 1, 0, 0, 0, TimeSpan.Zero));
+        repo.Upsert("development", "project_state", "memory-mcp state", null,
+            """{ "project": "memory-mcp", "state": "current", "updated": "2026-05-31" }""", null, "state-memory-mcp", "me", project: "memory-mcp");
+
+        var block = new ContextAssembler(repo, skills, clock)
+            .Assemble("x", "development", 5, includeLinks: false, RequestScope.Unrestricted, project: "memory-mcp");
+
+        Assert.NotNull(block);
+        Assert.DoesNotContain(block!.Warnings, w => w.Contains("may be stale", StringComparison.Ordinal));
+    }
+
     private static (NotesRepository Repo, SkillsService Skills) New(TempDatabase temp)
     {
         var factory = new SqliteConnectionFactory(temp.FilePath);

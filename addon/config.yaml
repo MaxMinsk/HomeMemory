@@ -1,5 +1,5 @@
 name: Memory MCP
-version: "0.56.2"
+version: "0.57.0"
 slug: memory_mcp
 description: Shared memory / notes / skills data-plane (MCP) for Home Assistant agents.
 url: https://github.com/MaxMinsk/HomeMemory/tree/main/addon
@@ -36,6 +36,7 @@ options:
   mqtt_topic_prefix: "memory"
   webhook_url: ""
   webhook_secret: ""
+  adoption_hints: true
 schema:
   db_path: str
   bearer_token: password?
@@ -51,3 +52,4 @@ schema:
   mqtt_topic_prefix: str?
   webhook_url: str?
   webhook_secret: password?
+  adoption_hints: bool

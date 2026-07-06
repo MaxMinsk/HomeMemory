@@ -52,5 +52,8 @@ if bashio::config.has_value 'webhook_url'; then
   bashio::log.info "Webhook publishing enabled (url=${MEMORY_WEBHOOK_URL})"
 fi
 
+# Advisory write-time adoption hints: recall-before-write nudge + post-write related-notes hint (MEMP-204/205). On by default.
+export MEMORY_ADOPTION_HINTS="$(bashio::config 'adoption_hints')"
+
 bashio::log.info "Starting Memory MCP (HTTP on :8099, db=${MEMORY_DB_PATH})"
 exec /opt/memory-mcp/MemoryMcp.Server

@@ -52,6 +52,7 @@ public class StdioRoundTripTests
             Assert.Contains(tools, tool => tool.Name == name);
         }
 
+        AssertToolDescriptionImperatives(tools);
         await AssertCapabilities(client, cts.Token);
         await AssertNotesRoundTrip(client, cts.Token);
         await AssertStructuredInputs(client, cts.Token);
@@ -61,6 +62,60 @@ public class StdioRoundTripTests
         await AssertArtifactRoundTrip(client, cts.Token);
         await AssertValidationErrorCarriesSkillHint(client, cts.Token);
         await AssertBulkUpsert(client, cts.Token);
+        await AssertAdoptionHints(client, cts.Token);
+    }
+
+    // MEMP-210: the always-visible tool descriptions carry the adoption imperatives (recall-first, capture-before-create,
+    // patch-to-edit). A fresh agent that never reads the commons skills still sees these on the tool surface.
+    private static void AssertToolDescriptionImperatives(IList<McpClientTool> tools)
+    {
+        string Description(string name) => tools.First(tool => tool.Name == name).Description ?? string.Empty;
+        Assert.Contains("CALL THIS FIRST", Description("memory_context"), StringComparison.Ordinal);
+        Assert.Contains("notes_suggest_capture", Description("notes_upsert"), StringComparison.Ordinal);
+        Assert.Contains("notes_suggest_capture", Description("notes_assemble"), StringComparison.Ordinal);
+        Assert.Contains("Prefer this over notes_upsert", Description("notes_patch"), StringComparison.Ordinal);
+    }
+
+    // MEMP-205 (post-write related hint) + MEMP-204 (recall-before-write nudge): both surface on the write response.
+    private static async Task AssertAdoptionHints(McpClient client, CancellationToken ct)
+    {
+        // Two notes sharing a distinctive tag; creating the second surfaces the first as a related linking hint.
+        await client.CallToolAsync("notes_upsert", new Dictionary<string, object?>
+        {
+            ["domain"] = "memory-mcp", ["type"] = "backlog_item", ["title"] = "Adopt anchor note",
+            ["payload"] = new Dictionary<string, object?> { ["key"] = "MEMP-950", ["status"] = "ready" },
+            ["tags"] = new[] { "adopt-link-test" }, ["dedupKey"] = "MEMP-950",
+        }, cancellationToken: ct);
+        var created = await client.CallToolAsync("notes_upsert", new Dictionary<string, object?>
+        {
+            ["domain"] = "memory-mcp", ["type"] = "backlog_item", ["title"] = "Adopt sibling note",
+            ["payload"] = new Dictionary<string, object?> { ["key"] = "MEMP-951", ["status"] = "ready" },
+            ["tags"] = new[] { "adopt-link-test" }, ["dedupKey"] = "MEMP-951",
+        }, cancellationToken: ct);
+        Assert.True(created.IsError is not true, "adoption upsert reported an error: " + Text(created));
+        Assert.Contains("Adopt anchor note", Text(created)); // the tag-sibling surfaced as a related hint
+
+        // An identified agent that writes without recalling first is nudged (advisory, non-blocking).
+        var nudged = await client.CallToolAsync("notes_upsert", new Dictionary<string, object?>
+        {
+            ["domain"] = "memory-mcp", ["type"] = "fact", ["title"] = "Wrote before recalling",
+            ["payload"] = new Dictionary<string, object?> { ["statement"] = "written without a prior recall" },
+            ["dedupKey"] = "ADOPT-NUDGE-1", ["sourceAgent"] = "nudge-test-agent",
+        }, cancellationToken: ct);
+        Assert.Contains("recall/search recorded", Text(nudged), StringComparison.OrdinalIgnoreCase);
+
+        // After the same agent recalls, a later write is no longer nudged.
+        await client.CallToolAsync("notes_recall", new Dictionary<string, object?>
+        {
+            ["query"] = "anchor", ["domain"] = "memory-mcp", ["sourceAgent"] = "nudge-test-agent",
+        }, cancellationToken: ct);
+        var quiet = await client.CallToolAsync("notes_upsert", new Dictionary<string, object?>
+        {
+            ["domain"] = "memory-mcp", ["type"] = "fact", ["title"] = "Wrote after recalling",
+            ["payload"] = new Dictionary<string, object?> { ["statement"] = "written after a recall" },
+            ["dedupKey"] = "ADOPT-NUDGE-2", ["sourceAgent"] = "nudge-test-agent",
+        }, cancellationToken: ct);
+        Assert.DoesNotContain("recall/search recorded", Text(quiet), StringComparison.OrdinalIgnoreCase);
     }
 
     // notes_upsert_many binds an ARRAY of items whose payload is a nested JSON object — verify the SDK schema/binding

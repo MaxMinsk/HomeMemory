@@ -31,9 +31,10 @@ public sealed class ContextAssembler
     /// <param name="limit">Max recall hits.</param>
     /// <param name="includeLinks">Include one-hop neighbors in the recall.</param>
     /// <param name="scope">The caller's request scope.</param>
-    /// <param name="project">Optional project: its skills override the domain-general ones of the same key.</param>
+    /// <param name="project">Optional project: its skills/rules override the domain-general ones, and its notes are boosted in recall (MEMP-209).</param>
     /// <param name="budgetChars">When set, pack recall hits to this snippet-char budget instead of a fixed count (MEMP-176).</param>
-    public ContextBlock? Assemble(string query, string domain, int limit, bool includeLinks, RequestScope scope, string? project = null, int? budgetChars = null)
+    /// <param name="projectOnly">When true with a <paramref name="project"/>, hard-restrict the recall to that project (MEMP-209).</param>
+    public ContextBlock? Assemble(string query, string domain, int limit, bool includeLinks, RequestScope scope, string? project = null, int? budgetChars = null, bool projectOnly = false)
     {
         var guard = new ScopeGuard(scope);
         if (!guard.IsAllowed(domain))
@@ -78,7 +79,10 @@ public sealed class ContextAssembler
             warnings.Add($"{stale} included rule(s) may be outdated (unverified past their window) — verify or deprecate them.");
         }
 
-        var recall = _notes.Recall(query, domain, limit, guard.RestrictionForSearch(domain), includeLinks, 1, budgetChars);
+        // Nudge the agent to refresh an aging project_state / stale-marked note at the end of the task (MEMP-206).
+        warnings.AddRange(StaleStateWarnings(domain, project, now, guard.RestrictionForSearch(domain)));
+
+        var recall = _notes.Recall(query, domain, limit, guard.RestrictionForSearch(domain), includeLinks, 1, budgetChars, false, project, projectOnly);
         return new ContextBlock(domain, ranked, dedupedSkills, recall, AdvisoryPolicy, warnings);
     }
 
@@ -108,6 +112,74 @@ public sealed class ContextAssembler
         const DateTimeStyles styles = DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal;
         return !DateTimeOffset.TryParse(verified, CultureInfo.InvariantCulture, styles, out var since)
             || (now - since).TotalDays > days;
+    }
+
+    private const int MaxStateWarnings = 3;
+    // A project_state has no stale_after_days field of its own, so it ages against a default window (MEMP-206).
+    private const int DefaultProjectStateStaleDays = 14;
+
+    // State notes past their staleness window, so memory_context can nudge the agent to refresh them at the end of
+    // the task (MEMP-206): a project_state older than the default window, or any note that opted in via
+    // payload.stale_after_days. memory_rule is excluded — aging rules are already covered by the warning above.
+    private IReadOnlyList<string> StaleStateWarnings(string domain, string? project, DateTimeOffset now, IReadOnlyCollection<string>? restrict)
+    {
+        var filter = "(type == 'project_state' OR payload.stale_after_days is not null) AND type != 'memory_rule'";
+        if (!string.IsNullOrWhiteSpace(project))
+        {
+            filter += $" AND (project == '{project}' OR project is null)";
+        }
+
+        var candidates = _notes.Search(null, domain, null, null, "active", 50, 0, restrict, filter, includePayload: true).Items;
+        var warnings = new List<string>();
+        foreach (var note in candidates)
+        {
+            var stale = StaleAge(note.Type, note.PayloadJson, note.UpdatedUtc, now);
+            if (stale is null)
+            {
+                continue;
+            }
+
+            var (days, ageDays) = stale.Value;
+            var label = string.IsNullOrWhiteSpace(note.Title) ? note.Id : note.Title!;
+            warnings.Add($"{note.Type} '{label}' ({note.Id}) may be stale: last updated {ageDays}d ago (window {days}d) — refresh it at the end of the task.");
+            if (warnings.Count >= MaxStateWarnings)
+            {
+                break;
+            }
+        }
+
+        return warnings;
+    }
+
+    // The (window, age) in days when a note is past its staleness window; null otherwise. Window = explicit
+    // payload.stale_after_days, else the default for a project_state. Reference time = payload.updated (a
+    // project_state's own timestamp), else payload.last_verified_at, else the note's updated_utc.
+    private static (int Days, int AgeDays)? StaleAge(string type, string? payloadJson, string? updatedUtc, DateTimeOffset now)
+    {
+        int? window = null;
+        if (Element(payloadJson, "stale_after_days") is { ValueKind: JsonValueKind.Number } sad && sad.TryGetInt32(out var days) && days > 0)
+        {
+            window = days;
+        }
+        else if (string.Equals(type, "project_state", StringComparison.Ordinal))
+        {
+            window = DefaultProjectStateStaleDays;
+        }
+
+        if (window is not int limit)
+        {
+            return null;
+        }
+
+        var reference = Field(payloadJson, "updated") ?? Field(payloadJson, "last_verified_at") ?? updatedUtc;
+        const DateTimeStyles styles = DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal;
+        if (reference is null || !DateTimeOffset.TryParse(reference, CultureInfo.InvariantCulture, styles, out var since))
+        {
+            return null;
+        }
+
+        var age = (now - since).TotalDays;
+        return age > limit ? (limit, (int)age) : null;
     }
 
     private static JsonElement? Element(string? json, string name)

@@ -11,4 +11,7 @@ public sealed record AssembleLink(string ToId, string Rel);
 /// <param name="UpdatedUtc">The note's revision/etag after the write.</param>
 /// <param name="LinksCreated">Number of links created in the same transaction.</param>
 /// <param name="Project">The note's project sub-axis (echoed so callers can confirm the scope was set/preserved).</param>
-public sealed record AssembleResult(string Id, bool Created, string UpdatedUtc, int LinksCreated, string? Project = null);
+/// <param name="Related">Up to a few notes related to a NEWLY created note (a linking hint, MEMP-205); null on updates or when disabled.</param>
+/// <param name="Nudge">An advisory hint when an identified agent wrote without a prior recall this session (MEMP-204); null otherwise.</param>
+public sealed record AssembleResult(string Id, bool Created, string UpdatedUtc, int LinksCreated, string? Project = null,
+    IReadOnlyList<RelatedNote>? Related = null, string? Nudge = null);

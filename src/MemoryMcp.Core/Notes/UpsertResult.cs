@@ -7,4 +7,7 @@ namespace MemoryMcp.Core.Notes;
 /// <param name="Type">The note's type (echoed so a write needn't be followed by a get).</param>
 /// <param name="DedupKey">The note's stable dedup key, if any (echoed for the same reason).</param>
 /// <param name="Unchanged">True when an upsert was a no-op because the content was identical (MEMP-183): no revision bump, no event.</param>
-public sealed record UpsertResult(string Id, bool Created, string? UpdatedUtc = null, string? Type = null, string? DedupKey = null, bool Unchanged = false);
+/// <param name="Related">Up to a few notes related to a NEWLY created note (a linking hint, MEMP-205); null on updates or when disabled.</param>
+/// <param name="Nudge">An advisory hint when an identified agent wrote without a prior recall this session (MEMP-204); null otherwise.</param>
+public sealed record UpsertResult(string Id, bool Created, string? UpdatedUtc = null, string? Type = null, string? DedupKey = null, bool Unchanged = false,
+    IReadOnlyList<RelatedNote>? Related = null, string? Nudge = null);

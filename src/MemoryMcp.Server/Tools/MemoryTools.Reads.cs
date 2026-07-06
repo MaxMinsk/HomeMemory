@@ -27,13 +27,17 @@ public sealed partial class MemoryTools
         [Description("When true, each hit also includes its links (both directions), so you can render a graph without a notes_links call per row.")] bool includeLinks = false,
         [Description("Order results by a field instead of relevance/recency: \"<field> asc|desc\" (default desc). Sortable: payload.<field> (numeric fields sort numerically), title, updated_utc, created_utc. NULLs last. Or sort=\"recency\" for type-aware recency decay — freshest-relative-to-its-type first, so ephemeral types (episode/journal) fade in days while durable ones (recipe/reference/skill) stay near the top. E.g. top 10 hottest: type=pepper, sort=\"payload.spice_level desc\", limit=10.")] string? sort = null,
         [Description("Relevance mode for a text query: 'hybrid' (default — blends BM25 with recency, link-degree, pinned/importance and type weight via RRF, surfacing the most important notes) or 'lexical' (pure BM25 order). Ignored when `sort` is set or the query is structured-only.")] string? rank = null,
-        [Description("With hybrid rank, also return a per-hit score breakdown (lexical/recency/link/importance/type ranks + fused score). Default false.")] bool explain = false,
-        [Description("Token combine mode: 'auto' (default — AND, then ranked any-term fallback if AND finds nothing), 'all' (strict AND), or 'any' (OR, ranked). An OR/| in the query forces any-term.")] string? match = null)
-        => Translate(() => _notes.Search(query, domain, type, tags, status, limit, offset, _authz.ReadRestriction(domain), filter, includePayload, includeLinks, sort, rank, explain, match));
+        [Description("With hybrid rank, also return a per-hit score breakdown (lexical/recency/link/importance/type/project ranks + fused score). Default false.")] bool explain = false,
+        [Description("Token combine mode: 'auto' (default — AND, then ranked any-term fallback if AND finds nothing), 'all' (strict AND), or 'any' (OR, ranked). An OR/| in the query forces any-term.")] string? match = null,
+        [Description("Who is searching (provenance). Pass your stable agent id so the server can tell you recalled before writing (MEMP-204).")] string? sourceAgent = null)
+    {
+        _reads.RecordRead(sourceAgent);
+        return Translate(() => _notes.Search(query, domain, type, tags, status, limit, offset, _authz.ReadRestriction(domain), filter, includePayload, includeLinks, sort, rank, explain, match));
+    }
 
     /// <summary>Recalls a compact context block (hits + linked neighbors) for a query, scope-restricted.</summary>
     [McpServerTool(Name = "notes_recall", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
-    [Description("Recall a prompt-ready context block for a query: the top matching notes PLUS their one-hop linked neighbors (both directions), scope-restricted, with relation labels and source ids/revisions — a case's surrounding context in one call instead of search + many gets. Hits are ranked by hybrid relevance (BM25 + recency + link-degree + importance). Snippets only, never full bodies (use notes_read/notes_get for those).")]
+    [Description("Recall a prompt-ready context block for a query: the top matching notes PLUS their one-hop linked neighbors (both directions), scope-restricted, with relation labels and source ids/revisions — a case's surrounding context in one call instead of search + many gets. Hits are ranked by hybrid relevance (BM25 + recency + link-degree + importance + project). Pass `project` to lift that project's notes (cross-project hits still appear) or `projectOnly` to hard-restrict. Snippets only, never full bodies (use notes_read/notes_get for those).")]
     public RecallResult NotesRecall(
         [Description("Full-text query")] string query,
         [Description("Domain filter (optional)")] string? domain = null,
@@ -41,20 +45,31 @@ public sealed partial class MemoryTools
         [Description("Include one-hop linked neighbors of the hits (default true)")] bool includeLinks = true,
         [Description("Graph expansion depth (currently one hop)")] int maxHops = 1,
         [Description("Pack the highest-ranked hits whose snippets fit this char budget (~tokens×4) instead of taking a fixed count; returns usedChars/droppedCount. Omit to page by `limit`.")] int? budgetChars = null,
-        [Description("Also return a per-hit score breakdown (lexical/recency/link/importance ranks + fused score). Default false.")] bool explain = false)
-        => Translate(() => _notes.Recall(query, domain, limit, _authz.ReadRestriction(domain), includeLinks, maxHops, budgetChars, explain));
+        [Description("Also return a per-hit score breakdown (lexical/recency/link/importance/type/project ranks + fused score). Default false.")] bool explain = false,
+        [Description("Boost notes in this envelope project (soft — cross-project hits still appear, MEMP-209)")] string? project = null,
+        [Description("With `project`, hard-restrict the recall to that project (default false)")] bool projectOnly = false,
+        [Description("Who is recalling (provenance). Pass your stable agent id so the server can tell you recalled before writing (MEMP-204).")] string? sourceAgent = null)
+    {
+        _reads.RecordRead(sourceAgent);
+        return Translate(() => _notes.Recall(query, domain, limit, _authz.ReadRestriction(domain), includeLinks, maxHops, budgetChars, explain, project, projectOnly));
+    }
 
     /// <summary>Assembles a layered context block (rules + skills + recall) for a task in a domain.</summary>
     [McpServerTool(Name = "memory_context", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
-    [Description("Assemble a prompt-ready context block for a task in a domain, in one call: the active rules in force (memory_rule from the domain + commons, most important first), the guiding skills, and a recall of notes relevant to the query (FTS hits + one-hop neighbors). Includes an advisory-policy reminder (memory is advisory; the live user/data wins). Use at the start of a task instead of separate skill_list/search/recall calls. Null if the domain is out of scope.")]
+    [Description("CALL THIS FIRST at the start of a task in a domain: it assembles a prompt-ready context block in one call — the active rules in force (memory_rule from the domain + commons, most important first), the guiding skills, and a recall of notes relevant to the query (FTS hits + one-hop neighbors), plus warnings when a project_state is going stale (MEMP-206). Pass `project` to load that project's rules/skills and lift its notes in recall (MEMP-209). Includes an advisory-policy reminder (memory is advisory; the live user/data wins). Use it instead of separate skill_list/search/recall calls. Null if the domain is out of scope.")]
     public ContextBlock? MemoryContext(
         [Description("The task query to recall relevant notes for")] string query,
         [Description("Namespace, e.g. development or kitchen")] string domain,
         [Description("Max recall hits (default 10)")] int limit = 10,
         [Description("Include one-hop linked neighbors of the recall hits (default true)")] bool includeLinks = true,
-        [Description("Project within the domain: its skills override the domain-general ones of the same key")] string? project = null,
-        [Description("Pack recall hits to this snippet-char budget (~tokens×4) instead of a fixed count; rules/skills are always included. Omit to page by `limit`.")] int? budgetChars = null)
-        => Translate(() => new ContextAssembler(_notes, _skills).Assemble(query, domain, limit, includeLinks, _authz.Scope, project, budgetChars));
+        [Description("Project within the domain: its skills/rules override the domain-general ones, and its notes are boosted in recall")] string? project = null,
+        [Description("Pack recall hits to this snippet-char budget (~tokens×4) instead of a fixed count; rules/skills are always included. Omit to page by `limit`.")] int? budgetChars = null,
+        [Description("With `project`, hard-restrict the recall to that project (default false)")] bool projectOnly = false,
+        [Description("Who is loading context (provenance). Pass your stable agent id so the server can tell you recalled before writing (MEMP-204).")] string? sourceAgent = null)
+    {
+        _reads.RecordRead(sourceAgent);
+        return Translate(() => new ContextAssembler(_notes, _skills).Assemble(query, domain, limit, includeLinks, _authz.Scope, project, budgetChars, projectOnly));
+    }
 
     /// <summary>Lists the most-recently-updated (or most-used) notes in scope.</summary>
     [McpServerTool(Name = "notes_recent", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]

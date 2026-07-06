@@ -182,14 +182,18 @@ public sealed partial class NotesReader
     /// <param name="maxHops">Graph expansion depth; currently one hop (values &gt; 1 behave as 1).</param>
     /// <param name="budgetChars">When set, pack the highest-ranked hits whose snippets fit this char budget instead of taking a fixed count (MEMP-176).</param>
     /// <param name="explain">When true, each hit carries its hybrid <see cref="ScoreBreakdown"/> (MEMP-177).</param>
+    /// <param name="project">When set, lift notes in this envelope project via a soft RRF boost (MEMP-209) — cross-project hits still appear.</param>
+    /// <param name="projectOnly">When true with a <paramref name="project"/>, hard-restrict the recall to that project.</param>
     public RecallResult Recall(
         string? query, string? domain, int limit, IReadOnlyCollection<string>? restrictToDomains,
-        bool includeLinks = true, int maxHops = 1, int? budgetChars = null, bool explain = false)
+        bool includeLinks = true, int maxHops = 1, int? budgetChars = null, bool explain = false,
+        string? project = null, bool projectOnly = false)
     {
         // Recall ranks for usefulness, not lexical purity: hybrid relevance is the default here (MEMP-174). When a
         // budget is set, fetch a fuller page so packing has ranked candidates to choose from.
         var fetch = budgetChars is int ? Math.Clamp(limit * 4, limit, MaxLimit) : limit;
-        var page = Search(query, domain, null, null, "active", fetch, 0, restrictToDomains, null, includePayload: true, rank: "hybrid", explain: explain);
+        var page = Search(query, domain, null, null, "active", fetch, 0, restrictToDomains, null, includePayload: true, rank: "hybrid", explain: explain,
+            boostProject: project, projectEquals: projectOnly ? project : null);
         var (hits, budget, used, dropped) = PackToBudget(page.Items, limit, budgetChars);
 
         var neighbors = new List<RecallNeighbor>();
