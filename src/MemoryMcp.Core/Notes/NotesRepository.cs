@@ -64,6 +64,10 @@ public sealed class NotesRepository
         string? expectedUpdatedUtc, string? sourceAgent)
         => _writer.Patch(id, title, body, payloadJson, tagsJson, expectedUpdatedUtc, sourceAgent);
 
+    /// <inheritdoc cref="NotesWriter.PatchMany"/>
+    public IReadOnlyList<PatchResult> PatchMany(IReadOnlyList<PatchInput> items, string? sourceAgent)
+        => _writer.PatchMany(items, sourceAgent);
+
     /// <inheritdoc cref="NotesWriter.Restore"/>
     public bool Restore(string id) => _writer.Restore(id);
 
@@ -98,6 +102,9 @@ public sealed class NotesRepository
     /// <inheritdoc cref="NotesReader.Activity"/>
     public ActivityReport Activity(string? domain, string sinceUtc, IReadOnlyCollection<string>? restrictToDomains)
         => _reader.Activity(domain, sinceUtc, restrictToDomains);
+
+    /// <inheritdoc cref="NotesReader.Adoption"/>
+    public AdoptionReport Adoption(IReadOnlyCollection<string>? restrictToDomains) => _reader.Adoption(restrictToDomains);
 
     /// <inheritdoc cref="NotesReader.TagCounts"/>
     public IReadOnlyDictionary<string, long> TagCounts() => _reader.TagCounts();

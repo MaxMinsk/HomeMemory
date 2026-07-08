@@ -577,6 +577,84 @@ public sealed class NotesWriter
             }
         }
 
+        WritePatch(connection, transaction, id, current, newTitle, newBody, newPayload, newTags, sourceAgent, nowUtc);
+        transaction.Commit();
+
+        return new Note(id, current.Domain, current.Type, newTitle, newBody, newPayload, newTags,
+            current.DedupKey, current.Status, current.CreatedUtc, nowUtc, sourceAgent, current.SchemaVer, false, current.Project);
+    }
+
+    /// <summary>
+    /// Patches many notes by id in ONE transaction, all-or-nothing (MEMP-203): a missing id, a concurrency
+    /// conflict or an invalid merged payload aborts the whole batch (the error names the offending index) and
+    /// nothing is written. Returns one compact <see cref="PatchResult"/> per input (id + new revision), in order —
+    /// no full bodies echoed back. Merge semantics per item match <see cref="Patch"/> (payload merges, tags replace).
+    /// </summary>
+    /// <param name="items">The patches to apply (≤ <see cref="MaxBatch"/>).</param>
+    /// <param name="sourceAgent">Provenance: who is writing.</param>
+    public IReadOnlyList<PatchResult> PatchMany(IReadOnlyList<PatchInput> items, string? sourceAgent)
+    {
+        if (items.Count == 0)
+        {
+            return Array.Empty<PatchResult>();
+        }
+
+        if (items.Count > MaxBatch)
+        {
+            throw new AssembleException($"Too many items: {items.Count} exceeds the {MaxBatch} per-batch limit.");
+        }
+
+        var nowUtc = NowUtc();
+        var results = new List<PatchResult>(items.Count);
+        using (var connection = _connectionFactory.Create())
+        using (var transaction = connection.BeginTransaction())
+        {
+            for (var i = 0; i < items.Count; i++)
+            {
+                results.Add(PatchOne(connection, transaction, items[i], sourceAgent, nowUtc, i));
+            }
+
+            transaction.Commit();
+        }
+
+        return results;
+    }
+
+    // Applies one patch within an existing transaction, tagging any failure with its batch index (MEMP-203).
+    private PatchResult PatchOne(SqliteConnection connection, SqliteTransaction transaction, PatchInput item, string? sourceAgent, string nowUtc, int index)
+    {
+        var current = ReadForPatch(connection, transaction, item.Id)
+            ?? throw new NoteValidationException(new[] { $"item[{index}]: note '{item.Id}' not found." });
+
+        var newTitle = item.Title ?? current.Title;
+        var newBody = item.Body ?? current.Body;
+        var newTags = item.TagsJson ?? current.Tags;
+        var newPayload = MergePayload(current.Payload, item.PayloadJson);
+
+        if (item.ExpectedUpdatedUtc is not null && !string.Equals(item.ExpectedUpdatedUtc, current.UpdatedUtc, StringComparison.Ordinal))
+        {
+            var changed = ChangedFields(current.Title, current.Body, current.Payload, current.Tags, newTitle, newBody, newPayload, newTags);
+            var stale = ConcurrencyException.Stale(current.UpdatedUtc, current.SourceAgent, changed);
+            throw new ConcurrencyException($"item[{index}]: {stale.Message}", stale.CurrentRevision, stale.CurrentSourceAgent, stale.ChangedFields);
+        }
+
+        if (_registry.GetLatest(current.Type) is not null)
+        {
+            var validation = _validator.Validate(current.Type, newPayload ?? "{}");
+            if (!validation.IsValid)
+            {
+                throw new NoteValidationException(validation.Errors.Select(error => $"item[{index}] ({item.Id}): {error}").ToList());
+            }
+        }
+
+        WritePatch(connection, transaction, item.Id, current, newTitle, newBody, newPayload, newTags, sourceAgent, nowUtc);
+        return new PatchResult(item.Id, nowUtc);
+    }
+
+    // The UPDATE + audit shared by Patch and PatchMany (the caller owns the transaction and commit).
+    private static void WritePatch(SqliteConnection connection, SqliteTransaction transaction, string id, PatchSource current,
+        string? newTitle, string? newBody, string? newPayload, string? newTags, string? sourceAgent, string nowUtc)
+    {
         var before = NoteAudit.Snapshot(current.Title, current.Body, current.Payload, current.Tags, current.Status, current.SchemaVer);
         using (var update = connection.CreateCommand())
         {
@@ -595,10 +673,6 @@ public sealed class NotesWriter
 
         var after = NoteAudit.Snapshot(newTitle, newBody, newPayload, newTags, current.Status, current.SchemaVer);
         NoteAudit.Append(connection, transaction, id, "patch", sourceAgent, nowUtc, NoteAudit.BuildDiff("patch", before, after));
-        transaction.Commit();
-
-        return new Note(id, current.Domain, current.Type, newTitle, newBody, newPayload, newTags,
-            current.DedupKey, current.Status, current.CreatedUtc, nowUtc, sourceAgent, current.SchemaVer, false, current.Project);
     }
 
     private static PatchSource? ReadForPatch(SqliteConnection connection, SqliteTransaction transaction, string id)

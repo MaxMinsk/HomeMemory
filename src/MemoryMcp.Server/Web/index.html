@@ -86,6 +86,7 @@
       <button onclick="inbox()" title="Review queue: lint findings (unstructured / stale / possible secret / no tags / duplicate / broken link)" style="background:#3a2f12;color:#e0c074">Inbox</button>
       <button onclick="savedSearches()" title="Saved searches (named views) — click one to run it">Saved</button>
       <button onclick="activity()" title="Recent write activity by operation and type">Activity</button>
+      <button onclick="adoption()" title="Per-agent memory adoption: reads vs writes (who writes without reading)">Adoption</button>
     </div>
     <div id="tagbar"></div>
     <div id="list"><div class="empty">Enter token, then Search.</div></div>
@@ -332,6 +333,20 @@ async function activity() {
       `<p class="k">${a.total} change(s) since ${esc((a.sinceUtc||'').slice(0,10))}.</p>` +
       `<h3>By operation</h3><table class="kv">${rows(a.byOp)}</table>` +
       `<h3>By type</h3><table class="kv">${rows(a.byType)}</table>`;
+  } catch(e){ det.innerHTML = '<div class="empty">'+esc(e.message)+'</div>'; }
+}
+
+// Per-agent adoption overview (MEMP-207): reads vs writes, flagging agents that write without reading.
+async function adoption() {
+  const det = $('#detail');
+  try {
+    const a = await api('/api/adoption');
+    const flag = g => g.writesWithoutReading ? ' <span style="color:#e0a0b0">(writes without reading)</span>' : '';
+    const rows = (a.agents||[]).map(g=>`<tr><td>${esc(g.agent)}${flag(g)}</td><td style="text-align:right">${g.reads}</td><td style="text-align:right">${g.writes}</td><td style="text-align:right" title="create/update/patch">${g.creates}/${g.updates}/${g.patches}</td></tr>`).join('') || '<tr><td class="k" colspan="4">none</td></tr>';
+    det.dataset.sel = '';
+    det.innerHTML = `<h2>Adoption &middot; per agent</h2>` +
+      `<p class="k">${a.totalReads} read(s) vs ${a.totalWrites} write(s). Reads are counted only when an agent passes sourceAgent on recall/search.</p>` +
+      `<table class="kv"><tr><td class="k">agent</td><td class="k" style="text-align:right">reads</td><td class="k" style="text-align:right">writes</td><td class="k" style="text-align:right">c/u/p</td></tr>${rows}</table>`;
   } catch(e){ det.innerHTML = '<div class="empty">'+esc(e.message)+'</div>'; }
 }
 

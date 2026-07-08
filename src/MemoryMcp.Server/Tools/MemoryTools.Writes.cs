@@ -85,6 +85,22 @@ public sealed partial class MemoryTools
             return _notes.LinkMany(inputs);
         });
 
+    /// <summary>Patches many notes by id in one transaction (all-or-nothing), each scope-checked.</summary>
+    [McpServerTool(Name = "notes_patch_many", Destructive = false, UseStructuredContent = true)]
+    [Description("Patch an ARRAY of notes by id in ONE transaction, all-or-nothing — the bulk edit/retag tool. Each item {id, title?, body?, payload?, tags?, expectedUpdatedUtc?} is a partial update: payload shallow-merges, tags REPLACE. A missing id, a concurrency conflict, or an invalid merged payload aborts the whole batch (the error names the offending index) and nothing is written. Returns a compact {id, updatedUtc} per item (no full bodies). Use to retag/patch many notes at once instead of many notes_patch round-trips. Max 100 items.")]
+    public IReadOnlyList<PatchResult> NotesPatchMany(
+        [Description("Patches to apply: each {id, title?, body?, payload?, tags?, expectedUpdatedUtc?}")] PatchItem[] items,
+        [Description("Who is writing (provenance)")] string? sourceAgent = null)
+        => Translate(() =>
+        {
+            var inputs = (items ?? Array.Empty<PatchItem>()).Select(item =>
+            {
+                AuthorizeNote(item.Id);
+                return new PatchInput(item.Id, item.Title, item.Body, JsonArg(item.Payload), JsonArg(item.Tags), item.ExpectedUpdatedUtc);
+            }).ToList();
+            return _notes.PatchMany(inputs, sourceAgent ?? "mcp");
+        });
+
     /// <summary>Creates a note and its outgoing links atomically (all-or-nothing).</summary>
     [McpServerTool(Name = "notes_assemble", Destructive = false, UseStructuredContent = true)]
     [Description("Create (or upsert by dedupKey) a note AND its outgoing links in ONE transaction — all-or-nothing. Before creating a NEW note, run notes_suggest_capture first to avoid duplicates. If any link's target is missing or its rel invalid, nothing is created (no half-built case). `links` is an array of {toId, rel} with an active-voice lower_snake_case rel. payload/tags accept an object/array or a JSON string. For a newly created note the result may include `related` (more notes to consider linking) and a `nudge` if you wrote without recalling first.")]
@@ -257,3 +273,14 @@ public sealed record UpsertItem(
 /// <param name="ToId">Target note id.</param>
 /// <param name="Rel">Relationship verb (active-voice lower_snake_case).</param>
 public sealed record LinkItem(string FromId, string ToId, string Rel);
+
+/// <summary>One item of a <c>notes_patch_many</c> batch (payload/tags accept an object/array or a JSON string).</summary>
+/// <param name="Id">The note id to patch.</param>
+/// <param name="Title">New title (optional).</param>
+/// <param name="Body">New body (optional).</param>
+/// <param name="Payload">Payload keys to shallow-merge (object or JSON string; optional).</param>
+/// <param name="Tags">Tags array that REPLACES the current tags (array or JSON array string; optional).</param>
+/// <param name="ExpectedUpdatedUtc">Optional optimistic-concurrency guard (prior updated_utc).</param>
+public sealed record PatchItem(
+    string Id, string? Title = null, string? Body = null, JsonElement? Payload = null,
+    JsonElement? Tags = null, string? ExpectedUpdatedUtc = null);

@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.58.0
+
+Sprint 51 — Hygiene, bulk maintenance & measurability. Smarter lint, bulk edits, and per-agent adoption metrics.
+
+- **Type-aware lint (MEMP-202)**: the `no_tags` rule now skips types found by key/list rather than by tag
+  (sprint, skill, saved_search, memory_evolution_suggestion), so a full-corpus `notes_lint` drops from ~100+
+  findings dominated by noise to the handful of real problems. The tool description documents the profiles.
+- **orphan_note lint (MEMP-200)**: a new connectivity rule flags an eligible knowledge note with no links in
+  or out, untouched for 30+ days — a nudge to connect it into the graph. Ephemeral/standalone types (journal,
+  episode, sprint, skill, saved_search, memory_evolution_suggestion, memory_rule, preference) are exempt.
+- **Bulk patch / retag (MEMP-203)**: new `notes_patch_many` applies an array of partial updates
+  ({id, title?, body?, payload?, tags?, expectedUpdatedUtc?}) in ONE all-or-nothing transaction — payload
+  shallow-merges, tags replace — returning a compact {id, updatedUtc} per item. Retag 50 notes in one call
+  instead of 50 round-trips. Max 100 items.
+- **Adoption metrics (MEMP-207)**: new `notes_adoption` tool + viewer "Adoption" panel report per-agent reads
+  vs writes (create/update/patch), flagging agents that write without reading first. Writes come from the
+  change log (`note_events.actor`); reads are counted (new `agent_reads` table, migration 0017) only when a
+  caller passes `sourceAgent` on recall/search.
+
+Also: the `source-ingest` convention (a skill + a "source vs reference" decision, MEMP-199) is authored
+directly in the shared memory, not in this image. Migrations through **0017**. 349 tests.
+
 ## 0.57.0
 
 Sprint 50 — Adoption: make agents use memory well. Five items that push agents toward recalling before

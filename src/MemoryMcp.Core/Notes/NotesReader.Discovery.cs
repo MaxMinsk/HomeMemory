@@ -134,6 +134,69 @@ public sealed partial class NotesReader
         return counts;
     }
 
+    /// <summary>
+    /// Per-agent memory-adoption report (MEMP-207): writes (by op, all-time, from <c>note_events.actor</c>,
+    /// scope-restricted via the note's domain) merged with reads (from <c>agent_reads</c>, identified reads only),
+    /// so an operator can spot agents that write without reading first. Reads are global (search has no domain);
+    /// for a scope-restricted caller they are shown only for agents that also wrote in the caller's scope.
+    /// </summary>
+    /// <param name="restrictToDomains">Auth scope for the write side; null = unrestricted, empty = nothing.</param>
+    public AdoptionReport Adoption(IReadOnlyCollection<string>? restrictToDomains)
+    {
+        using var connection = _connectionFactory.Create();
+        var writes = new Dictionary<string, (long Writes, long Creates, long Updates, long Patches)>(StringComparer.Ordinal);
+        using (var command = connection.CreateCommand())
+        {
+            var filters = new List<string> { "n.deleted = 0" };
+            AppendScopeIn(command, filters, "n.domain", restrictToDomains);
+            command.CommandText =
+                "SELECT COALESCE(e.actor, '(unknown)') AS agent, e.op, count(*) AS n " +
+                "FROM note_events e JOIN notes n ON n.id = e.note_id " +
+                $"WHERE {string.Join(" AND ", filters)} GROUP BY agent, e.op;";
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                var agent = reader.GetString(0);
+                var count = reader.GetInt64(2);
+                writes.TryGetValue(agent, out var cur);
+                cur.Writes += count;
+                cur.Creates += reader.GetString(1) == "create" ? count : 0;
+                cur.Updates += reader.GetString(1) == "update" ? count : 0;
+                cur.Patches += reader.GetString(1) == "patch" ? count : 0;
+                writes[agent] = cur;
+            }
+        }
+
+        var reads = new Dictionary<string, long>(StringComparer.Ordinal);
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT agent, read_count FROM agent_reads;";
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                // Don't reveal read activity of agents that never wrote in a scope-restricted caller's domains.
+                var agent = reader.GetString(0);
+                if (restrictToDomains is null || writes.ContainsKey(agent))
+                {
+                    reads[agent] = reader.GetInt64(1);
+                }
+            }
+        }
+
+        var agents = new HashSet<string>(writes.Keys, StringComparer.Ordinal);
+        agents.UnionWith(reads.Keys);
+        var rows = agents.Select(agent =>
+            {
+                writes.TryGetValue(agent, out var w);
+                reads.TryGetValue(agent, out var r);
+                return new AgentAdoption(agent, r, w.Writes, w.Creates, w.Updates, w.Patches);
+            })
+            .OrderByDescending(row => row.Writes).ThenByDescending(row => row.Reads).ThenBy(row => row.Agent, StringComparer.Ordinal)
+            .ToList();
+
+        return new AdoptionReport(rows, rows.Sum(row => row.Reads), rows.Sum(row => row.Writes));
+    }
+
     /// <summary>Returns distinct tags across live notes with their counts (facet discovery), most-used first.</summary>
     public IReadOnlyDictionary<string, long> TagCounts() => TagFacets(null, null);
 

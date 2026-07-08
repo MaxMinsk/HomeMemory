@@ -16,7 +16,17 @@ public sealed class NotesLinter
 {
     // A note tagged 'unstructured' and untouched for longer than this is surfaced as a review-queue item.
     private const int StaleUnstructuredDays = 30;
+    // An eligible note with no links, untouched for longer than this, is flagged as an orphan (MEMP-200).
+    private const int OrphanMinAgeDays = 30;
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(250);
+
+    // Types for which a tag facet is not expected (found by key/list, not by tag): the no_tags rule skips them so
+    // real problems aren't buried under alarm fatigue (MEMP-202). SQL literals — kept ASCII and code-controlled.
+    private const string NoTagsExemptTypes = "'journal','sprint','skill','saved_search','memory_evolution_suggestion'";
+    // Types not expected to sit in the link graph (ephemeral logs, standalone guidance, infra): orphan_note skips
+    // them so the connectivity rule surfaces only knowledge notes that benefit from being linked (MEMP-200).
+    private const string OrphanExemptTypes =
+        "'journal','episode','sprint','skill','saved_search','memory_evolution_suggestion','memory_rule','preference'";
 
     // Heuristics for embedded credentials. Order is irrelevant; the first match names the finding.
     private static readonly (string Name, Regex Pattern)[] SecretHeuristics =
@@ -55,7 +65,7 @@ public sealed class NotesLinter
 
         var findings = new List<LintFinding>();
         findings.AddRange(NoteRule(connection, domain, restrictToDomains,
-            "(tags_json IS NULL OR json_array_length(tags_json) = 0) AND type <> 'journal'",
+            $"(tags_json IS NULL OR json_array_length(tags_json) = 0) AND type NOT IN ({NoTagsExemptTypes})",
             "no_tags", "warn", "Note has no tags — hard to find by facet."));
         findings.AddRange(NoteRule(connection, domain, restrictToDomains,
             "dedup_key IS NULL AND type <> 'journal'",
@@ -80,6 +90,7 @@ public sealed class NotesLinter
             "AND body NOT LIKE '%' || char(10) || '#%' AND json_extract(payload_json, '$.summary') IS NULL",
             "oversized_no_summary", "info", "Large body with no heading or summary — add an outline/summary so it's skimmable."));
         findings.AddRange(BrokenLinks(connection, domain, restrictToDomains));
+        findings.AddRange(OrphanNotes(connection, domain, restrictToDomains));
         findings.AddRange(PossibleSecrets(connection, domain, restrictToDomains));
 
         return findings.Count <= limit ? findings : findings.GetRange(0, limit);
@@ -239,6 +250,34 @@ public sealed class NotesLinter
             findings.Add(new LintFinding(
                 reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1),
                 reader.GetString(2), reader.GetString(3), rule, severity, message));
+        }
+
+        return findings;
+    }
+
+    // Eligible knowledge notes with no links (in or out), untouched past the age window — they sit outside the
+    // knowledge graph and are hard to discover by traversal (MEMP-200). Ephemeral/standalone types are exempt.
+    private List<LintFinding> OrphanNotes(SqliteConnection connection, string? domain, IReadOnlyCollection<string>? restrict)
+    {
+        var cutoff = _timeProvider.GetUtcNow().UtcDateTime.AddDays(-OrphanMinAgeDays).ToString("O", CultureInfo.InvariantCulture);
+        using var command = connection.CreateCommand();
+        var filters = new List<string>
+        {
+            "deleted = 0", "status = 'active'", $"type NOT IN ({OrphanExemptTypes})", "updated_utc < $cutoff",
+            "NOT EXISTS (SELECT 1 FROM note_links l WHERE l.from_id = notes.id OR l.to_id = notes.id)",
+        };
+        command.Parameters.AddWithValue("$cutoff", cutoff);
+        BindScope(command, filters, "domain", domain, restrict);
+        command.CommandText = $"SELECT id, title, domain, type FROM notes WHERE {string.Join(" AND ", filters)} ORDER BY domain, type LIMIT 500;";
+
+        var findings = new List<LintFinding>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            findings.Add(new LintFinding(
+                reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1),
+                reader.GetString(2), reader.GetString(3), "orphan_note", "info",
+                "No links in or out — connect it to related notes (notes_link) so it's part of the knowledge graph."));
         }
 
         return findings;

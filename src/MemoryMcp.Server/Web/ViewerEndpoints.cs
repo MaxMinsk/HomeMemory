@@ -52,6 +52,7 @@ internal static class ViewerEndpoints
         });
 
         app.MapActivity();
+        app.MapAdoption();
 
         app.MapGet("/api/notes/{id}", (string id, NotesRepository notes, ArtifactsService artifacts, ArtifactUrlSigner signer, RequestAuthorizer authz) =>
         {
@@ -112,6 +113,11 @@ internal static class ViewerEndpoints
             var since = DateTime.UtcNow.AddDays(-window).ToString("O", System.Globalization.CultureInfo.InvariantCulture);
             return Results.Json(notes.Activity(domain, since, restrict));
         });
+
+    // Per-agent memory-adoption summary (MEMP-207): reads vs writes per sourceAgent, scope-checked.
+    private static void MapAdoption(this IEndpointRouteBuilder app) =>
+        app.MapGet("/api/adoption", (NotesRepository notes, RequestAuthorizer authz) =>
+            Results.Json(notes.Adoption(authz.ReadRestriction(null))));
 
     // Unauthenticated liveness/readiness probe (MEMP-144) for the HA watchdog / Docker healthcheck.
     // 200 only if the database answers; no version or other detail is leaked to an unauthenticated caller.

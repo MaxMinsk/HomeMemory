@@ -31,7 +31,7 @@ public sealed partial class MemoryTools
         [Description("Token combine mode: 'auto' (default — AND, then ranked any-term fallback if AND finds nothing), 'all' (strict AND), or 'any' (OR, ranked). An OR/| in the query forces any-term.")] string? match = null,
         [Description("Who is searching (provenance). Pass your stable agent id so the server can tell you recalled before writing (MEMP-204).")] string? sourceAgent = null)
     {
-        _reads.RecordRead(sourceAgent);
+        RecordAgentRead(sourceAgent);
         return Translate(() => _notes.Search(query, domain, type, tags, status, limit, offset, _authz.ReadRestriction(domain), filter, includePayload, includeLinks, sort, rank, explain, match));
     }
 
@@ -50,7 +50,7 @@ public sealed partial class MemoryTools
         [Description("With `project`, hard-restrict the recall to that project (default false)")] bool projectOnly = false,
         [Description("Who is recalling (provenance). Pass your stable agent id so the server can tell you recalled before writing (MEMP-204).")] string? sourceAgent = null)
     {
-        _reads.RecordRead(sourceAgent);
+        RecordAgentRead(sourceAgent);
         return Translate(() => _notes.Recall(query, domain, limit, _authz.ReadRestriction(domain), includeLinks, maxHops, budgetChars, explain, project, projectOnly));
     }
 
@@ -67,7 +67,7 @@ public sealed partial class MemoryTools
         [Description("With `project`, hard-restrict the recall to that project (default false)")] bool projectOnly = false,
         [Description("Who is loading context (provenance). Pass your stable agent id so the server can tell you recalled before writing (MEMP-204).")] string? sourceAgent = null)
     {
-        _reads.RecordRead(sourceAgent);
+        RecordAgentRead(sourceAgent);
         return Translate(() => new ContextAssembler(_notes, _skills).Assemble(query, domain, limit, includeLinks, _authz.Scope, project, budgetChars, projectOnly));
     }
 
@@ -123,6 +123,12 @@ public sealed partial class MemoryTools
             .ToString("O", System.Globalization.CultureInfo.InvariantCulture);
         return Translate(() => _notes.Activity(domain, since, _authz.ReadRestriction(domain)));
     }
+
+    /// <summary>Per-agent memory-adoption report: reads vs writes, to spot agents that write without reading.</summary>
+    [McpServerTool(Name = "notes_adoption", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("Memory-adoption metrics per agent (MEMP-207): for each sourceAgent, its recall/search reads versus its writes (create/update/patch), heaviest writers first, plus a writesWithoutReading flag. Use to see the memory-usage culture — who recalls before writing and who just writes. Writes come from the change log (scope-restricted); reads are counted only for agents that pass sourceAgent on recall/search.")]
+    public AdoptionReport NotesAdoption()
+        => Translate(() => _notes.Adoption(_authz.ReadRestriction(null)));
 
     /// <summary>Lists distinct tags with counts (facet discovery), scope-restricted.</summary>
     [McpServerTool(Name = "notes_tags", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
@@ -350,7 +356,7 @@ public sealed partial class MemoryTools
 
     /// <summary>Scans notes for data-quality issues (read-only), within the caller's scope.</summary>
     [McpServerTool(Name = "notes_lint", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
-    [Description("Scan notes for data-quality issues (no_tags, no_dedup_key, no_title, duplicate, broken_link, stale_unstructured, stale_unverified, oversized_no_summary, possible_secret) and return findings (noteId/title/domain/type/rule/severity/message). 'duplicate' = another active note shares the same domain/type/title; 'stale_unstructured' = tagged 'unstructured' and untouched for 30+ days; 'stale_unverified' = a note with payload.stale_after_days not re-verified within that window (e.g. an aging memory_rule); 'oversized_no_summary' = a large body with no heading/summary; 'possible_secret' = body/payload heuristically looks like a credential (value never echoed). Pass a domain to focus. Read-only — it suggests fixes, changes nothing.")]
+    [Description("Scan notes for data-quality issues (no_tags, no_dedup_key, no_title, duplicate, duplicate_content, broken_link, orphan_note, stale_unstructured, stale_unverified, oversized_no_summary, possible_secret) and return findings (noteId/title/domain/type/rule/severity/message). Rules are type-aware: no_tags skips types found by key/list not tag (sprint/skill/saved_search/memory_evolution_suggestion), so real problems aren't buried. 'duplicate' = another active note shares the same domain/type/title; 'orphan_note' = an eligible knowledge note with no links (in or out), untouched 30+ days — connect it to the graph; 'stale_unstructured' = tagged 'unstructured' and untouched for 30+ days; 'stale_unverified' = a note with payload.stale_after_days not re-verified within that window (e.g. an aging memory_rule); 'oversized_no_summary' = a large body with no heading/summary; 'possible_secret' = body/payload heuristically looks like a credential (value never echoed). Pass a domain to focus. Read-only — it suggests fixes, changes nothing.")]
     public IReadOnlyList<LintFinding> NotesLint(
         [Description("Domain to focus on (optional; default = all in scope)")] string? domain = null,
         [Description("Max findings (default 200, max 1000)")] int limit = 200)

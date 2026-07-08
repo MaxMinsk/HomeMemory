@@ -17,7 +17,7 @@ public class StdioRoundTripTests
         "notes_graph", "notes_suggest_capture", "notes_get_by_key", "artifacts_find_text",
         "memory_capabilities", "schema_provenance", "domain_manifest", "memory_context", "skill_consolidate_plan",
         "notes_changes", "notes_tags", "notes_upsert_many", "notes_link_many",
-        "notes_saved_search_run", "notes_activity",
+        "notes_saved_search_run", "notes_activity", "notes_patch_many", "notes_adoption",
     };
 
     [Fact]
@@ -63,6 +63,47 @@ public class StdioRoundTripTests
         await AssertValidationErrorCarriesSkillHint(client, cts.Token);
         await AssertBulkUpsert(client, cts.Token);
         await AssertAdoptionHints(client, cts.Token);
+        await AssertBulkPatchAndAdoption(client, cts.Token);
+    }
+
+    // MEMP-203 (notes_patch_many) + MEMP-207 (notes_adoption) end-to-end over the wire.
+    private static async Task AssertBulkPatchAndAdoption(McpClient client, CancellationToken ct)
+    {
+        // Seed two notes, then retag both in one bulk patch.
+        foreach (var key in new[] { "MEMP-960", "MEMP-961" })
+        {
+            await client.CallToolAsync("notes_upsert", new Dictionary<string, object?>
+            {
+                ["domain"] = "memory-mcp", ["type"] = "backlog_item", ["title"] = $"Bulk patch {key}",
+                ["payload"] = new Dictionary<string, object?> { ["key"] = key, ["status"] = "ready" }, ["dedupKey"] = key,
+            }, cancellationToken: ct);
+        }
+
+        var byKey = await client.CallToolAsync("notes_get_by_key", new Dictionary<string, object?>
+        {
+            ["domain"] = "memory-mcp", ["type"] = "backlog_item", ["dedupKey"] = "MEMP-960",
+        }, cancellationToken: ct);
+        var id960 = System.Text.Json.JsonDocument.Parse(Text(byKey)).RootElement.GetProperty("id").GetString();
+
+        var patched = await client.CallToolAsync("notes_patch_many", new Dictionary<string, object?>
+        {
+            ["items"] = new object[]
+            {
+                new Dictionary<string, object?> { ["id"] = id960, ["tags"] = new[] { "bulk-patched" } },
+            },
+        }, cancellationToken: ct);
+        Assert.True(patched.IsError is not true, "notes_patch_many reported an error: " + Text(patched));
+
+        var reread = await client.CallToolAsync("notes_get_by_key", new Dictionary<string, object?>
+        {
+            ["domain"] = "memory-mcp", ["type"] = "backlog_item", ["dedupKey"] = "MEMP-960",
+        }, cancellationToken: ct);
+        Assert.Contains("bulk-patched", Text(reread));
+
+        // The adoption report surfaces the earlier nudge-test agent that wrote after recalling.
+        var adoption = await client.CallToolAsync("notes_adoption", new Dictionary<string, object?>(), cancellationToken: ct);
+        Assert.True(adoption.IsError is not true, "notes_adoption reported an error: " + Text(adoption));
+        Assert.Contains("nudge-test-agent", Text(adoption)); // it both recalled and wrote in AssertAdoptionHints
     }
 
     // MEMP-210: the always-visible tool descriptions carry the adoption imperatives (recall-first, capture-before-create,

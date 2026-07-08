@@ -109,6 +109,22 @@ public sealed partial class MemoryTools
         }
     }
 
+    // Records a recall/search by an identified agent: the in-process nudge tracker (MEMP-204) plus the persistent
+    // per-agent read counter behind the adoption report (MEMP-207). Both no-op for a null/blank agent; the
+    // persistent write is best-effort and must never break a read.
+    private void RecordAgentRead(string? sourceAgent)
+    {
+        _reads.RecordRead(sourceAgent);
+        try
+        {
+            new AgentReadStore(_connectionFactory).Record(sourceAgent);
+        }
+        catch (Microsoft.Data.Sqlite.SqliteException)
+        {
+            // read-count tracking is non-critical
+        }
+    }
+
     // For mutations: the note must exist and be in scope. Missing -> error (no silent no-op / dangling edge).
     private void AuthorizeNote(string id)
     {
