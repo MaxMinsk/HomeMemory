@@ -81,8 +81,8 @@ public sealed class NotesRepository
     public RecallResult Recall(
         string? query, string? domain, int limit, IReadOnlyCollection<string>? restrictToDomains,
         bool includeLinks = true, int maxHops = 1, int? budgetChars = null, bool explain = false,
-        string? project = null, bool projectOnly = false)
-        => _reader.Recall(query, domain, limit, restrictToDomains, includeLinks, maxHops, budgetChars, explain, project, projectOnly);
+        string? project = null, bool projectOnly = false, bool diverseByDomain = false)
+        => _reader.Recall(query, domain, limit, restrictToDomains, includeLinks, maxHops, budgetChars, explain, project, projectOnly, diverseByDomain);
 
     /// <inheritdoc cref="NotesReader.Related"/>
     public IReadOnlyList<RelatedNote> Related(string id, int limit, IReadOnlyCollection<string>? restrictToDomains)
@@ -118,6 +118,10 @@ public sealed class NotesRepository
 
     /// <inheritdoc cref="NotesReader.CountByTypeInDomain"/>
     public IReadOnlyDictionary<string, long> CountByTypeInDomain(string domain) => _reader.CountByTypeInDomain(domain);
+
+    /// <inheritdoc cref="NotesReader.ResolveProjectAsDomain"/>
+    public ProjectDomainResolution? ResolveProjectAsDomain(string requestedDomain, IReadOnlyCollection<string>? restrictToDomains)
+        => _reader.ResolveProjectAsDomain(requestedDomain, restrictToDomains);
 
     /// <inheritdoc cref="NotesReader.GetView"/>
     public NoteView? GetView(string id, bool includeBody = true, int? bodyMaxChars = null)

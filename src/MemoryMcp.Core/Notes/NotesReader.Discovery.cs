@@ -247,17 +247,19 @@ public sealed partial class NotesReader
     /// <param name="explain">When true, each hit carries its hybrid <see cref="ScoreBreakdown"/> (MEMP-177).</param>
     /// <param name="project">When set, lift notes in this envelope project via a soft RRF boost (MEMP-209) — cross-project hits still appear.</param>
     /// <param name="projectOnly">When true with a <paramref name="project"/>, hard-restrict the recall to that project.</param>
+    /// <param name="diverseByDomain">When true (a cross-domain overview), round-robin the ranked hits across domains so one large domain doesn't drown the smaller ones (MEMP-213).</param>
     public RecallResult Recall(
         string? query, string? domain, int limit, IReadOnlyCollection<string>? restrictToDomains,
         bool includeLinks = true, int maxHops = 1, int? budgetChars = null, bool explain = false,
-        string? project = null, bool projectOnly = false)
+        string? project = null, bool projectOnly = false, bool diverseByDomain = false)
     {
         // Recall ranks for usefulness, not lexical purity: hybrid relevance is the default here (MEMP-174). When a
-        // budget is set, fetch a fuller page so packing has ranked candidates to choose from.
-        var fetch = budgetChars is int ? Math.Clamp(limit * 4, limit, MaxLimit) : limit;
+        // budget is set (or we interleave by domain), fetch a fuller page so packing/fairness has candidates to pick from.
+        var fetch = budgetChars is int || diverseByDomain ? Math.Clamp(limit * 4, limit, MaxLimit) : limit;
         var page = Search(query, domain, null, null, "active", fetch, 0, restrictToDomains, null, includePayload: true, rank: "hybrid", explain: explain,
             boostProject: project, projectEquals: projectOnly ? project : null);
-        var (hits, budget, used, dropped) = PackToBudget(page.Items, limit, budgetChars);
+        var ranked = diverseByDomain ? InterleaveByDomain(page.Items) : page.Items;
+        var (hits, budget, used, dropped) = PackToBudget(ranked, limit, budgetChars);
 
         var neighbors = new List<RecallNeighbor>();
         if (includeLinks && maxHops >= 1 && hits.Count > 0)
@@ -283,6 +285,45 @@ public sealed partial class NotesReader
         }
 
         return new RecallResult(query, hits, neighbors, budget, used, dropped, page.Relaxed);
+    }
+
+    // Round-robins ranked hits across their domains (MEMP-213): keep each domain's internal rank order, but take
+    // one from each domain per round, so a cross-domain overview surfaces breadth instead of letting the biggest
+    // domain fill every slot. Domains are first seen in rank order, so the very top hit still leads.
+    private static IReadOnlyList<SearchResult> InterleaveByDomain(IReadOnlyList<SearchResult> ranked)
+    {
+        var groups = new List<List<SearchResult>>();
+        var groupOf = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var item in ranked)
+        {
+            if (!groupOf.TryGetValue(item.Domain, out var g))
+            {
+                g = groups.Count;
+                groupOf[item.Domain] = g;
+                groups.Add(new List<SearchResult>());
+            }
+
+            groups[g].Add(item);
+        }
+
+        if (groups.Count <= 1)
+        {
+            return ranked; // single domain — nothing to interleave
+        }
+
+        var result = new List<SearchResult>(ranked.Count);
+        for (var round = 0; result.Count < ranked.Count; round++)
+        {
+            foreach (var group in groups)
+            {
+                if (round < group.Count)
+                {
+                    result.Add(group[round]);
+                }
+            }
+        }
+
+        return result;
     }
 
     // Budget packing (MEMP-176): without a budget, just take the top `limit`. With one, walk the ranked hits and

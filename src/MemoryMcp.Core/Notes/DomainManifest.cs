@@ -10,9 +10,11 @@ namespace MemoryMcp.Core.Notes;
 /// <param name="Skills">The domain's skills (metadata only, no bodies).</param>
 /// <param name="Rules">Active <c>memory_rule</c> notes in the domain (with payload), the rules in force.</param>
 /// <param name="TopTags">The domain's most-used tags with counts (facet vocabulary), most-used first.</param>
+/// <param name="Warnings">Advisory notes, e.g. a corrective hint when a project name was passed as the domain (MEMP-212).</param>
 public sealed record DomainManifest(
     string Domain,
     IReadOnlyDictionary<string, long> NotesByType,
     IReadOnlyList<Skill> Skills,
     IReadOnlyList<SearchResult> Rules,
-    IReadOnlyDictionary<string, long> TopTags);
+    IReadOnlyDictionary<string, long> TopTags,
+    IReadOnlyList<string> Warnings);

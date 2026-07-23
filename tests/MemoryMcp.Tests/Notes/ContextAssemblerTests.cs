@@ -109,6 +109,74 @@ public class ContextAssemblerTests
         Assert.DoesNotContain(block!.Warnings, w => w.Contains("may be stale", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void Assemble_resolves_a_project_name_passed_as_domain()
+    {
+        using var temp = new TempDatabase();
+        var (repo, skills) = New(temp);
+        repo.Upsert("development", "memory_rule", "US rule", null, """{ "description": "u" }""", null, "rule-us", "me", project: "unity-solitaire");
+        repo.Upsert("development", "backlog_item", "Card hint", "cards hint animation", """{ "key": "US-100", "status": "ready" }""", null, "US-100", "me", project: "unity-solitaire");
+
+        // Caller mistakenly passed the PROJECT name where a domain is expected.
+        var block = new ContextAssembler(repo, skills).Assemble("cards hint", "unity-solitaire", 10, includeLinks: false, RequestScope.Unrestricted);
+
+        Assert.NotNull(block);
+        Assert.Equal("development", block!.Domain);                                            // resolved to the real domain
+        Assert.Contains(block.Warnings, w => w.Contains("is a project", StringComparison.Ordinal) && w.Contains("unity-solitaire", StringComparison.Ordinal));
+        Assert.Contains(block.Rules, r => r.Title == "US rule");                               // project rules loaded
+        Assert.Contains(block.Recall.Hits, h => h.Title == "Card hint");                       // project notes recalled
+    }
+
+    [Fact]
+    public void Assemble_does_not_resolve_a_real_domain()
+    {
+        using var temp = new TempDatabase();
+        var (repo, skills) = New(temp);
+        repo.Upsert("kitchen", "fact", "Borscht", "beetroot soup", """{ "statement": "x" }""", null, "borscht", "me");
+
+        var block = new ContextAssembler(repo, skills).Assemble("borscht", "kitchen", 10, includeLinks: false, RequestScope.Unrestricted);
+
+        Assert.NotNull(block);
+        Assert.Equal("kitchen", block!.Domain);
+        Assert.DoesNotContain(block.Warnings, w => w.Contains("is a project", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Assemble_without_a_domain_gives_a_cross_domain_overview()
+    {
+        using var temp = new TempDatabase();
+        var (repo, skills) = New(temp);
+        repo.Upsert("commons", "memory_rule", "Baseline", null, """{ "description": "always", "always_apply": true }""", null, "rule-base", "me");
+        repo.Upsert("development", "fact", "Dev note", "alpha in dev", """{ "statement": "x" }""", null, "dev-alpha", "me");
+        repo.Upsert("kitchen", "fact", "Kitchen note", "alpha in kitchen", """{ "statement": "x" }""", null, "kit-alpha", "me");
+
+        var block = new ContextAssembler(repo, skills).Assemble("alpha", domain: null, 10, includeLinks: false, RequestScope.Unrestricted);
+
+        Assert.NotNull(block);
+        Assert.Equal("*", block!.Domain);
+        Assert.Contains(block.Warnings, w => w.Contains("cross-domain overview", StringComparison.Ordinal));
+        Assert.Contains(block.Recall.Hits, h => h.Domain == "development"); // notes from multiple domains
+        Assert.Contains(block.Recall.Hits, h => h.Domain == "kitchen");
+        Assert.Contains(block.Rules, r => r.Title == "Baseline");            // commons rules still in force
+    }
+
+    [Fact]
+    public void Assemble_without_a_domain_never_leaves_the_scope_boundary()
+    {
+        using var temp = new TempDatabase();
+        var (repo, skills) = New(temp);
+        repo.Upsert("development", "fact", "Dev note", "alpha in dev", """{ "statement": "x" }""", null, "dev-alpha", "me");
+        repo.Upsert("kitchen", "fact", "Kitchen note", "alpha in kitchen", """{ "statement": "x" }""", null, "kit-alpha", "me");
+
+        var block = new ContextAssembler(repo, skills)
+            .Assemble("alpha", domain: null, 10, includeLinks: false, RequestScope.ForDomains(new[] { "kitchen" }));
+
+        Assert.NotNull(block);
+        Assert.Equal("*", block!.Domain);
+        Assert.Contains(block.Recall.Hits, h => h.Domain == "kitchen");
+        Assert.DoesNotContain(block.Recall.Hits, h => h.Domain == "development"); // out-of-scope domain never leaks
+    }
+
     private static (NotesRepository Repo, SkillsService Skills) New(TempDatabase temp)
     {
         var factory = new SqliteConnectionFactory(temp.FilePath);

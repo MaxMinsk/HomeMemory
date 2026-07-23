@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.59.0
+
+Sprint 52 — Ergonomics: recover from the two most common domain/project mistakes so a caller gets useful
+context instead of an empty result and a hallucinated fallback.
+
+- **Project-name-as-domain auto-resolve (MEMP-212)**: passing a project name where a domain is expected
+  (e.g. `memory_context(domain="unity-solitaire")`) no longer returns nothing. When the value is not a real
+  domain but matches a known project, `memory_context` and `domain_manifest` resolve it to the real domain +
+  project (the domain holding the most of that project's notes) and return a corrective warning with the exact
+  fixed call — instead of an empty block that sends the agent off to `domains_list`. Real domain calls are
+  untouched; scope is respected (a resolved domain is only offered if the caller may read it). `domain_manifest`
+  gains a `warnings` field.
+- **Cross-domain default when `domain` is omitted (MEMP-213)**: `memory_context` now takes an OPTIONAL domain —
+  omit it to get a cross-domain overview across every domain you're authorized for (commons rules/skills plus a
+  domain-diverse recall), rather than being forced to guess one domain. `notes_search` / `notes_recall` already
+  searched all authorized domains when `domain` was omitted; that is now stated plainly in their descriptions.
+  The overview recall round-robins hits across domains so one large domain (development, 900+ notes) doesn't
+  drown the smaller ones. `project=` still boosts/filters across domains. The domain security boundary is hard:
+  "all domains" always means "all domains THIS caller is authorized for" — a scoped caller never sees another
+  domain. Unblocks agents whose harness hardcoded a single domain.
+
+Migrations unchanged (through **0017**). 362 tests.
+
 ## 0.58.0
 
 Sprint 51 — Hygiene, bulk maintenance & measurability. Smarter lint, bulk edits, and per-agent adoption metrics.

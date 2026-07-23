@@ -73,6 +73,53 @@ public sealed partial class NotesReader
     }
 
     /// <summary>
+    /// Resolves a value passed where a domain is expected but that is really a project name (MEMP-212). If
+    /// <paramref name="requestedDomain"/> is a real domain (holds any active, in-scope note) it is left alone
+    /// (returns <c>null</c> — never re-resolve a working call). Otherwise, if the value matches a known project,
+    /// returns the domain holding the most of that project's notes so memory_context/domain_manifest can recover
+    /// with a corrective warning instead of an empty result. Scope-restricted; the <c>project</c> column is stored
+    /// lowercased, so the match is case-insensitive.
+    /// </summary>
+    /// <param name="requestedDomain">The value the caller passed as the domain.</param>
+    /// <param name="restrictToDomains">Auth scope; null = unrestricted, empty = nothing.</param>
+    public ProjectDomainResolution? ResolveProjectAsDomain(string requestedDomain, IReadOnlyCollection<string>? restrictToDomains)
+    {
+        var value = Identifiers.Normalize(requestedDomain);
+        if (string.IsNullOrEmpty(value))
+        {
+            return null;
+        }
+
+        using var connection = _connectionFactory.Create();
+
+        // A real domain (any active, in-scope note lives directly under it) is never re-resolved — normal calls stand.
+        using (var exists = connection.CreateCommand())
+        {
+            var filters = new List<string> { "deleted = 0", "status = 'active'", "domain = $d" };
+            exists.Parameters.AddWithValue("$d", value);
+            AppendScopeIn(exists, filters, "domain", restrictToDomains);
+            exists.CommandText = $"SELECT 1 FROM notes WHERE {string.Join(" AND ", filters)} LIMIT 1;";
+            if (exists.ExecuteScalar() is not null)
+            {
+                return null;
+            }
+        }
+
+        // Not a domain — does it name a project? Resolve to the domain holding the most of that project's notes.
+        using (var byProject = connection.CreateCommand())
+        {
+            var filters = new List<string> { "deleted = 0", "status = 'active'", "project = $p" };
+            byProject.Parameters.AddWithValue("$p", value);
+            AppendScopeIn(byProject, filters, "domain", restrictToDomains);
+            byProject.CommandText =
+                $"SELECT domain, count(*) AS c FROM notes WHERE {string.Join(" AND ", filters)} " +
+                "GROUP BY domain ORDER BY c DESC, domain LIMIT 1;";
+            using var reader = byProject.ExecuteReader();
+            return reader.Read() ? new ProjectDomainResolution(reader.GetString(0), value, reader.GetInt64(1)) : null;
+        }
+    }
+
+    /// <summary>
     /// Returns a note plus cheap size metadata, applying body windowing so a caller need not pull a huge
     /// body to inspect a note. <paramref name="includeBody"/>=false omits the body; <paramref name="bodyMaxChars"/>
     /// (when set) caps it; either way <see cref="NoteView.BodyChars"/> reports the true length.

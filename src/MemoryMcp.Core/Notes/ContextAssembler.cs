@@ -25,18 +25,29 @@ public sealed class ContextAssembler
         _clock = clock ?? TimeProvider.System;
     }
 
-    /// <summary>Builds the context block, or null if the domain is out of read scope.</summary>
+    /// <summary>Builds the context block, or null if the domain is out of read scope. When <paramref name="domain"/>
+    /// is omitted, assembles a cross-domain overview across every domain the caller may read (MEMP-213).</summary>
     /// <param name="query">The task query to recall notes for.</param>
-    /// <param name="domain">The domain to assemble for.</param>
+    /// <param name="domain">The domain to assemble for; null/empty = a cross-domain overview across all authorized domains.</param>
     /// <param name="limit">Max recall hits.</param>
     /// <param name="includeLinks">Include one-hop neighbors in the recall.</param>
     /// <param name="scope">The caller's request scope.</param>
     /// <param name="project">Optional project: its skills/rules override the domain-general ones, and its notes are boosted in recall (MEMP-209).</param>
     /// <param name="budgetChars">When set, pack recall hits to this snippet-char budget instead of a fixed count (MEMP-176).</param>
     /// <param name="projectOnly">When true with a <paramref name="project"/>, hard-restrict the recall to that project (MEMP-209).</param>
-    public ContextBlock? Assemble(string query, string domain, int limit, bool includeLinks, RequestScope scope, string? project = null, int? budgetChars = null, bool projectOnly = false)
+    public ContextBlock? Assemble(string query, string? domain, int limit, bool includeLinks, RequestScope scope, string? project = null, int? budgetChars = null, bool projectOnly = false)
     {
         var guard = new ScopeGuard(scope);
+        var warnings = new List<string>();
+
+        // MEMP-213: no domain => a cross-domain overview across everything the caller may read, instead of forcing a guess.
+        if (string.IsNullOrWhiteSpace(domain))
+        {
+            return AssembleOverview(query, limit, includeLinks, guard, project, budgetChars, projectOnly);
+        }
+
+        (domain, project) = ResolveScope(guard, domain, project, warnings);
+
         if (!guard.IsAllowed(domain))
         {
             return null;
@@ -64,7 +75,6 @@ public sealed class ContextAssembler
         // Dedupe skills by key when merging the domain with commons (the domain's wins, listed first).
         var dedupedSkills = skills.GroupBy(skill => skill.Key, StringComparer.Ordinal).Select(group => group.First()).ToList();
 
-        var warnings = new List<string>();
         var ranked = rules.OrderByDescending(AlwaysApply).ThenByDescending(Priority).ToList();
         if (ranked.Count > MaxRules)
         {
@@ -84,6 +94,66 @@ public sealed class ContextAssembler
 
         var recall = _notes.Recall(query, domain, limit, guard.RestrictionForSearch(domain), includeLinks, 1, budgetChars, false, project, projectOnly);
         return new ContextBlock(domain, ranked, dedupedSkills, recall, AdvisoryPolicy, warnings);
+    }
+
+    // Sentinel Domain value on a cross-domain overview block (no single domain was requested).
+    private const string AllDomains = "*";
+
+    // MEMP-213: a cross-domain overview when no domain is given — the rules in force across every domain the caller
+    // may read (restricted to the caller's scope), the shared commons skills, and a domain-diverse recall so one big
+    // domain doesn't drown the rest. A project= still boosts across domains.
+    private ContextBlock? AssembleOverview(string query, int limit, bool includeLinks, ScopeGuard guard, string? project, int? budgetChars, bool projectOnly)
+    {
+        var restrict = guard.RestrictionForSearch(null); // every authorized domain (null = unrestricted)
+        var ruleFilter = string.IsNullOrWhiteSpace(project) ? null : $"project == '{project}' OR project is null";
+
+        var rules = _notes.Search(null, null, "memory_rule", null, "active", 50, 0, restrict, ruleFilter, includePayload: true).Items
+            .Where(rule => !string.Equals(Field(rule.PayloadJson, "status"), "deprecated", StringComparison.Ordinal))
+            .ToList();
+        var skills = _skills.List(ScopeGuard.CommonsDomain, null, null).ToList();
+
+        var warnings = new List<string>
+        {
+            "No domain specified: showing a cross-domain overview across all your authorized domains (commons rules/skills + a domain-diverse recall). Pass domain= to focus on one domain's full rules and skills.",
+        };
+
+        var ranked = rules.OrderByDescending(AlwaysApply).ThenByDescending(Priority).ToList();
+        if (ranked.Count > MaxRules)
+        {
+            warnings.Add($"Showing top {MaxRules} of {ranked.Count} rules across your domains by priority.");
+            ranked = ranked.GetRange(0, MaxRules);
+        }
+
+        var stale = ranked.Count(rule => IsStaleRule(rule.PayloadJson, _clock.GetUtcNow()));
+        if (stale > 0)
+        {
+            warnings.Add($"{stale} included rule(s) may be outdated (unverified past their window) — verify or deprecate them.");
+        }
+
+        var recall = _notes.Recall(query, null, limit, restrict, includeLinks, 1, budgetChars, false, project, projectOnly, diverseByDomain: true);
+        return new ContextBlock(AllDomains, ranked, skills, recall, AdvisoryPolicy, warnings);
+    }
+
+    // MEMP-212: a caller that passed a project name where a domain is expected (e.g. domain='unity-solitaire')
+    // is auto-resolved to the real domain + project with a corrective warning, instead of an empty block. Skipped
+    // when a project is already given (the caller clearly knows the axes apart).
+    private (string Domain, string? Project) ResolveScope(ScopeGuard guard, string domain, string? project, List<string> warnings)
+    {
+        if (!string.IsNullOrWhiteSpace(project))
+        {
+            return (domain, project);
+        }
+
+        var resolved = _notes.ResolveProjectAsDomain(domain, guard.RestrictionForSearch(null));
+        if (resolved is null)
+        {
+            return (domain, project);
+        }
+
+        warnings.Add(
+            $"'{domain}' is a project, not a domain. Resolved to domain='{resolved.Domain}', project='{domain}' " +
+            $"({resolved.NoteCount} notes). Next time call memory_context(domain='{resolved.Domain}', project='{domain}').");
+        return (resolved.Domain, domain);
     }
 
     private static bool AlwaysApply(SearchResult rule) =>

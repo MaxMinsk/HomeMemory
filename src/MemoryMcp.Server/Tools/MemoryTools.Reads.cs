@@ -13,7 +13,7 @@ public sealed partial class MemoryTools
 {
     /// <summary>Searches notes by optional full-text query plus structured filters (scope-restricted, paginated).</summary>
     [McpServerTool(Name = "notes_search", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
-    [Description("Search notes by an optional full-text query plus filters. Returns ONE page of hits (snippets, never the full body) with total/hasMore (and relaxed=true if an AND query was auto-widened) — paginate with offset; don't fetch everything at once. QUERY SYNTAX: words match by prefix + RU/EN stemming; common stop words and punctuation are stripped; a fully \"double-quoted\" query is an exact phrase; -term excludes; OR (or |) between terms = any-term. MATCH: `match`=all (AND) | any (OR, ranked) | auto (default: AND, falling back to ranked any-term when AND finds nothing — so a natural-language question still returns ranked partials instead of 0). RANK: results are ordered by hybrid relevance by default (BM25 + recency + link-degree + importance/pinned + type weight — most important on top); pass rank=lexical for pure BM25, or `sort` to order by a field (e.g. top-N by a payload value).")]
+    [Description("Search notes by an optional full-text query plus filters. Returns ONE page of hits (snippets, never the full body) with total/hasMore (and relaxed=true if an AND query was auto-widened) — paginate with offset; don't fetch everything at once. QUERY SYNTAX: words match by prefix + RU/EN stemming; common stop words and punctuation are stripped; a fully \"double-quoted\" query is an exact phrase; -term excludes; OR (or |) between terms = any-term. MATCH: `match`=all (AND) | any (OR, ranked) | auto (default: AND, falling back to ranked any-term when AND finds nothing — so a natural-language question still returns ranked partials instead of 0). RANK: results are ordered by hybrid relevance by default (BM25 + recency + link-degree + importance/pinned + type weight — most important on top); pass rank=lexical for pure BM25, or `sort` to order by a field (e.g. top-N by a payload value). SCOPE: OMIT `domain` to search across ALL domains you're authorized for; pass `domain` to restrict to one. Narrow further with `type`/`tags`/`filter` (incl. the `project` field).")]
     public SearchPage NotesSearch(
         [Description("Full-text query (optional)")] string? query = null,
         [Description("Domain filter, e.g. memory-mcp")] string? domain = null,
@@ -37,7 +37,7 @@ public sealed partial class MemoryTools
 
     /// <summary>Recalls a compact context block (hits + linked neighbors) for a query, scope-restricted.</summary>
     [McpServerTool(Name = "notes_recall", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
-    [Description("Recall a prompt-ready context block for a query: the top matching notes PLUS their one-hop linked neighbors (both directions), scope-restricted, with relation labels and source ids/revisions — a case's surrounding context in one call instead of search + many gets. Hits are ranked by hybrid relevance (BM25 + recency + link-degree + importance + project). Pass `project` to lift that project's notes (cross-project hits still appear) or `projectOnly` to hard-restrict. Snippets only, never full bodies (use notes_read/notes_get for those).")]
+    [Description("Recall a prompt-ready context block for a query: the top matching notes PLUS their one-hop linked neighbors (both directions), scope-restricted, with relation labels and source ids/revisions — a case's surrounding context in one call instead of search + many gets. Hits are ranked by hybrid relevance (BM25 + recency + link-degree + importance + project). Pass `project` to lift that project's notes (cross-project hits still appear) or `projectOnly` to hard-restrict. OMIT `domain` to recall across ALL domains you're authorized for; pass `domain` to restrict to one. Snippets only, never full bodies (use notes_read/notes_get for those).")]
     public RecallResult NotesRecall(
         [Description("Full-text query")] string query,
         [Description("Domain filter (optional)")] string? domain = null,
@@ -56,10 +56,10 @@ public sealed partial class MemoryTools
 
     /// <summary>Assembles a layered context block (rules + skills + recall) for a task in a domain.</summary>
     [McpServerTool(Name = "memory_context", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
-    [Description("CALL THIS FIRST at the start of a task in a domain: it assembles a prompt-ready context block in one call — the active rules in force (memory_rule from the domain + commons, most important first), the guiding skills, and a recall of notes relevant to the query (FTS hits + one-hop neighbors), plus warnings when a project_state is going stale (MEMP-206). Pass `project` to load that project's rules/skills and lift its notes in recall (MEMP-209). Includes an advisory-policy reminder (memory is advisory; the live user/data wins). Use it instead of separate skill_list/search/recall calls. Null if the domain is out of scope.")]
+    [Description("CALL THIS FIRST at the start of a task in a domain: it assembles a prompt-ready context block in one call — the active rules in force (memory_rule from the domain + commons, most important first), the guiding skills, and a recall of notes relevant to the query (FTS hits + one-hop neighbors), plus warnings when a project_state is going stale (MEMP-206). Pass `project` to load that project's rules/skills and lift its notes in recall (MEMP-209). Includes an advisory-policy reminder (memory is advisory; the live user/data wins). Use it instead of separate skill_list/search/recall calls. Omit `domain` to assemble a cross-domain overview across ALL domains you're authorized for (MEMP-213); pass a `domain` to focus on one. If you pass a PROJECT name as `domain` by mistake (e.g. domain='unity-solitaire'), it auto-resolves to the real domain + project and says so in warnings instead of returning empty (MEMP-212). Null if the requested domain is out of scope.")]
     public ContextBlock? MemoryContext(
         [Description("The task query to recall relevant notes for")] string query,
-        [Description("Namespace, e.g. development or kitchen")] string domain,
+        [Description("Namespace, e.g. development or kitchen. OMIT to get a cross-domain overview across all your authorized domains (MEMP-213); pass one to focus.")] string? domain = null,
         [Description("Max recall hits (default 10)")] int limit = 10,
         [Description("Include one-hop linked neighbors of the recall hits (default true)")] bool includeLinks = true,
         [Description("Project within the domain: its skills/rules override the domain-general ones, and its notes are boosted in recall")] string? project = null,
@@ -332,11 +332,28 @@ public sealed partial class MemoryTools
 
     /// <summary>Returns a compact orientation for a domain: note types, skills, and active rules.</summary>
     [McpServerTool(Name = "domain_manifest", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
-    [Description("Domain orientation in one call: note counts by type, the domain's skills (metadata), and its active memory_rule notes (the rules in force, with payload). Pass a project to resolve project-specific skill overrides. Use when entering a domain instead of dumping everything. Null if the domain is out of scope.")]
+    [Description("Domain orientation in one call: note counts by type, the domain's skills (metadata), and its active memory_rule notes (the rules in force, with payload). Pass a project to resolve project-specific skill overrides. Use when entering a domain instead of dumping everything. If you pass a PROJECT name as `domain` by mistake, it auto-resolves to the real domain + project and says so in warnings instead of returning empty (MEMP-212). Null if the domain is out of scope.")]
     public DomainManifest? GetDomainManifest(
         [Description("Namespace, e.g. development or kitchen")] string domain,
         [Description("Resolve skills for this project (project-specific overrides win)")] string? project = null)
     {
+        var warnings = new List<string>();
+
+        // MEMP-212: recover from a project name passed where a domain is expected (e.g. domain='unity-solitaire')
+        // by resolving it to the real domain + project with a corrective warning, instead of returning null/empty.
+        if (string.IsNullOrWhiteSpace(project))
+        {
+            var resolved = _notes.ResolveProjectAsDomain(domain, _authz.ReadRestriction(null));
+            if (resolved is not null)
+            {
+                warnings.Add(
+                    $"'{domain}' is a project, not a domain. Resolved to domain='{resolved.Domain}', project='{domain}' " +
+                    $"({resolved.NoteCount} notes). Next time call domain_manifest(domain='{resolved.Domain}', project='{domain}').");
+                project = domain;
+                domain = resolved.Domain;
+            }
+        }
+
         if (!_authz.CanRead(domain))
         {
             return null;
@@ -346,7 +363,7 @@ public sealed partial class MemoryTools
         var rules = _notes.Search(null, domain, "memory_rule", null, "active", 100, 0, _authz.ReadRestriction(domain), ruleFilter, includePayload: true).Items;
         var topTags = _notes.TagFacets(domain, _authz.ReadRestriction(domain))
             .OrderByDescending(tag => tag.Value).Take(25).ToDictionary(tag => tag.Key, tag => tag.Value, StringComparer.Ordinal);
-        return new DomainManifest(domain, _notes.CountByTypeInDomain(domain), _skills.List(domain, null, project), rules, topTags);
+        return new DomainManifest(domain, _notes.CountByTypeInDomain(domain), _skills.List(domain, null, project), rules, topTags, warnings);
     }
 
     /// <summary>Lists tags (facets) with their counts, most-used first.</summary>

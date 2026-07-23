@@ -64,6 +64,63 @@ public class StdioRoundTripTests
         await AssertBulkUpsert(client, cts.Token);
         await AssertAdoptionHints(client, cts.Token);
         await AssertBulkPatchAndAdoption(client, cts.Token);
+        await AssertProjectAsDomainResolution(client, cts.Token);
+        await AssertCrossDomainContext(client, cts.Token);
+    }
+
+    // MEMP-213: memory_context with NO domain returns a cross-domain overview spanning every authorized domain,
+    // instead of forcing the caller to guess one.
+    private static async Task AssertCrossDomainContext(McpClient client, CancellationToken ct)
+    {
+        // Seed a matching note in two different domains.
+        await client.CallToolAsync("notes_upsert", new Dictionary<string, object?>
+        {
+            ["domain"] = "memory-mcp", ["type"] = "fact", ["title"] = "Xdomain in memory-mcp",
+            ["payload"] = new Dictionary<string, object?> { ["statement"] = "xdomainprobe here" }, ["dedupKey"] = "XDOM-MCP",
+        }, cancellationToken: ct);
+        await client.CallToolAsync("notes_upsert", new Dictionary<string, object?>
+        {
+            ["domain"] = "kitchen", ["type"] = "fact", ["title"] = "Xdomain in kitchen",
+            ["payload"] = new Dictionary<string, object?> { ["statement"] = "xdomainprobe here" }, ["dedupKey"] = "XDOM-KIT",
+        }, cancellationToken: ct);
+
+        var context = await client.CallToolAsync("memory_context", new Dictionary<string, object?>
+        {
+            ["query"] = "xdomainprobe", // no domain
+        }, cancellationToken: ct);
+        Assert.True(context.IsError is not true, "cross-domain memory_context reported an error: " + Text(context));
+        var text = Text(context);
+        Assert.Contains("cross-domain overview", text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Xdomain in memory-mcp", text, StringComparison.Ordinal);
+        Assert.Contains("Xdomain in kitchen", text, StringComparison.Ordinal); // both domains surfaced
+    }
+
+    // MEMP-212: passing a PROJECT name where a domain is expected auto-resolves to the real domain + project
+    // with a corrective warning, over the wire, for both memory_context and domain_manifest.
+    private static async Task AssertProjectAsDomainResolution(McpClient client, CancellationToken ct)
+    {
+        // Seed a note whose envelope project is a value that is NOT itself a domain.
+        await client.CallToolAsync("notes_upsert", new Dictionary<string, object?>
+        {
+            ["domain"] = "memory-mcp", ["type"] = "backlog_item", ["title"] = "Widget lab ticket",
+            ["payload"] = new Dictionary<string, object?> { ["key"] = "WL-100", ["status"] = "ready" },
+            ["dedupKey"] = "WL-100", ["project"] = "widget-lab",
+        }, cancellationToken: ct);
+
+        var manifest = await client.CallToolAsync("domain_manifest", new Dictionary<string, object?>
+        {
+            ["domain"] = "widget-lab", // a project, not a domain
+        }, cancellationToken: ct);
+        Assert.True(manifest.IsError is not true, "domain_manifest reported an error: " + Text(manifest));
+        Assert.Contains("is a project", Text(manifest), StringComparison.Ordinal);
+        Assert.Contains("memory-mcp", Text(manifest), StringComparison.Ordinal);
+
+        var context = await client.CallToolAsync("memory_context", new Dictionary<string, object?>
+        {
+            ["query"] = "widget lab", ["domain"] = "widget-lab",
+        }, cancellationToken: ct);
+        Assert.True(context.IsError is not true, "memory_context reported an error: " + Text(context));
+        Assert.Contains("is a project", Text(context), StringComparison.Ordinal);
     }
 
     // MEMP-203 (notes_patch_many) + MEMP-207 (notes_adoption) end-to-end over the wire.
@@ -115,6 +172,10 @@ public class StdioRoundTripTests
         Assert.Contains("notes_suggest_capture", Description("notes_upsert"), StringComparison.Ordinal);
         Assert.Contains("notes_suggest_capture", Description("notes_assemble"), StringComparison.Ordinal);
         Assert.Contains("Prefer this over notes_upsert", Description("notes_patch"), StringComparison.Ordinal);
+        // MEMP-213: the omit-domain-to-search-everything behavior is stated on the tool surface.
+        Assert.Contains("domains you're authorized for", Description("notes_search"), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("domains you're authorized for", Description("notes_recall"), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("cross-domain overview", Description("memory_context"), StringComparison.OrdinalIgnoreCase);
     }
 
     // MEMP-205 (post-write related hint) + MEMP-204 (recall-before-write nudge): both surface on the write response.
