@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.66.0
+
+Sprint 59 — Rule relevance (MEMP-224). `memory_context` now honors the `always_apply`-vs-on-demand rule
+semantics the schema always described (`always_apply` = "baseline context; otherwise loaded on demand") but the
+code ignored — it had been loading *every* rule.
+
+- A **domain-general (project-`null`) non-`always_apply` rule** that declares `trigger_phrases`/`topic_globs` is
+  now surfaced **only when the task query matches a trigger** — so a situational/environment rule (e.g. the npm
+  registry gotcha) no longer blankets unrelated projects. **Project-scoped rules always load in their project**,
+  `always_apply` rules stay baseline, and a trigger-less rule can't be gated (kept). Verified blast radius across
+  the live corpus = exactly one rule (the npm rule); all 67 project-scoped rules are unaffected.
+- Reclassified the npm rule to `always_apply=false` (it has triggers → on-demand). The `create-memory-rule`
+  commons skill (v2) documents the enforcement.
+
+No schema change (migrations through **0017**). 385 tests.
+
 ## 0.65.0
 
 Sprint 58 — Viewer improvements from owner field use.

@@ -65,7 +65,7 @@ public sealed class ContextAssembler
             : new[] { domain, ScopeGuard.CommonsDomain };
 
         var now = _clock.GetUtcNow();
-        var (ranked, skills) = BuildRulesAndSkills(guard, domains, domain, project, opts, now, warnings);
+        var (ranked, skills) = BuildRulesAndSkills(query, guard, domains, domain, project, opts, now, warnings);
 
         // Nudge the agent to refresh an aging project_state / stale-marked note at the end of the task (MEMP-206).
         warnings.AddRange(StaleStateWarnings(domain, project, now, guard.RestrictionForSearch(domain)));
@@ -79,7 +79,7 @@ public sealed class ContextAssembler
     // include toggles (MEMP-223), ranks/caps the rules, appends the stale-rule warning, and returns the lean
     // rule view (MEMP-214) plus deduped skills.
     private (IReadOnlyList<SearchResult> Rules, IReadOnlyList<Skill> Skills) BuildRulesAndSkills(
-        ScopeGuard guard, IReadOnlyList<string> domains, string domain, string? project, ContextOptions opts, DateTimeOffset now, List<string> warnings)
+        string query, ScopeGuard guard, IReadOnlyList<string> domains, string domain, string? project, ContextOptions opts, DateTimeOffset now, List<string> warnings)
     {
         var ruleFilter = string.IsNullOrWhiteSpace(project) ? null : $"project == '{project}' OR project is null";
         var rules = new List<SearchResult>();
@@ -101,7 +101,8 @@ public sealed class ContextAssembler
         }
 
         var dedupedSkills = skills.GroupBy(skill => skill.Key, StringComparer.Ordinal).Select(group => group.First()).ToList();
-        var ranked = rules.OrderByDescending(AlwaysApply).ThenByDescending(Priority).ToList();
+        var visible = rules.Where(rule => !RuleHiddenAsOnDemand(query, rule)).ToList(); // MEMP-224
+        var ranked = visible.OrderByDescending(AlwaysApply).ThenByDescending(Priority).ToList();
         if (ranked.Count > MaxRules)
         {
             warnings.Add($"Showing top {MaxRules} of {ranked.Count} rules by priority.");
@@ -131,6 +132,7 @@ public sealed class ContextAssembler
         var rules = opts.IncludeRules
             ? _notes.Search(null, null, "memory_rule", null, "active", 50, 0, restrict, ruleFilter, includePayload: true).Items
                 .Where(rule => !string.Equals(Field(rule.PayloadJson, "status"), "deprecated", StringComparison.Ordinal))
+                .Where(rule => !RuleHiddenAsOnDemand(query, rule)) // MEMP-224: on-demand domain-general rules gated by query
                 .ToList()
             : new List<SearchResult>();
         var skills = opts.IncludeSkills ? _skills.List(ScopeGuard.CommonsDomain, null, null).ToList() : new List<Skill>();
@@ -188,6 +190,111 @@ public sealed class ContextAssembler
 
     private static string? Field(string? json, string name) =>
         Element(json, name) is { ValueKind: JsonValueKind.String } s ? s.GetString() : null;
+
+    // Generic orientation words dropped from a rule's trigger tokens so a broad query ("project state, rules...")
+    // doesn't accidentally surface a situational rule (MEMP-224).
+    private static readonly HashSet<string> GenericRuleTokens = new(StringComparer.Ordinal)
+    {
+        "project", "projects", "state", "status", "rules", "rule", "task", "tasks", "work", "active", "current",
+        "memory", "context", "note", "notes", "backlog", "sprint", "decision", "decisions", "code",
+    };
+
+    // MEMP-224: a DOMAIN-GENERAL (project-null) on-demand rule (not always_apply) that declares
+    // trigger_phrases/topic_globs is surfaced ONLY when the task query matches a trigger — so a situational rule
+    // (e.g. the npm environment gotcha) doesn't blanket every project. Project-scoped rules always load in their
+    // project; always_apply rules stay baseline; a trigger-less rule can't be gated, so it is kept.
+    private static bool RuleHiddenAsOnDemand(string? query, SearchResult rule)
+    {
+        if (rule.Project is not null || AlwaysApply(rule))
+        {
+            return false;
+        }
+
+        var triggers = RuleTriggerTokens(rule.PayloadJson);
+        if (triggers.Count == 0)
+        {
+            return false;
+        }
+
+        var queryTokens = Words(query).ToHashSet(StringComparer.Ordinal);
+        return !triggers.Any(queryTokens.Contains);
+    }
+
+    private static HashSet<string> RuleTriggerTokens(string? payloadJson)
+    {
+        var tokens = new HashSet<string>(StringComparer.Ordinal);
+        if (string.IsNullOrEmpty(payloadJson))
+        {
+            return tokens;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(payloadJson);
+            var root = document.RootElement;
+            foreach (var field in new[] { "trigger_phrases", "topic_globs" })
+            {
+                if (root.TryGetProperty(field, out var array) && array.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var element in array.EnumerateArray())
+                    {
+                        AddTokens(tokens, element.ValueKind == JsonValueKind.String ? element.GetString() : null);
+                    }
+                }
+            }
+
+            AddTokens(tokens, Field(payloadJson, "scope"));
+        }
+        catch (JsonException)
+        {
+            // fall through with whatever was collected
+        }
+
+        return tokens;
+    }
+
+    private static void AddTokens(HashSet<string> into, string? text)
+    {
+        foreach (var word in Words(text))
+        {
+            if (!GenericRuleTokens.Contains(word))
+            {
+                into.Add(word);
+            }
+        }
+    }
+
+    // Lowercased alphanumeric words of length >= 3 (so "artifactory.playticorp.com" -> artifactory, playticorp, com).
+    private static IEnumerable<string> Words(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            yield break;
+        }
+
+        var builder = new System.Text.StringBuilder();
+        foreach (var ch in text)
+        {
+            if (char.IsLetterOrDigit(ch))
+            {
+                builder.Append(char.ToLowerInvariant(ch));
+            }
+            else if (builder.Length > 0)
+            {
+                if (builder.Length >= 3)
+                {
+                    yield return builder.ToString();
+                }
+
+                builder.Clear();
+            }
+        }
+
+        if (builder.Length >= 3)
+        {
+            yield return builder.ToString();
+        }
+    }
 
     // MEMP-214: the context view keeps only the small, decision-relevant rule fields and drops verbose arrays
     // (trigger_phrases, source_refs, ...) and tags, so a rule set doesn't bloat the block. Staleness is computed

@@ -242,6 +242,39 @@ public class ContextAssemblerTests
         Assert.All(block.Recall.Hits, h => Assert.Equal("fact", h.Type));
     }
 
+    [Fact]
+    public void On_demand_domain_general_rule_is_gated_by_query_relevance()
+    {
+        using var temp = new TempDatabase();
+        var (repo, skills) = New(temp);
+        // Domain-general (project null), on-demand, with triggers — the npm-style situational rule.
+        repo.Upsert("development", "memory_rule", "Npm gotcha", null,
+            """{ "description": "npm registry override", "always_apply": false, "trigger_phrases": ["npm registry", "scaffold node project"] }""",
+            null, "npm-rule", "me");
+        repo.Upsert("development", "memory_rule", "Universal", null, """{ "description": "x", "always_apply": true }""", null, "uni", "me");
+
+        var trading = new ContextAssembler(repo, skills).Assemble("mining rush cards review", "development", 10, false, RequestScope.Unrestricted, project: "binance-maf-trader");
+        Assert.DoesNotContain(trading!.Rules, r => r.Title == "Npm gotcha"); // no trigger match -> not surfaced in an unrelated project
+        Assert.Contains(trading.Rules, r => r.Title == "Universal");         // always_apply stays baseline
+
+        var node = new ContextAssembler(repo, skills).Assemble("scaffold node project with npm", "development", 10, false, RequestScope.Unrestricted, project: "binance-maf-trader");
+        Assert.Contains(node!.Rules, r => r.Title == "Npm gotcha");          // trigger match -> surfaced on demand
+    }
+
+    [Fact]
+    public void Project_scoped_rule_is_not_gated_in_its_own_project()
+    {
+        using var temp = new TempDatabase();
+        var (repo, skills) = New(temp);
+        repo.Upsert("development", "memory_rule", "Unity arch", null,
+            """{ "description": "addressables loading", "always_apply": false, "trigger_phrases": ["addressables"] }""",
+            null, "unity-arch", "me", project: "unity-solitaire");
+
+        var block = new ContextAssembler(repo, skills).Assemble("something totally unrelated", "development", 10, false, RequestScope.Unrestricted, project: "unity-solitaire");
+
+        Assert.Contains(block!.Rules, r => r.Title == "Unity arch"); // project-scoped rules always load in their project
+    }
+
     private static (NotesRepository Repo, SkillsService Skills) New(TempDatabase temp)
     {
         var factory = new SqliteConnectionFactory(temp.FilePath);
