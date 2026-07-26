@@ -1,0 +1,28 @@
+{
+  "//": "Merge these hooks into your project's .claude/settings.json (or ~/.claude/settings.json). The SessionStart hook injects Memory MCP context at the start of every session; the Stop hook nudges you to consolidate if the session never used memory. Both fail open (no memory server -> no-op).",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/memory_session_start.py\"",
+            "timeout": 20,
+            "statusMessage": "Loading Memory MCP context..."
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/memory_stop_reminder.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

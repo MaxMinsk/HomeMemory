@@ -66,7 +66,68 @@ public class StdioRoundTripTests
         await AssertBulkPatchAndAdoption(client, cts.Token);
         await AssertProjectAsDomainResolution(client, cts.Token);
         await AssertCrossDomainContext(client, cts.Token);
+        await AssertPrompts(client, cts.Token);
     }
+
+    // MEMP-211: the server advertises capability prompts (start-task / end-task) and they render usable text.
+    private static async Task AssertPrompts(McpClient client, CancellationToken ct)
+    {
+        var prompts = await client.ListPromptsAsync(cancellationToken: ct);
+        Assert.Contains(prompts, p => p.Name == "start-task");
+        Assert.Contains(prompts, p => p.Name == "end-task");
+        Assert.Contains(prompts, p => p.Name == "onboard-project");
+
+        // onboard-project scaffolds a fresh project: it embeds the hooks + templates + config with the
+        // caller's domain/project filled in.
+        var onboard = await client.GetPromptAsync("onboard-project",
+            new Dictionary<string, object?> { ["domain"] = "development", ["project"] = "widget-lab" }, cancellationToken: ct);
+        var onboardText = PromptText(onboard);
+        Assert.Contains("memory_session_start.py", onboardText, StringComparison.Ordinal);   // the hook is embedded
+        Assert.Contains("AGENTS.md", onboardText, StringComparison.Ordinal);                 // the template is embedded
+        Assert.Contains("\"project\": \"widget-lab\"", onboardText, StringComparison.Ordinal); // domain/project filled in
+        Assert.DoesNotContain("<YOUR_DOMAIN>", onboardText, StringComparison.Ordinal);        // placeholders substituted
+
+        var start = await client.GetPromptAsync("start-task",
+            new Dictionary<string, object?> { ["task"] = "adoption kit", ["domain"] = "memory-mcp" }, cancellationToken: ct);
+        var startText = PromptText(start);
+        Assert.Contains("Memory context", startText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("advisory", startText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("How to work with memory", startText, StringComparison.Ordinal);
+
+        var end = await client.GetPromptAsync("end-task",
+            new Dictionary<string, object?> { ["domain"] = "memory-mcp" }, cancellationToken: ct);
+        Assert.Contains("consolidat", PromptText(end), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("notes_suggest_capture", PromptText(end), StringComparison.Ordinal);
+
+        // A live commons copy of a kit file overrides the embedded fallback (owner can edit templates without a release).
+        await client.CallToolAsync("schema_upsert", new Dictionary<string, object?>
+        {
+            ["schema"] = new Dictionary<string, object?>
+            {
+                ["$id"] = "reference@1",
+                ["$schema"] = "https://json-schema.org/draft/2020-12/schema",
+                ["type"] = "object",
+                ["additionalProperties"] = false,
+                ["properties"] = new Dictionary<string, object?>
+                {
+                    ["source"] = new Dictionary<string, object?> { ["type"] = "string" },
+                    ["as_of"] = new Dictionary<string, object?> { ["type"] = "string" },
+                },
+            },
+        }, cancellationToken: ct);
+        await client.CallToolAsync("notes_upsert", new Dictionary<string, object?>
+        {
+            ["domain"] = "commons", ["type"] = "reference", ["title"] = "Onboard AGENTS template",
+            ["body"] = "COMMONS-OVERRIDE-MARKER for <YOUR_PROJECT>", ["dedupKey"] = "onboard-kit-agents-md",
+        }, cancellationToken: ct);
+
+        var overridden = PromptText(await client.GetPromptAsync("onboard-project",
+            new Dictionary<string, object?> { ["domain"] = "development", ["project"] = "widget-lab" }, cancellationToken: ct));
+        Assert.Contains("COMMONS-OVERRIDE-MARKER for widget-lab", overridden, StringComparison.Ordinal); // commons body used + filled
+    }
+
+    private static string PromptText(GetPromptResult result) =>
+        string.Concat(result.Messages.Select(message => (message.Content as TextContentBlock)?.Text ?? string.Empty));
 
     // MEMP-213: memory_context with NO domain returns a cross-domain overview spanning every authorized domain,
     // instead of forcing the caller to guess one.

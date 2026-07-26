@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.60.0
+
+Sprint 53 — Adoption / onboarding kit. Make it effortless for a new project (and a new agent) to
+use shared memory well: capability prompts, drop-in hooks, and project templates.
+
+- **MCP capability prompts (MEMP-211)**: the server now exports three prompts, so a prompt-aware
+  harness gets memory adoption as a slash command. `start-task` (args: `task`, optional `domain`,
+  optional `project`) assembles the rules in force, the workspace's skills, and the notes relevant
+  to your task into one ready-to-use message — omit `domain` for a cross-domain overview. `end-task`
+  (optional `domain`/`project`) returns a consolidation checklist (save durable facts, update project
+  state, link new notes, refine skills, flag stale notes) plus the workspace's skills. `onboard-project`
+  (optional `domain`/`project`) scaffolds a fresh project onto Memory MCP in one shot: it returns the
+  exact files to create — `AGENTS.md`/`CLAUDE.md`, the two hooks, the `settings.json` block, and
+  `.claude/memory.json` — with your domain/project filled in, so the target project needs no repo access. The kit is
+  sourced from live `commons` memory (a `reference` note per file, `dedupKey=onboard-kit-*`) so the owner can edit the
+  templates with `notes_patch` without a release; it falls back to the copy embedded in the image when a note is
+  missing (`integrations/seed-onboard-kit.py` seeds/refreshes commons from the repo). In Claude Code:
+  `/mcp__memory__start-task`, `/mcp__memory__end-task`, `/mcp__memory__onboard-project`.
+- **Claude Code hooks kit (MEMP-208)**: `integrations/claude-code/` ships drop-in `SessionStart` and
+  `Stop` hooks. SessionStart injects `memory_context` (rules + skills + relevant notes) at the top of
+  every session; Stop nudges you to consolidate if the session never touched memory. Generalized and
+  configurable (env var > `.claude/memory.json` > default; domain/project/query/url/token); both fail
+  open. Omitting `domain` leans on cross-domain default recall (MEMP-213).
+- **Project templates**: `integrations/templates/AGENTS.md` and `CLAUDE.md` — copy-paste starting
+  points that tell an agent HOW to use memory (recall-first, save durable facts as you go, prefer
+  patch, link notes, use `memory_evolution_suggestion` to fix others' notes, never store secrets,
+  consolidate at the end). Placeholders for domain/project.
+
+These are additive: prompts are new server capability; the kit/templates live in `integrations/`
+(repo only, not in the add-on image). No schema change — migrations through **0017**. 362 tests.
+
 ## 0.59.0
 
 Sprint 52 — Ergonomics: recover from the two most common domain/project mistakes so a caller gets useful

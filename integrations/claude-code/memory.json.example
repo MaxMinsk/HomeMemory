@@ -1,0 +1,5 @@
+{
+  "domain": "development",
+  "project": "my-project",
+  "query": "project state, active backlog, sprint, decisions, rules"
+}

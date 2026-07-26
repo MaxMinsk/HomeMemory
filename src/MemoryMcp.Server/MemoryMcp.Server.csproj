@@ -23,4 +23,14 @@
     <EmbeddedResource Include="Web\index.html" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The onboarding kit (hooks + project templates) is embedded so the `onboard-project` MCP prompt
+         (MEMP-211) can serve it self-contained; the canonical copies live in ../../integrations/. -->
+    <EmbeddedResource Include="..\..\integrations\claude-code\hooks\memory_session_start.py" LogicalName="onboard.memory_session_start.py" />
+    <EmbeddedResource Include="..\..\integrations\claude-code\hooks\memory_stop_reminder.py" LogicalName="onboard.memory_stop_reminder.py" />
+    <EmbeddedResource Include="..\..\integrations\claude-code\settings.json" LogicalName="onboard.settings.json" />
+    <EmbeddedResource Include="..\..\integrations\templates\AGENTS.md" LogicalName="onboard.AGENTS.md" />
+    <EmbeddedResource Include="..\..\integrations\templates\CLAUDE.md" LogicalName="onboard.CLAUDE.md" />
+  </ItemGroup>
+
 </Project>

@@ -16,6 +16,7 @@ using MemoryMcp.Server.Logging;
 using MemoryMcp.Server.Mqtt;
 using MemoryMcp.Server.Webhook;
 using MemoryMcp.Server.Security;
+using MemoryMcp.Server.Prompts;
 using MemoryMcp.Server.Tools;
 using MemoryMcp.Server.Web;
 using Microsoft.AspNetCore.Builder;
@@ -100,7 +101,8 @@ if (transport == "http")
     builder.Services.AddSingleton<IScopeAccessor, HttpScopeAccessor>();
     builder.Services.AddMcpServer(options => options.ServerInstructions = ServerInstructions)
         .WithHttpTransport(options => options.Stateless = true)
-        .WithTools<MemoryTools>(StructuredToolJson()).WithTools<SkillTools>(StructuredToolJson()).WithTools<ArtifactTools>(StructuredToolJson());
+        .WithTools<MemoryTools>(StructuredToolJson()).WithTools<SkillTools>(StructuredToolJson()).WithTools<ArtifactTools>(StructuredToolJson())
+        .WithPrompts<MemoryPrompts>(StructuredToolJson());
 
     var app = builder.Build();
     Bootstrap(app.Services);
@@ -168,7 +170,8 @@ else
     builder.Services.AddSingleton<IScopeAccessor, TrustedScopeAccessor>(); // local stdio is trusted
     builder.Services.AddMcpServer(options => options.ServerInstructions = ServerInstructions)
         .WithStdioServerTransport()
-        .WithTools<MemoryTools>(StructuredToolJson()).WithTools<SkillTools>(StructuredToolJson()).WithTools<ArtifactTools>(StructuredToolJson());
+        .WithTools<MemoryTools>(StructuredToolJson()).WithTools<SkillTools>(StructuredToolJson()).WithTools<ArtifactTools>(StructuredToolJson())
+        .WithPrompts<MemoryPrompts>(StructuredToolJson());
 
     var app = builder.Build();
     Bootstrap(app.Services);
