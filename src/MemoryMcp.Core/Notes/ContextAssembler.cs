@@ -38,8 +38,10 @@ public sealed class ContextAssembler
     /// <param name="budgetChars">When set, pack recall hits to this snippet-char budget instead of a fixed count (MEMP-176).</param>
     /// <param name="projectOnly">When true with a <paramref name="project"/>, hard-restrict the recall to that project (MEMP-209).</param>
     /// <param name="includePayload">When false (the default, MEMP-214), recall hits carry snippet + identity only (no full payload) so the block stays lean.</param>
-    public ContextBlock? Assemble(string query, string? domain, int limit, bool includeLinks, RequestScope scope, string? project = null, int? budgetChars = null, bool projectOnly = false, bool includePayload = false)
+    /// <param name="options">Optional retrieval knobs (MEMP-223): recall type filter, include rules/skills toggles, forbid auto-relax, neighbor cap.</param>
+    public ContextBlock? Assemble(string query, string? domain, int limit, bool includeLinks, RequestScope scope, string? project = null, int? budgetChars = null, bool projectOnly = false, bool includePayload = false, ContextOptions? options = null)
     {
+        var opts = options ?? ContextOptions.Default;
         var guard = new ScopeGuard(scope);
         var warnings = new List<string>();
         var effectiveBudget = budgetChars ?? DefaultBudgetChars; // MEMP-214: self-limit a bare call
@@ -47,7 +49,7 @@ public sealed class ContextAssembler
         // MEMP-213: no domain => a cross-domain overview across everything the caller may read, instead of forcing a guess.
         if (string.IsNullOrWhiteSpace(domain))
         {
-            return AssembleOverview(query, limit, includeLinks, guard, project, effectiveBudget, projectOnly, includePayload);
+            return AssembleOverview(query, limit, includeLinks, guard, project, effectiveBudget, projectOnly, includePayload, opts);
         }
 
         (domain, project) = ResolveScope(guard, domain, project, warnings);
@@ -62,23 +64,43 @@ public sealed class ContextAssembler
             ? new[] { domain }
             : new[] { domain, ScopeGuard.CommonsDomain };
 
-        // When a project is given, load that project's rules plus the domain-general ones (project IS NULL).
-        var ruleFilter = string.IsNullOrWhiteSpace(project) ? null : $"project == '{project}' OR project is null";
+        var now = _clock.GetUtcNow();
+        var (ranked, skills) = BuildRulesAndSkills(guard, domains, domain, project, opts, now, warnings);
 
+        // Nudge the agent to refresh an aging project_state / stale-marked note at the end of the task (MEMP-206).
+        warnings.AddRange(StaleStateWarnings(domain, project, now, guard.RestrictionForSearch(domain)));
+
+        var recall = _notes.Recall(query, domain, limit, guard.RestrictionForSearch(domain), includeLinks, 1, effectiveBudget, false, project, projectOnly,
+            includePayload: includePayload, maxNeighbors: opts.MaxNeighbors, types: opts.Types, noRelax: opts.NoRelax);
+        return new ContextBlock(domain, ranked, skills, recall, AdvisoryPolicy, warnings);
+    }
+
+    // Gathers the rules in force (domain + commons, project-scoped) and the guiding skills, honoring the
+    // include toggles (MEMP-223), ranks/caps the rules, appends the stale-rule warning, and returns the lean
+    // rule view (MEMP-214) plus deduped skills.
+    private (IReadOnlyList<SearchResult> Rules, IReadOnlyList<Skill> Skills) BuildRulesAndSkills(
+        ScopeGuard guard, IReadOnlyList<string> domains, string domain, string? project, ContextOptions opts, DateTimeOffset now, List<string> warnings)
+    {
+        var ruleFilter = string.IsNullOrWhiteSpace(project) ? null : $"project == '{project}' OR project is null";
         var rules = new List<SearchResult>();
         var skills = new List<Skill>();
         foreach (var scoped in domains)
         {
             var restrict = guard.RestrictionForSearch(scoped);
-            rules.AddRange(_notes.Search(null, scoped, "memory_rule", null, "active", 50, 0, restrict, ruleFilter, includePayload: true).Items
-                .Where(rule => !string.Equals(Field(rule.PayloadJson, "status"), "deprecated", StringComparison.Ordinal)));
+            if (opts.IncludeRules)
+            {
+                rules.AddRange(_notes.Search(null, scoped, "memory_rule", null, "active", 50, 0, restrict, ruleFilter, includePayload: true).Items
+                    .Where(rule => !string.Equals(Field(rule.PayloadJson, "status"), "deprecated", StringComparison.Ordinal)));
+            }
+
             // Project overrides apply within the task's own domain; commons stays general.
-            skills.AddRange(_skills.List(scoped, null, string.Equals(scoped, domain, StringComparison.Ordinal) ? project : null));
+            if (opts.IncludeSkills)
+            {
+                skills.AddRange(_skills.List(scoped, null, string.Equals(scoped, domain, StringComparison.Ordinal) ? project : null));
+            }
         }
 
-        // Dedupe skills by key when merging the domain with commons (the domain's wins, listed first).
         var dedupedSkills = skills.GroupBy(skill => skill.Key, StringComparer.Ordinal).Select(group => group.First()).ToList();
-
         var ranked = rules.OrderByDescending(AlwaysApply).ThenByDescending(Priority).ToList();
         if (ranked.Count > MaxRules)
         {
@@ -86,18 +108,13 @@ public sealed class ContextAssembler
             ranked = ranked.GetRange(0, MaxRules);
         }
 
-        var now = _clock.GetUtcNow();
         var stale = ranked.Count(rule => IsStaleRule(rule.PayloadJson, now));
         if (stale > 0)
         {
             warnings.Add($"{stale} included rule(s) may be outdated (unverified past their window) — verify or deprecate them.");
         }
 
-        // Nudge the agent to refresh an aging project_state / stale-marked note at the end of the task (MEMP-206).
-        warnings.AddRange(StaleStateWarnings(domain, project, now, guard.RestrictionForSearch(domain)));
-
-        var recall = _notes.Recall(query, domain, limit, guard.RestrictionForSearch(domain), includeLinks, 1, effectiveBudget, false, project, projectOnly, includePayload: includePayload);
-        return new ContextBlock(domain, LeanRules(ranked), dedupedSkills, recall, AdvisoryPolicy, warnings);
+        return (LeanRules(ranked), dedupedSkills);
     }
 
     // Sentinel Domain value on a cross-domain overview block (no single domain was requested).
@@ -106,15 +123,17 @@ public sealed class ContextAssembler
     // MEMP-213: a cross-domain overview when no domain is given — the rules in force across every domain the caller
     // may read (restricted to the caller's scope), the shared commons skills, and a domain-diverse recall so one big
     // domain doesn't drown the rest. A project= still boosts across domains.
-    private ContextBlock? AssembleOverview(string query, int limit, bool includeLinks, ScopeGuard guard, string? project, int? budgetChars, bool projectOnly, bool includePayload)
+    private ContextBlock? AssembleOverview(string query, int limit, bool includeLinks, ScopeGuard guard, string? project, int? budgetChars, bool projectOnly, bool includePayload, ContextOptions opts)
     {
         var restrict = guard.RestrictionForSearch(null); // every authorized domain (null = unrestricted)
         var ruleFilter = string.IsNullOrWhiteSpace(project) ? null : $"project == '{project}' OR project is null";
 
-        var rules = _notes.Search(null, null, "memory_rule", null, "active", 50, 0, restrict, ruleFilter, includePayload: true).Items
-            .Where(rule => !string.Equals(Field(rule.PayloadJson, "status"), "deprecated", StringComparison.Ordinal))
-            .ToList();
-        var skills = _skills.List(ScopeGuard.CommonsDomain, null, null).ToList();
+        var rules = opts.IncludeRules
+            ? _notes.Search(null, null, "memory_rule", null, "active", 50, 0, restrict, ruleFilter, includePayload: true).Items
+                .Where(rule => !string.Equals(Field(rule.PayloadJson, "status"), "deprecated", StringComparison.Ordinal))
+                .ToList()
+            : new List<SearchResult>();
+        var skills = opts.IncludeSkills ? _skills.List(ScopeGuard.CommonsDomain, null, null).ToList() : new List<Skill>();
 
         var warnings = new List<string>
         {
@@ -134,7 +153,8 @@ public sealed class ContextAssembler
             warnings.Add($"{stale} included rule(s) may be outdated (unverified past their window) — verify or deprecate them.");
         }
 
-        var recall = _notes.Recall(query, null, limit, restrict, includeLinks, 1, budgetChars, false, project, projectOnly, diverseByDomain: true, includePayload: includePayload);
+        var recall = _notes.Recall(query, null, limit, restrict, includeLinks, 1, budgetChars, false, project, projectOnly, diverseByDomain: true,
+            includePayload: includePayload, maxNeighbors: opts.MaxNeighbors, types: opts.Types, noRelax: opts.NoRelax);
         return new ContextBlock(AllDomains, LeanRules(ranked), skills, recall, AdvisoryPolicy, warnings);
     }
 

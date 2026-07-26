@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.63.0
+
+Sprint 56 — Composable authoring finish + retrieval knobs. The clean, additive remainder of the TRD-131-134
+authoring review: fewer round-trips to author and to fetch, and finer control over what a recall returns.
+
+- **notes_get_many_by_key (MEMP-219)**: resolve many notes by their stable (domain, type, dedupKey) in ONE
+  call, each with an EXPLICIT `found` flag (a miss is unambiguous, never a bare null) — instead of many
+  notes_get_by_key round-trips.
+- **next_key (MEMP-220)**: allocate the next unused ticket key for a project — `next_key('memory-mcp','MEMP')`
+  returns `MEMP-229` when 228 is the current max (one past the highest numeric suffix, >=3 digits). Read-only
+  peek, not a hard reservation.
+- **memory_context / notes_recall knobs (MEMP-223)**: new optional controls — `types` (restrict recall hits to
+  given types), `includeRules` / `includeSkills` (drop a section you don't need), `noRelax` (forbid the
+  AND->any-term auto-widening so a precise query stays precise), and `maxNeighbors` exposed on the tools.
+  Builds on 0.61.0's lean recall.
+- **Exact ticket-key search (MEMP-225)**: a query that IS a ticket key (`TRD-131`, `MEMP-215`) is now treated
+  as an exact dedupKey lookup and returns just that note, instead of the hyphenated key scattering into
+  TRD-or-131 matches. Documented on the search tool.
+
+No schema change (migrations through **0017**). 382 tests.
+
 ## 0.62.0
 
 Sprint 55 — Authoring workflow: semantic integrity + composable API. Acts on the TRD-131-134 authoring-workflow

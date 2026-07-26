@@ -68,6 +68,13 @@ public sealed partial class NotesReader
         var any = string.Equals(mode, "any", StringComparison.Ordinal) || (!phrase && QueryNormalizer.HasOrOperator(positives));
 
         using var connection = _connectionFactory.Create();
+
+        // MEMP-225: a query that IS a ticket key (e.g. "TRD-131") is an exact lookup, not free text.
+        if (TryExactKeyLookup(connection, exactKey, phrase, any, filter, tags, offset, domain, type, status, restrictToDomains, limit, includePayload, includeLinks) is { } exact)
+        {
+            return exact;
+        }
+
         var total = Count(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens, any, projectEquals);
         // auto: an AND query that matched nothing is re-run as any-term ranked partials, flagged relaxed (MEMP-190).
         var relaxed = false;
@@ -258,6 +265,86 @@ public sealed partial class NotesReader
 
         var q = query.Trim();
         return q.Length >= 3 && q[0] == '"' && q[^1] == '"' && q.IndexOf('"', 1) == q.Length - 1;
+    }
+
+    // A query shaped like a ticket key (PREFIX-digits, e.g. TRD-131 / MEMP-215): treated as an exact lookup (MEMP-225).
+    private static readonly System.Text.RegularExpressions.Regex TicketKeyPattern =
+        new("^[A-Za-z][A-Za-z0-9]*-[0-9]+$", System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromMilliseconds(100));
+
+    private static bool LooksLikeTicketKey(string query) => TicketKeyPattern.IsMatch(query.Trim());
+
+    // MEMP-225: when the whole query is a ticket key and no other constraints conflict, resolve it as an exact
+    // dedup_key lookup; null lets normal ranked search proceed. Hyphenated keys otherwise tokenize to TRD OR 131.
+    private SearchPage? TryExactKeyLookup(
+        SqliteConnection connection, string? exactKey, bool phrase, bool any, string? filter,
+        IReadOnlyCollection<string>? tags, int offset, string? domain, string? type, string status,
+        IReadOnlyCollection<string>? restrict, int limit, bool includePayload, bool includeLinks)
+    {
+        var allowed = !phrase && !any && offset == 0 && string.IsNullOrWhiteSpace(filter) && (tags is null || tags.Count == 0);
+        if (!allowed || exactKey is null || !LooksLikeTicketKey(exactKey))
+        {
+            return null;
+        }
+
+        return ExactKeyPage(connection, exactKey, domain, type, status, restrict, limit, includePayload, includeLinks);
+    }
+
+    // MEMP-225: returns a single-hit page for an exact dedup_key match, or null when zero/ambiguous (fall through
+    // to normal search). Case-insensitive on the key. Honors domain/type/status/scope and includePayload/Links.
+    private SearchPage? ExactKeyPage(
+        SqliteConnection connection, string key, string? domain, string? type, string status,
+        IReadOnlyCollection<string>? restrict, int limit, bool includePayload, bool includeLinks)
+    {
+        using var command = connection.CreateCommand();
+        var filters = new List<string> { "deleted = 0", "dedup_key = $k COLLATE NOCASE" };
+        command.Parameters.AddWithValue("$k", key.Trim());
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            filters.Add("status = $st");
+            command.Parameters.AddWithValue("$st", status);
+        }
+
+        if (domain is not null)
+        {
+            filters.Add("domain = $d");
+            command.Parameters.AddWithValue("$d", domain);
+        }
+
+        if (type is not null)
+        {
+            filters.Add("type = $t");
+            command.Parameters.AddWithValue("$t", type);
+        }
+
+        AppendScopeIn(command, filters, "domain", restrict);
+        command.CommandText =
+            "SELECT id, title, type, domain, status, payload_json, tags_json, dedup_key, updated_utc, project " +
+            $"FROM notes WHERE {string.Join(" AND ", filters)} LIMIT 2;";
+
+        var rows = new List<SearchResult>();
+        using (var reader = command.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                rows.Add(new SearchResult(
+                    reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1), null,
+                    reader.GetString(2), reader.GetString(3), 0.0,
+                    includePayload ? reader.GetString(4) : null,
+                    includePayload && !reader.IsDBNull(5) ? reader.GetString(5) : null,
+                    includePayload && !reader.IsDBNull(6) ? reader.GetString(6) : null,
+                    includePayload && !reader.IsDBNull(7) ? reader.GetString(7) : null,
+                    includePayload && !reader.IsDBNull(8) ? reader.GetString(8) : null,
+                    includePayload && !reader.IsDBNull(9) ? reader.GetString(9) : null));
+            }
+        }
+
+        if (rows.Count != 1)
+        {
+            return null; // no match, or ambiguous across scope — let normal ranked search handle it
+        }
+
+        var hit = includeLinks ? rows[0] with { Links = Links(rows[0].Id) } : rows[0];
+        return new SearchPage(new[] { hit }, 1, 0, limit, false);
     }
 
     // Binds all filter parameters to the command and returns the shared WHERE clause (reused by Count + Page).

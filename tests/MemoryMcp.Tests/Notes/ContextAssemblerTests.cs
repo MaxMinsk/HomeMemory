@@ -208,6 +208,40 @@ public class ContextAssemblerTests
         Assert.Null(rule.TagsJson);
     }
 
+    [Fact]
+    public void Assemble_can_exclude_rules_and_skills()
+    {
+        using var temp = new TempDatabase();
+        var (repo, skills) = New(temp);
+        repo.Upsert("kitchen", "memory_rule", "R", null, """{ "description": "x", "always_apply": true }""", null, "rule-x", "me");
+        skills.Upsert("kitchen", "recipe-authoring", "Recipe authoring", "write recipes", "recipe", 1, null, "me");
+        repo.Upsert("kitchen", "fact", "Borscht", "beetroot soup", """{ "statement": "x" }""", null, "borscht", "me");
+
+        var block = new ContextAssembler(repo, skills).Assemble("borscht", "kitchen", 10, includeLinks: false,
+            RequestScope.Unrestricted, options: new ContextOptions(IncludeRules: false, IncludeSkills: false));
+
+        Assert.NotNull(block);
+        Assert.Empty(block!.Rules);                                    // rules section suppressed
+        Assert.Empty(block.Skills);                                    // skills section suppressed
+        Assert.Contains(block.Recall.Hits, h => h.Title == "Borscht"); // recall still works
+    }
+
+    [Fact]
+    public void Assemble_can_filter_recall_by_type()
+    {
+        using var temp = new TempDatabase();
+        var (repo, skills) = New(temp);
+        repo.Upsert("development", "fact", "Alpha fact", "alpha gizmo", """{ "statement": "x" }""", null, "alpha-fact", "me");
+        repo.Upsert("development", "backlog_item", "Alpha task", "alpha gizmo", """{ "key": "TST-100", "status": "ready" }""", null, "TST-100", "me");
+
+        var block = new ContextAssembler(repo, skills).Assemble("alpha", "development", 10, includeLinks: false,
+            RequestScope.Unrestricted, options: new ContextOptions(Types: new[] { "fact" }));
+
+        Assert.NotNull(block);
+        Assert.NotEmpty(block!.Recall.Hits);
+        Assert.All(block.Recall.Hits, h => Assert.Equal("fact", h.Type));
+    }
+
     private static (NotesRepository Repo, SkillsService Skills) New(TempDatabase temp)
     {
         var factory = new SqliteConnectionFactory(temp.FilePath);

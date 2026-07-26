@@ -13,7 +13,7 @@ public sealed partial class MemoryTools
 {
     /// <summary>Searches notes by optional full-text query plus structured filters (scope-restricted, paginated).</summary>
     [McpServerTool(Name = "notes_search", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
-    [Description("Search notes by an optional full-text query plus filters. Returns ONE page of hits (snippets, never the full body) with total/hasMore (and relaxed=true if an AND query was auto-widened) — paginate with offset; don't fetch everything at once. QUERY SYNTAX: words match by prefix + RU/EN stemming; common stop words and punctuation are stripped; a fully \"double-quoted\" query is an exact phrase; -term excludes; OR (or |) between terms = any-term. MATCH: `match`=all (AND) | any (OR, ranked) | auto (default: AND, falling back to ranked any-term when AND finds nothing — so a natural-language question still returns ranked partials instead of 0). RANK: results are ordered by hybrid relevance by default (BM25 + recency + link-degree + importance/pinned + type weight — most important on top); pass rank=lexical for pure BM25, or `sort` to order by a field (e.g. top-N by a payload value). SCOPE: OMIT `domain` to search across ALL domains you're authorized for; pass `domain` to restrict to one. Narrow further with `type`/`tags`/`filter` (incl. the `project` field).")]
+    [Description("Search notes by an optional full-text query plus filters. Returns ONE page of hits (snippets, never the full body) with total/hasMore (and relaxed=true if an AND query was auto-widened) — paginate with offset; don't fetch everything at once. QUERY SYNTAX: words match by prefix + RU/EN stemming; common stop words and punctuation are stripped; a fully \"double-quoted\" query is an exact phrase; -term excludes; OR (or |) between terms = any-term. MATCH: `match`=all (AND) | any (OR, ranked) | auto (default: AND, falling back to ranked any-term when AND finds nothing — so a natural-language question still returns ranked partials instead of 0). RANK: results are ordered by hybrid relevance by default (BM25 + recency + link-degree + importance/pinned + type weight — most important on top); pass rank=lexical for pure BM25, or `sort` to order by a field (e.g. top-N by a payload value). SCOPE: OMIT `domain` to search across ALL domains you're authorized for; pass `domain` to restrict to one. Narrow further with `type`/`tags`/`filter` (incl. the `project` field). EXACT KEY (MEMP-225): a query that IS a ticket key like `TRD-131`/`MEMP-215` is treated as an exact dedupKey lookup (returns just that note), so a hyphenated key doesn't scatter into TRD-or-131 matches; for a guaranteed exact fetch use notes_get_by_key / notes_get_many_by_key.")]
     public SearchPage NotesSearch(
         [Description("Full-text query (optional)")] string? query = null,
         [Description("Domain filter, e.g. memory-mcp")] string? domain = null,
@@ -49,10 +49,14 @@ public sealed partial class MemoryTools
         [Description("Boost notes in this envelope project (soft — cross-project hits still appear, MEMP-209)")] string? project = null,
         [Description("With `project`, hard-restrict the recall to that project (default false)")] bool projectOnly = false,
         [Description("Include each hit's full payload/tags JSON (default false = lean: snippet + identity only, MEMP-214). Turn on only for a board/status view.")] bool includePayload = false,
+        [Description("Restrict hits to these note types (optional, MEMP-223)")] string[]? types = null,
+        [Description("Forbid the AND->any-term auto-relaxation, so a precise query never widens to noisy partials (default false, MEMP-223)")] bool noRelax = false,
+        [Description("Cap on returned linked neighbors (default 15, MEMP-214/223)")] int maxNeighbors = NotesReader.DefaultMaxNeighbors,
         [Description("Who is recalling (provenance). Pass your stable agent id so the server can tell you recalled before writing (MEMP-204).")] string? sourceAgent = null)
     {
         RecordAgentRead(sourceAgent);
-        return Translate(() => _notes.Recall(query, domain, limit, _authz.ReadRestriction(domain), includeLinks, maxHops, budgetChars, explain, project, projectOnly, includePayload: includePayload));
+        return Translate(() => _notes.Recall(query, domain, limit, _authz.ReadRestriction(domain), includeLinks, maxHops, budgetChars, explain, project, projectOnly,
+            includePayload: includePayload, maxNeighbors: maxNeighbors, types: types, noRelax: noRelax));
     }
 
     /// <summary>Assembles a layered context block (rules + skills + recall) for a task in a domain.</summary>
@@ -67,10 +71,16 @@ public sealed partial class MemoryTools
         [Description("Pack recall hits to this snippet-char budget (~tokens×4). Defaults to ~6000 so a bare call self-limits (MEMP-214); pass a larger value to widen, or a smaller one to tighten. Rules/skills are always included.")] int? budgetChars = null,
         [Description("With `project`, hard-restrict the recall to that project (default false)")] bool projectOnly = false,
         [Description("Include each recall hit's full payload/tags JSON (default false = lean: snippet + identity only, MEMP-214). Turn on only when you need the structured payload up front.")] bool includePayload = false,
+        [Description("Restrict recall hits to these note types (optional, MEMP-223)")] string[]? types = null,
+        [Description("Include the rules-in-force section (default true, MEMP-223)")] bool includeRules = true,
+        [Description("Include the skills section (default true, MEMP-223)")] bool includeSkills = true,
+        [Description("Forbid the AND->any-term auto-relaxation of the recall query (default false, MEMP-223)")] bool noRelax = false,
+        [Description("Cap on recall linked neighbors (default 15, MEMP-223)")] int maxNeighbors = NotesReader.DefaultMaxNeighbors,
         [Description("Who is loading context (provenance). Pass your stable agent id so the server can tell you recalled before writing (MEMP-204).")] string? sourceAgent = null)
     {
         RecordAgentRead(sourceAgent);
-        return Translate(() => new ContextAssembler(_notes, _skills).Assemble(query, domain, limit, includeLinks, _authz.Scope, project, budgetChars, projectOnly, includePayload));
+        var options = new ContextOptions(types, includeRules, includeSkills, noRelax, maxNeighbors);
+        return Translate(() => new ContextAssembler(_notes, _skills).Assemble(query, domain, limit, includeLinks, _authz.Scope, project, budgetChars, projectOnly, includePayload, options));
     }
 
     /// <summary>Lists the most-recently-updated (or most-used) notes in scope.</summary>
@@ -156,6 +166,36 @@ public sealed partial class MemoryTools
         RecordUsage(id);
         return view;
     }
+
+    /// <summary>Batch key lookup: resolves many notes by (domain, type, dedupKey), each with an explicit found flag.</summary>
+    [McpServerTool(Name = "notes_get_many_by_key", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("Batch key lookup (MEMP-219): resolve many notes by their stable (domain, type, dedupKey) in ONE call instead of many notes_get_by_key round-trips. Returns one result per requested key with an EXPLICIT `found` flag (never an ambiguous null): {domain, type, dedupKey, found, note?}. A missing or out-of-scope key comes back found=false.")]
+    public IReadOnlyList<NoteByKey> NotesGetManyByKey(
+        [Description("Keys to resolve: each {domain, type, dedupKey}")] KeyRef[] keys)
+        => Translate(() =>
+        {
+            var results = new List<NoteByKey>();
+            foreach (var key in keys ?? Array.Empty<KeyRef>())
+            {
+                var note = _authz.CanRead(key.Domain) ? _notes.GetByDedupKey(key.Domain, key.Type, key.DedupKey) : null;
+                if (note is not null)
+                {
+                    RecordUsage(note.Id);
+                }
+
+                results.Add(new NoteByKey(key.Domain, key.Type, key.DedupKey, note is not null, note is null ? null : _notes.GetView(note.Id)));
+            }
+
+            return results;
+        });
+
+    /// <summary>Peeks the next unused ticket key for a project (MEMP-220).</summary>
+    [McpServerTool(Name = "next_key", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("Allocate the next unused ticket key for a project (MEMP-220): returns {prefix}-{n} where n is one past the highest numeric suffix among active backlog_item dedupKeys shaped prefix-NNN in that project (>=3 digits, matching the backlog_item key pattern). READ-ONLY peek, not a hard reservation — on concurrent authoring, re-check or use a dedupKey you control. E.g. next_key('memory-mcp','MEMP') -> 'MEMP-229' when MEMP-228 is the current max.")]
+    public NextKeyResult NextKey(
+        [Description("Project slug, e.g. memory-mcp")] string project,
+        [Description("Key prefix, e.g. MEMP or TRD")] string prefix)
+        => Translate(() => _notes.NextKey(project, prefix, _authz.ReadRestriction(null)));
 
     /// <summary>Exact lookup of a note by its stable (domain, type, dedupKey), if in scope.</summary>
     [McpServerTool(Name = "notes_get_by_key", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]

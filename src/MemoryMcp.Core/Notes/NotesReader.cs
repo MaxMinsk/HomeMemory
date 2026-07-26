@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using MemoryMcp.Core.Naming;
 using MemoryMcp.Core.Query;
@@ -120,6 +121,55 @@ public sealed partial class NotesReader
             using var reader = byProject.ExecuteReader();
             return reader.Read() ? new ProjectDomainResolution(reader.GetString(0), value, reader.GetInt64(1)) : null;
         }
+    }
+
+    /// <summary>
+    /// MEMP-220: computes the next unused ticket key for a project — one past the highest numeric suffix among
+    /// active <c>backlog_item</c> dedup keys shaped <c>{prefix}-{digits}</c> in that project, formatted with at
+    /// least 3 digits (the backlog_item key pattern). Scope-restricted. A read-only PEEK, not a reservation.
+    /// </summary>
+    /// <param name="project">The project whose keys to scan.</param>
+    /// <param name="prefix">The key prefix (e.g. MEMP, TRD); upper-cased for matching.</param>
+    /// <param name="restrictToDomains">Auth scope; null = unrestricted, empty = nothing.</param>
+    public NextKeyResult NextKey(string project, string prefix, IReadOnlyCollection<string>? restrictToDomains)
+    {
+        var normalizedProject = Identifiers.Normalize(project);
+        var upperPrefix = (prefix ?? string.Empty).Trim().ToUpperInvariant();
+
+        using var connection = _connectionFactory.Create();
+        using var command = connection.CreateCommand();
+        var filters = new List<string>
+        {
+            "deleted = 0", "status = 'active'", "type = 'backlog_item'", "project = $p", "dedup_key GLOB $g",
+        };
+        command.Parameters.AddWithValue("$p", normalizedProject);
+        command.Parameters.AddWithValue("$g", $"{upperPrefix}-[0-9]*");
+        AppendScopeIn(command, filters, "domain", restrictToDomains);
+        command.CommandText = $"SELECT dedup_key FROM notes WHERE {string.Join(" AND ", filters)};";
+
+        int? max = null;
+        var matched = 0;
+        using (var reader = command.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                var key = reader.GetString(0);
+                var dash = key.LastIndexOf('-');
+                if (dash < 0 || !int.TryParse(key[(dash + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out var suffix))
+                {
+                    continue;
+                }
+
+                matched++;
+                if (max is null || suffix > max)
+                {
+                    max = suffix;
+                }
+            }
+        }
+
+        var next = (max ?? 0) + 1;
+        return new NextKeyResult(normalizedProject, upperPrefix, $"{upperPrefix}-{next.ToString("D3", CultureInfo.InvariantCulture)}", max, matched);
     }
 
     /// <summary>

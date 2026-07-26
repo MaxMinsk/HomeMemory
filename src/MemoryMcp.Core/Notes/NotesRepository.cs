@@ -86,8 +86,9 @@ public sealed class NotesRepository
         string? query, string? domain, int limit, IReadOnlyCollection<string>? restrictToDomains,
         bool includeLinks = true, int maxHops = 1, int? budgetChars = null, bool explain = false,
         string? project = null, bool projectOnly = false, bool diverseByDomain = false,
-        bool includePayload = false, int maxNeighbors = NotesReader.DefaultMaxNeighbors)
-        => _reader.Recall(query, domain, limit, restrictToDomains, includeLinks, maxHops, budgetChars, explain, project, projectOnly, diverseByDomain, includePayload, maxNeighbors);
+        bool includePayload = false, int maxNeighbors = NotesReader.DefaultMaxNeighbors,
+        IReadOnlyCollection<string>? types = null, bool noRelax = false)
+        => _reader.Recall(query, domain, limit, restrictToDomains, includeLinks, maxHops, budgetChars, explain, project, projectOnly, diverseByDomain, includePayload, maxNeighbors, types, noRelax);
 
     /// <inheritdoc cref="NotesReader.Related"/>
     public IReadOnlyList<RelatedNote> Related(string id, int limit, IReadOnlyCollection<string>? restrictToDomains)
@@ -127,6 +128,10 @@ public sealed class NotesRepository
     /// <inheritdoc cref="NotesReader.ResolveProjectAsDomain"/>
     public ProjectDomainResolution? ResolveProjectAsDomain(string requestedDomain, IReadOnlyCollection<string>? restrictToDomains)
         => _reader.ResolveProjectAsDomain(requestedDomain, restrictToDomains);
+
+    /// <inheritdoc cref="NotesReader.NextKey"/>
+    public NextKeyResult NextKey(string project, string prefix, IReadOnlyCollection<string>? restrictToDomains)
+        => _reader.NextKey(project, prefix, restrictToDomains);
 
     /// <inheritdoc cref="NotesReader.GetView"/>
     public NoteView? GetView(string id, bool includeBody = true, int? bodyMaxChars = null)

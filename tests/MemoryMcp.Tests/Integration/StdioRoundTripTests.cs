@@ -18,6 +18,7 @@ public class StdioRoundTripTests
         "memory_capabilities", "schema_provenance", "domain_manifest", "memory_context", "skill_consolidate_plan",
         "notes_changes", "notes_tags", "notes_upsert_many", "notes_link_many",
         "notes_saved_search_run", "notes_activity", "notes_patch_many", "notes_adoption", "notes_assemble_many",
+        "notes_get_many_by_key", "next_key",
     };
 
     [Fact]
@@ -79,12 +80,12 @@ public class StdioRoundTripTests
             {
                 new Dictionary<string, object?>
                 {
-                    ["domain"] = "memory-mcp", ["type"] = "backlog_item", ["title"] = "Assemble one",
+                    ["domain"] = "memory-mcp", ["type"] = "backlog_item", ["title"] = "Assemble one", ["project"] = "am-proj",
                     ["payload"] = new Dictionary<string, object?> { ["key"] = "AM-100", ["status"] = "ready" }, ["dedupKey"] = "AM-100",
                 },
                 new Dictionary<string, object?>
                 {
-                    ["domain"] = "memory-mcp", ["type"] = "backlog_item", ["title"] = "Assemble two",
+                    ["domain"] = "memory-mcp", ["type"] = "backlog_item", ["title"] = "Assemble two", ["project"] = "am-proj",
                     ["payload"] = new Dictionary<string, object?> { ["key"] = "AM-200", ["status"] = "ready" }, ["dedupKey"] = "AM-200",
                 },
             },
@@ -96,11 +97,26 @@ public class StdioRoundTripTests
 
         Assert.True(res.IsError is not true, "notes_assemble_many reported an error: " + Text(res));
         Assert.Contains("AM-100", Text(res), StringComparison.Ordinal);
-        var links = await client.CallToolAsync("notes_get_by_key", new Dictionary<string, object?>
+
+        // MEMP-219: batch key lookup returns an explicit found flag per key (hit + miss in one call).
+        var many = await client.CallToolAsync("notes_get_many_by_key", new Dictionary<string, object?>
         {
-            ["domain"] = "memory-mcp", ["type"] = "backlog_item", ["dedupKey"] = "AM-200",
+            ["keys"] = new object[]
+            {
+                new Dictionary<string, object?> { ["domain"] = "memory-mcp", ["type"] = "backlog_item", ["dedupKey"] = "AM-100" },
+                new Dictionary<string, object?> { ["domain"] = "memory-mcp", ["type"] = "backlog_item", ["dedupKey"] = "NOPE-000" },
+            },
         }, cancellationToken: ct);
-        Assert.True(links.IsError is not true, "notes_get_by_key after assemble_many errored: " + Text(links));
+        var manyText = Text(many);
+        Assert.Contains("\"found\":true", manyText.Replace(" ", string.Empty), StringComparison.Ordinal);
+        Assert.Contains("\"found\":false", manyText.Replace(" ", string.Empty), StringComparison.Ordinal);
+
+        // MEMP-220: next_key allocates one past the current max (AM-200 present -> AM-201).
+        var next = await client.CallToolAsync("next_key", new Dictionary<string, object?>
+        {
+            ["project"] = "am-proj", ["prefix"] = "AM",
+        }, cancellationToken: ct);
+        Assert.Contains("AM-201", Text(next), StringComparison.Ordinal);
     }
 
     // MEMP-211: the server advertises capability prompts (start-task / end-task) and they render usable text.

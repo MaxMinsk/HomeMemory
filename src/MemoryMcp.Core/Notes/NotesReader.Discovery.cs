@@ -250,17 +250,21 @@ public sealed partial class NotesReader
     /// <param name="diverseByDomain">When true (a cross-domain overview), round-robin the ranked hits across domains so one large domain doesn't drown the smaller ones (MEMP-213).</param>
     /// <param name="includePayload">When false (the default, MEMP-214), hits carry snippet + identity only (no payload/tags JSON) so recall stays lean for orientation; pass true for a board/status view.</param>
     /// <param name="maxNeighbors">Cap on returned linked neighbors so a hub note can't flood the block (MEMP-214).</param>
+    /// <param name="types">When set, restrict recall hits to these note types (MEMP-223).</param>
+    /// <param name="noRelax">When true, forbid the AND->any-term auto-relaxation, so a precise query never widens to noisy partials (MEMP-223).</param>
     public RecallResult Recall(
         string? query, string? domain, int limit, IReadOnlyCollection<string>? restrictToDomains,
         bool includeLinks = true, int maxHops = 1, int? budgetChars = null, bool explain = false,
         string? project = null, bool projectOnly = false, bool diverseByDomain = false,
-        bool includePayload = false, int maxNeighbors = DefaultMaxNeighbors)
+        bool includePayload = false, int maxNeighbors = DefaultMaxNeighbors,
+        IReadOnlyCollection<string>? types = null, bool noRelax = false)
     {
         // Recall ranks for usefulness, not lexical purity: hybrid relevance is the default here (MEMP-174). When a
         // budget is set (or we interleave by domain), fetch a fuller page so packing/fairness has candidates to pick from.
         var fetch = budgetChars is int || diverseByDomain ? Math.Clamp(limit * 4, limit, MaxLimit) : limit;
-        var page = Search(query, domain, null, null, "active", fetch, 0, restrictToDomains, null, includePayload: true, rank: "hybrid", explain: explain,
-            boostProject: project, projectEquals: projectOnly ? project : null);
+        var typeFilter = TypeInFilter(types); // MEMP-223: restrict hits to these types via the DSL
+        var page = Search(query, domain, null, null, "active", fetch, 0, restrictToDomains, typeFilter, includePayload: true, rank: "hybrid", explain: explain,
+            match: noRelax ? "all" : null, boostProject: project, projectEquals: projectOnly ? project : null);
         var ranked = diverseByDomain ? InterleaveByDomain(page.Items) : page.Items;
         var (packed, budget, used, dropped) = PackToBudget(ranked, limit, budgetChars);
 
@@ -305,6 +309,19 @@ public sealed partial class NotesReader
         }
 
         return new RecallResult(query, hits, neighbors, budget, used, dropped, page.Relaxed);
+    }
+
+    // MEMP-223: builds a "type in ('a','b')" DSL clause from the requested types (normalized + quote-escaped), or
+    // null when none — reuses the safe, parameterized filter compiler instead of a new Search parameter.
+    private static string? TypeInFilter(IReadOnlyCollection<string>? types)
+    {
+        if (types is null || types.Count == 0)
+        {
+            return null;
+        }
+
+        var values = types.Select(type => "'" + Identifiers.Normalize(type).Replace("'", "''", StringComparison.Ordinal) + "'");
+        return $"type in ({string.Join(", ", values)})";
     }
 
     // Round-robins ranked hits across their domains (MEMP-213): keep each domain's internal rank order, but take
