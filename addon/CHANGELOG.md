@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.67.0
+
+Sprint 60 — Dependency-drift lint reframed (MEMP-231), after the MEMP-228 corpus sweep found that
+binance-maf-trader and home-dashboard record task dependencies as **graph links** (`depends_on`/`blocked_by`
+rels), while memory-mcp uses **`payload.blocked_by`** — both internally consistent, neither wrong.
+
+- **Owner decision: both dependency forms are valid.** `payload.blocked_by` (a key array; DSL-filterable) and
+  graph links (traversable via `notes_graph`) are each fine on their own. The real drift is encoding the SAME
+  dependency in BOTH forms on one note (two sources of truth).
+- **`dependency_representation_drift` reframed**: instead of flagging any `depends_on` graph link, it now flags
+  a backlog item that has a non-empty `payload.blocked_by` AND ALSO a graph dep link (`depends_on`/`blocked_by`)
+  — genuine dual-encoding. A graph-only or payload-only note is not flagged.
+- The dependency decision note, the `memory-authoring` skill (v3), and the `notes_lint` tool description are
+  updated to "pick one form, don't dual-encode."
+
+No schema change (migrations through **0017**). 385 tests. (Docs/decision/skill changes ship in shared memory,
+already live.)
+
 ## 0.66.0
 
 Sprint 59 — Rule relevance (MEMP-224). `memory_context` now honors the `always_apply`-vs-on-demand rule

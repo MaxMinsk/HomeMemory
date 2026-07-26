@@ -421,8 +421,9 @@ public sealed class NotesLinter
         }
     }
 
-    // MEMP-216: payload.blocked_by is the ONE canonical dependency representation; a graph depends_on link on a
-    // backlog item is drift (two sources of truth) — surface it so it can be folded into blocked_by.
+    // MEMP-216/231: both payload.blocked_by AND graph dep links (rel depends_on/blocked_by) are individually
+    // valid ways to record a dependency; the DRIFT is encoding deps in BOTH forms on the SAME note (two sources
+    // of truth). Flag only that — a note with a non-empty payload.blocked_by that ALSO has a graph dep link.
     private static List<LintFinding> DependencyDrift(SqliteConnection connection, LintScope scope)
     {
         if (ExcludesBacklog(scope))
@@ -434,7 +435,9 @@ public sealed class NotesLinter
         var filters = new List<string>
         {
             "n.deleted = 0", "n.status = 'active'", "n.type = 'backlog_item'",
-            "EXISTS (SELECT 1 FROM note_links l WHERE l.from_id = n.id AND l.rel = 'depends_on')",
+            "json_extract(n.payload_json, '$.blocked_by') IS NOT NULL",
+            "json_array_length(json_extract(n.payload_json, '$.blocked_by')) > 0",
+            "EXISTS (SELECT 1 FROM note_links l WHERE l.from_id = n.id AND l.rel IN ('depends_on', 'blocked_by'))",
         };
         BindScope(command, filters, "n.", scope with { Types = null });
         command.CommandText = $"SELECT n.id, n.title, n.domain, n.type FROM notes n WHERE {string.Join(" AND ", filters)} ORDER BY n.domain LIMIT 500;";
@@ -446,7 +449,7 @@ public sealed class NotesLinter
             findings.Add(new LintFinding(
                 reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1),
                 reader.GetString(2), reader.GetString(3), "dependency_representation_drift", "warn",
-                "Dependency encoded as a graph depends_on link; payload.blocked_by is canonical (MEMP-216) — move it there and drop the link."));
+                "Dependencies are recorded in BOTH payload.blocked_by AND a graph link (depends_on/blocked_by) — keep ONE source per note (both forms are valid on their own, MEMP-216)."));
         }
 
         return findings;

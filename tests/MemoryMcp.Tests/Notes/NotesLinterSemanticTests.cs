@@ -34,18 +34,23 @@ public class NotesLinterSemanticTests
     }
 
     [Fact]
-    public void Flags_dependency_encoded_as_a_graph_link_as_drift()
+    public void Flags_dependency_dual_encoded_in_both_payload_and_graph()
     {
         using var temp = new TempDatabase();
         var (repo, factory) = New(temp);
         var blocker = Seed(repo, "TST-100", "Blocker", "ready");
-        var withGraphDep = Seed(repo, "TST-700", "Has graph dep", "ready");
-        repo.Link(withGraphDep, blocker, "depends_on"); // canonical form is payload.blocked_by (MEMP-216)
+        // Dual-encoded: dep in payload.blocked_by AND as a graph link -> the real drift (two sources).
+        var dual = Seed(repo, "TST-700", "Dual encoded", "blocked", "TST-100");
+        repo.Link(dual, blocker, "depends_on");
+        // Graph-only: a graph dep link with NO payload.blocked_by -> a valid single form, NOT drift.
+        var graphOnly = Seed(repo, "TST-800", "Graph only", "ready");
+        repo.Link(graphOnly, blocker, "blocked_by");
 
         var findings = new NotesLinter(factory).Lint(null, null, 1000);
 
-        Assert.Contains(findings, f => f.Rule == "dependency_representation_drift" && f.NoteId == withGraphDep);
-        Assert.DoesNotContain(findings, f => f.Rule == "dependency_representation_drift" && f.NoteId == blocker); // incoming link only
+        Assert.Contains(findings, f => f.Rule == "dependency_representation_drift" && f.NoteId == dual);
+        Assert.DoesNotContain(findings, f => f.Rule == "dependency_representation_drift" && f.NoteId == graphOnly); // single form is fine
+        Assert.DoesNotContain(findings, f => f.Rule == "dependency_representation_drift" && f.NoteId == blocker);
     }
 
     [Fact]
