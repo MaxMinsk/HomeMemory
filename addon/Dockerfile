@@ -23,6 +23,9 @@ RUN \
     && dotnet restore ./src/MemoryMcp.Server/MemoryMcp.Server.csproj --runtime "${dotnet_rid}"
 
 COPY src ./src
+# The server embeds the onboarding kit (hooks + templates) from integrations/ as resources (MEMP-211),
+# so it must be present in the build context or `dotnet publish` fails with CS1566 (missing resource).
+COPY integrations ./integrations
 
 RUN \
     case "${BUILD_ARCH}" in \

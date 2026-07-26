@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.64.1
+
+Hotfix — restore the add-on image build (broken since 0.60.0). The server csproj embeds the onboarding kit
+(hooks + templates) from `integrations/` as assembly resources (MEMP-211, 0.60.0), but `addon/Dockerfile`
+only copied `src/`, so the in-container `dotnet publish` failed with `CS1566: Error reading resource
+'onboard.memory_session_start.py'` and **no image was published for 0.60.0–0.64.0** (CI stayed green because
+tests build with the full repo checkout). Fix: `COPY integrations ./integrations` into the Docker build. This
+is the first successfully published image since 0.59.0 and contains all of 0.60.0–0.64.1.
+
 ## 0.64.0
 
 Sprint 57 — Provenance & polish (closing the TRD-131-134 authoring review).
