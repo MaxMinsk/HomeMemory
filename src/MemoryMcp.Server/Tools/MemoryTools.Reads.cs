@@ -37,7 +37,7 @@ public sealed partial class MemoryTools
 
     /// <summary>Recalls a compact context block (hits + linked neighbors) for a query, scope-restricted.</summary>
     [McpServerTool(Name = "notes_recall", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
-    [Description("Recall a prompt-ready context block for a query: the top matching notes PLUS their one-hop linked neighbors (both directions), scope-restricted, with relation labels and source ids/revisions — a case's surrounding context in one call instead of search + many gets. Hits are ranked by hybrid relevance (BM25 + recency + link-degree + importance + project). Pass `project` to lift that project's notes (cross-project hits still appear) or `projectOnly` to hard-restrict. OMIT `domain` to recall across ALL domains you're authorized for; pass `domain` to restrict to one. Snippets only, never full bodies (use notes_read/notes_get for those).")]
+    [Description("Recall a prompt-ready context block for a query: the top matching notes PLUS their one-hop linked neighbors (both directions), scope-restricted, with relation labels and source ids/revisions — a case's surrounding context in one call instead of search + many gets. Hits are ranked by hybrid relevance (BM25 + recency + link-degree + importance + project). Pass `project` to lift that project's notes (cross-project hits still appear) or `projectOnly` to hard-restrict. OMIT `domain` to recall across ALL domains you're authorized for; pass `domain` to restrict to one. LEAN by default (MEMP-214): each hit is snippet + identity (id/title/type/domain/dedupKey/project/status), NOT its full payload — pass includePayload=true for a board/status view, or notes_get for one note's full payload. Neighbors are capped. Snippets only, never full bodies.")]
     public RecallResult NotesRecall(
         [Description("Full-text query")] string query,
         [Description("Domain filter (optional)")] string? domain = null,
@@ -48,27 +48,29 @@ public sealed partial class MemoryTools
         [Description("Also return a per-hit score breakdown (lexical/recency/link/importance/type/project ranks + fused score). Default false.")] bool explain = false,
         [Description("Boost notes in this envelope project (soft — cross-project hits still appear, MEMP-209)")] string? project = null,
         [Description("With `project`, hard-restrict the recall to that project (default false)")] bool projectOnly = false,
+        [Description("Include each hit's full payload/tags JSON (default false = lean: snippet + identity only, MEMP-214). Turn on only for a board/status view.")] bool includePayload = false,
         [Description("Who is recalling (provenance). Pass your stable agent id so the server can tell you recalled before writing (MEMP-204).")] string? sourceAgent = null)
     {
         RecordAgentRead(sourceAgent);
-        return Translate(() => _notes.Recall(query, domain, limit, _authz.ReadRestriction(domain), includeLinks, maxHops, budgetChars, explain, project, projectOnly));
+        return Translate(() => _notes.Recall(query, domain, limit, _authz.ReadRestriction(domain), includeLinks, maxHops, budgetChars, explain, project, projectOnly, includePayload: includePayload));
     }
 
     /// <summary>Assembles a layered context block (rules + skills + recall) for a task in a domain.</summary>
     [McpServerTool(Name = "memory_context", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
-    [Description("CALL THIS FIRST at the start of a task in a domain: it assembles a prompt-ready context block in one call — the active rules in force (memory_rule from the domain + commons, most important first), the guiding skills, and a recall of notes relevant to the query (FTS hits + one-hop neighbors), plus warnings when a project_state is going stale (MEMP-206). Pass `project` to load that project's rules/skills and lift its notes in recall (MEMP-209). Includes an advisory-policy reminder (memory is advisory; the live user/data wins). Use it instead of separate skill_list/search/recall calls. Omit `domain` to assemble a cross-domain overview across ALL domains you're authorized for (MEMP-213); pass a `domain` to focus on one. If you pass a PROJECT name as `domain` by mistake (e.g. domain='unity-solitaire'), it auto-resolves to the real domain + project and says so in warnings instead of returning empty (MEMP-212). Null if the requested domain is out of scope.")]
+    [Description("CALL THIS FIRST at the start of a task in a domain: it assembles a prompt-ready context block in one call — the active rules in force (memory_rule from the domain + commons, most important first), the guiding skills, and a recall of notes relevant to the query (FTS hits + one-hop neighbors), plus warnings when a project_state is going stale (MEMP-206). Pass `project` to load that project's rules/skills and lift its notes in recall (MEMP-209). Includes an advisory-policy reminder (memory is advisory; the live user/data wins). Use it instead of separate skill_list/search/recall calls. Omit `domain` to assemble a cross-domain overview across ALL domains you're authorized for (MEMP-213); pass a `domain` to focus on one. If you pass a PROJECT name as `domain` by mistake (e.g. domain='unity-solitaire'), it auto-resolves to the real domain + project and says so in warnings instead of returning empty (MEMP-212). LEAN by default (MEMP-214): recall hits are snippet + identity (not full payload), neighbors are capped, and the recall self-limits to a ~6000-char budget — so it orients without flooding your context; widen with budgetChars or includePayload=true. Null if the requested domain is out of scope.")]
     public ContextBlock? MemoryContext(
         [Description("The task query to recall relevant notes for")] string query,
         [Description("Namespace, e.g. development or kitchen. OMIT to get a cross-domain overview across all your authorized domains (MEMP-213); pass one to focus.")] string? domain = null,
         [Description("Max recall hits (default 10)")] int limit = 10,
         [Description("Include one-hop linked neighbors of the recall hits (default true)")] bool includeLinks = true,
         [Description("Project within the domain: its skills/rules override the domain-general ones, and its notes are boosted in recall")] string? project = null,
-        [Description("Pack recall hits to this snippet-char budget (~tokens×4) instead of a fixed count; rules/skills are always included. Omit to page by `limit`.")] int? budgetChars = null,
+        [Description("Pack recall hits to this snippet-char budget (~tokens×4). Defaults to ~6000 so a bare call self-limits (MEMP-214); pass a larger value to widen, or a smaller one to tighten. Rules/skills are always included.")] int? budgetChars = null,
         [Description("With `project`, hard-restrict the recall to that project (default false)")] bool projectOnly = false,
+        [Description("Include each recall hit's full payload/tags JSON (default false = lean: snippet + identity only, MEMP-214). Turn on only when you need the structured payload up front.")] bool includePayload = false,
         [Description("Who is loading context (provenance). Pass your stable agent id so the server can tell you recalled before writing (MEMP-204).")] string? sourceAgent = null)
     {
         RecordAgentRead(sourceAgent);
-        return Translate(() => new ContextAssembler(_notes, _skills).Assemble(query, domain, limit, includeLinks, _authz.Scope, project, budgetChars, projectOnly));
+        return Translate(() => new ContextAssembler(_notes, _skills).Assemble(query, domain, limit, includeLinks, _authz.Scope, project, budgetChars, projectOnly, includePayload));
     }
 
     /// <summary>Lists the most-recently-updated (or most-used) notes in scope.</summary>

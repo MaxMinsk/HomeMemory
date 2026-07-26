@@ -10,6 +10,8 @@ namespace MemoryMcp.Core.Notes;
 public sealed class ContextAssembler
 {
     private const int MaxRules = 20;
+    // MEMP-214: a bare memory_context self-limits its recall to this snippet-char budget unless the caller sets one.
+    private const int DefaultBudgetChars = 6000;
     private const string AdvisoryPolicy =
         "Memory is advisory: the current user's instructions and live data take precedence over stored notes. Treat rules as defaults, not overrides.";
 
@@ -35,15 +37,17 @@ public sealed class ContextAssembler
     /// <param name="project">Optional project: its skills/rules override the domain-general ones, and its notes are boosted in recall (MEMP-209).</param>
     /// <param name="budgetChars">When set, pack recall hits to this snippet-char budget instead of a fixed count (MEMP-176).</param>
     /// <param name="projectOnly">When true with a <paramref name="project"/>, hard-restrict the recall to that project (MEMP-209).</param>
-    public ContextBlock? Assemble(string query, string? domain, int limit, bool includeLinks, RequestScope scope, string? project = null, int? budgetChars = null, bool projectOnly = false)
+    /// <param name="includePayload">When false (the default, MEMP-214), recall hits carry snippet + identity only (no full payload) so the block stays lean.</param>
+    public ContextBlock? Assemble(string query, string? domain, int limit, bool includeLinks, RequestScope scope, string? project = null, int? budgetChars = null, bool projectOnly = false, bool includePayload = false)
     {
         var guard = new ScopeGuard(scope);
         var warnings = new List<string>();
+        var effectiveBudget = budgetChars ?? DefaultBudgetChars; // MEMP-214: self-limit a bare call
 
         // MEMP-213: no domain => a cross-domain overview across everything the caller may read, instead of forcing a guess.
         if (string.IsNullOrWhiteSpace(domain))
         {
-            return AssembleOverview(query, limit, includeLinks, guard, project, budgetChars, projectOnly);
+            return AssembleOverview(query, limit, includeLinks, guard, project, effectiveBudget, projectOnly, includePayload);
         }
 
         (domain, project) = ResolveScope(guard, domain, project, warnings);
@@ -92,8 +96,8 @@ public sealed class ContextAssembler
         // Nudge the agent to refresh an aging project_state / stale-marked note at the end of the task (MEMP-206).
         warnings.AddRange(StaleStateWarnings(domain, project, now, guard.RestrictionForSearch(domain)));
 
-        var recall = _notes.Recall(query, domain, limit, guard.RestrictionForSearch(domain), includeLinks, 1, budgetChars, false, project, projectOnly);
-        return new ContextBlock(domain, ranked, dedupedSkills, recall, AdvisoryPolicy, warnings);
+        var recall = _notes.Recall(query, domain, limit, guard.RestrictionForSearch(domain), includeLinks, 1, effectiveBudget, false, project, projectOnly, includePayload: includePayload);
+        return new ContextBlock(domain, LeanRules(ranked), dedupedSkills, recall, AdvisoryPolicy, warnings);
     }
 
     // Sentinel Domain value on a cross-domain overview block (no single domain was requested).
@@ -102,7 +106,7 @@ public sealed class ContextAssembler
     // MEMP-213: a cross-domain overview when no domain is given — the rules in force across every domain the caller
     // may read (restricted to the caller's scope), the shared commons skills, and a domain-diverse recall so one big
     // domain doesn't drown the rest. A project= still boosts across domains.
-    private ContextBlock? AssembleOverview(string query, int limit, bool includeLinks, ScopeGuard guard, string? project, int? budgetChars, bool projectOnly)
+    private ContextBlock? AssembleOverview(string query, int limit, bool includeLinks, ScopeGuard guard, string? project, int? budgetChars, bool projectOnly, bool includePayload)
     {
         var restrict = guard.RestrictionForSearch(null); // every authorized domain (null = unrestricted)
         var ruleFilter = string.IsNullOrWhiteSpace(project) ? null : $"project == '{project}' OR project is null";
@@ -130,8 +134,8 @@ public sealed class ContextAssembler
             warnings.Add($"{stale} included rule(s) may be outdated (unverified past their window) — verify or deprecate them.");
         }
 
-        var recall = _notes.Recall(query, null, limit, restrict, includeLinks, 1, budgetChars, false, project, projectOnly, diverseByDomain: true);
-        return new ContextBlock(AllDomains, ranked, skills, recall, AdvisoryPolicy, warnings);
+        var recall = _notes.Recall(query, null, limit, restrict, includeLinks, 1, budgetChars, false, project, projectOnly, diverseByDomain: true, includePayload: includePayload);
+        return new ContextBlock(AllDomains, LeanRules(ranked), skills, recall, AdvisoryPolicy, warnings);
     }
 
     // MEMP-212: a caller that passed a project name where a domain is expected (e.g. domain='unity-solitaire')
@@ -164,6 +168,46 @@ public sealed class ContextAssembler
 
     private static string? Field(string? json, string name) =>
         Element(json, name) is { ValueKind: JsonValueKind.String } s ? s.GetString() : null;
+
+    // MEMP-214: the context view keeps only the small, decision-relevant rule fields and drops verbose arrays
+    // (trigger_phrases, source_refs, ...) and tags, so a rule set doesn't bloat the block. Staleness is computed
+    // from the full payload BEFORE this projection, so nothing is lost there.
+    private static readonly string[] RuleKeepFields = { "description", "priority", "always_apply", "scope" };
+
+    private static IReadOnlyList<SearchResult> LeanRules(IReadOnlyList<SearchResult> rules) =>
+        rules.Select(rule => rule with { PayloadJson = LeanRulePayload(rule.PayloadJson), TagsJson = null }).ToList();
+
+    private static string? LeanRulePayload(string? payloadJson)
+    {
+        if (string.IsNullOrEmpty(payloadJson))
+        {
+            return payloadJson;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(payloadJson);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return payloadJson;
+            }
+
+            var kept = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            foreach (var name in RuleKeepFields)
+            {
+                if (document.RootElement.TryGetProperty(name, out var value))
+                {
+                    kept[name] = value.Clone();
+                }
+            }
+
+            return JsonSerializer.Serialize(kept);
+        }
+        catch (JsonException)
+        {
+            return payloadJson;
+        }
+    }
 
     // A rule "opted into" verification (stale_after_days) is stale if never verified, or verified longer ago than the window.
     private static bool IsStaleRule(string? payloadJson, DateTimeOffset now)

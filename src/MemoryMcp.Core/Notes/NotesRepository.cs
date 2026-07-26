@@ -81,8 +81,9 @@ public sealed class NotesRepository
     public RecallResult Recall(
         string? query, string? domain, int limit, IReadOnlyCollection<string>? restrictToDomains,
         bool includeLinks = true, int maxHops = 1, int? budgetChars = null, bool explain = false,
-        string? project = null, bool projectOnly = false, bool diverseByDomain = false)
-        => _reader.Recall(query, domain, limit, restrictToDomains, includeLinks, maxHops, budgetChars, explain, project, projectOnly, diverseByDomain);
+        string? project = null, bool projectOnly = false, bool diverseByDomain = false,
+        bool includePayload = false, int maxNeighbors = NotesReader.DefaultMaxNeighbors)
+        => _reader.Recall(query, domain, limit, restrictToDomains, includeLinks, maxHops, budgetChars, explain, project, projectOnly, diverseByDomain, includePayload, maxNeighbors);
 
     /// <inheritdoc cref="NotesReader.Related"/>
     public IReadOnlyList<RelatedNote> Related(string id, int limit, IReadOnlyCollection<string>? restrictToDomains)

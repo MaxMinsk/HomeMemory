@@ -27,6 +27,9 @@ public sealed partial class NotesReader
     /// <summary>Default number of matches a single <see cref="Find"/> returns.</summary>
     public const int DefaultFindMatches = 10;
 
+    /// <summary>Default cap on linked neighbors a single <see cref="Recall"/> returns, so a hub note can't flood the block (MEMP-214).</summary>
+    public const int DefaultMaxNeighbors = 15;
+
     /// <summary>Below this many body characters (with no title and an empty payload) a candidate is not worth capturing.</summary>
     public const int CaptureMinBodyChars = 10;
 

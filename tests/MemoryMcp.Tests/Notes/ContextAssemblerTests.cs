@@ -177,6 +177,37 @@ public class ContextAssemblerTests
         Assert.DoesNotContain(block.Recall.Hits, h => h.Domain == "development"); // out-of-scope domain never leaks
     }
 
+    [Fact]
+    public void Assemble_self_limits_recall_with_a_default_budget()
+    {
+        using var temp = new TempDatabase();
+        var (repo, skills) = New(temp);
+        repo.Upsert("kitchen", "fact", "Borscht", "beetroot soup", """{ "statement": "x" }""", null, "borscht", "me");
+
+        var block = new ContextAssembler(repo, skills).Assemble("borscht", "kitchen", 10, includeLinks: false, RequestScope.Unrestricted);
+
+        Assert.NotNull(block);
+        Assert.Equal(6000, block!.Recall.BudgetChars);                  // MEMP-214 default budget applied
+        Assert.All(block.Recall.Hits, h => Assert.Null(h.PayloadJson)); // hits are lean
+    }
+
+    [Fact]
+    public void Assemble_returns_lean_rules_without_verbose_arrays()
+    {
+        using var temp = new TempDatabase();
+        var (repo, skills) = New(temp);
+        repo.Upsert("kitchen", "memory_rule", "Salted", null,
+            """{ "description": "salt early", "priority": 3, "trigger_phrases": ["a","b"], "source_refs": ["ref1"] }""", null, "rule-salt", "me");
+
+        var block = new ContextAssembler(repo, skills).Assemble("x", "kitchen", 5, includeLinks: false, RequestScope.Unrestricted);
+
+        var rule = block!.Rules.Single(r => r.Title == "Salted");
+        Assert.Contains("salt early", rule.PayloadJson!, StringComparison.Ordinal);       // decision-relevant kept
+        Assert.DoesNotContain("trigger_phrases", rule.PayloadJson!, StringComparison.Ordinal); // verbose array dropped
+        Assert.DoesNotContain("source_refs", rule.PayloadJson!, StringComparison.Ordinal);
+        Assert.Null(rule.TagsJson);
+    }
+
     private static (NotesRepository Repo, SkillsService Skills) New(TempDatabase temp)
     {
         var factory = new SqliteConnectionFactory(temp.FilePath);

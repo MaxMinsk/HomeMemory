@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.61.0
+
+Sprint 54 — Context economy. A plain `memory_context` was returning ~8-10K tokens (every recall hit carried
+its full payload — for a `backlog_item` the `acceptance` spec is multi-KB — plus uncapped neighbors and full
+rule payloads), which floods the agent's window. This makes recall lean by default (MEMP-214).
+
+- **Lean recall hits**: `memory_context` and `notes_recall` hits now carry snippet + identity
+  (id/title/type/domain/dedupKey/project/status) but NOT the full payload/tags JSON — the snippet already
+  conveys relevance, and the full payload is one `notes_get` away. Pass `includePayload=true` for a board/status
+  view; `notes_search` (the board tool) is unchanged.
+- **Capped neighbors**: recall returns at most ~15 linked neighbors (was every link of every hit — a hub note
+  could dump 60+), keeping the neighbors of the top-ranked hits.
+- **Default recall budget**: `memory_context` self-limits its recall to a ~6000-char snippet budget when the
+  caller gives none; widen with `budgetChars`.
+- **Lean rules**: the rules in the context block keep the decision-relevant fields (description, priority,
+  always_apply, scope) and drop verbose arrays (trigger_phrases, source_refs) and tags. Staleness is still
+  computed from the full rule before trimming.
+
+Net: the same `memory_context(development, project=…)` call drops from ~10K tokens to ~2-3K without losing
+"what's relevant". Behavior change (opt-out via `includePayload`): recall hits no longer include payload by
+default. No schema change (migrations through **0017**). 367 tests.
+
 ## 0.60.0
 
 Sprint 53 — Adoption / onboarding kit. Make it effortless for a new project (and a new agent) to

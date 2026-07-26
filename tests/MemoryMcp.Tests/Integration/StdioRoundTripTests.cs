@@ -154,6 +154,20 @@ public class StdioRoundTripTests
         Assert.Contains("cross-domain overview", text, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Xdomain in memory-mcp", text, StringComparison.Ordinal);
         Assert.Contains("Xdomain in kitchen", text, StringComparison.Ordinal); // both domains surfaced
+
+        // MEMP-214: recall hits are lean — a payload-only value is NOT dumped into the block; the title/snippet is.
+        await client.CallToolAsync("notes_upsert", new Dictionary<string, object?>
+        {
+            ["domain"] = "memory-mcp", ["type"] = "fact", ["title"] = "Lean check note",
+            ["payload"] = new Dictionary<string, object?> { ["statement"] = "LEANPAYLOADMARKER must not reach context" },
+            ["body"] = "leanprobe token in the body", ["dedupKey"] = "LEAN-1",
+        }, cancellationToken: ct);
+        var lean = Text(await client.CallToolAsync("memory_context", new Dictionary<string, object?>
+        {
+            ["query"] = "leanprobe", ["domain"] = "memory-mcp",
+        }, cancellationToken: ct));
+        Assert.Contains("Lean check note", lean, StringComparison.Ordinal);          // identity/snippet present
+        Assert.DoesNotContain("LEANPAYLOADMARKER", lean, StringComparison.Ordinal);  // payload not dumped
     }
 
     // MEMP-212: passing a PROJECT name where a domain is expected auto-resolves to the real domain + project

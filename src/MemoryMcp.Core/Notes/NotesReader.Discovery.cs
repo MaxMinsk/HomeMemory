@@ -248,10 +248,13 @@ public sealed partial class NotesReader
     /// <param name="project">When set, lift notes in this envelope project via a soft RRF boost (MEMP-209) — cross-project hits still appear.</param>
     /// <param name="projectOnly">When true with a <paramref name="project"/>, hard-restrict the recall to that project.</param>
     /// <param name="diverseByDomain">When true (a cross-domain overview), round-robin the ranked hits across domains so one large domain doesn't drown the smaller ones (MEMP-213).</param>
+    /// <param name="includePayload">When false (the default, MEMP-214), hits carry snippet + identity only (no payload/tags JSON) so recall stays lean for orientation; pass true for a board/status view.</param>
+    /// <param name="maxNeighbors">Cap on returned linked neighbors so a hub note can't flood the block (MEMP-214).</param>
     public RecallResult Recall(
         string? query, string? domain, int limit, IReadOnlyCollection<string>? restrictToDomains,
         bool includeLinks = true, int maxHops = 1, int? budgetChars = null, bool explain = false,
-        string? project = null, bool projectOnly = false, bool diverseByDomain = false)
+        string? project = null, bool projectOnly = false, bool diverseByDomain = false,
+        bool includePayload = false, int maxNeighbors = DefaultMaxNeighbors)
     {
         // Recall ranks for usefulness, not lexical purity: hybrid relevance is the default here (MEMP-174). When a
         // budget is set (or we interleave by domain), fetch a fuller page so packing/fairness has candidates to pick from.
@@ -259,10 +262,17 @@ public sealed partial class NotesReader
         var page = Search(query, domain, null, null, "active", fetch, 0, restrictToDomains, null, includePayload: true, rank: "hybrid", explain: explain,
             boostProject: project, projectEquals: projectOnly ? project : null);
         var ranked = diverseByDomain ? InterleaveByDomain(page.Items) : page.Items;
-        var (hits, budget, used, dropped) = PackToBudget(ranked, limit, budgetChars);
+        var (packed, budget, used, dropped) = PackToBudget(ranked, limit, budgetChars);
+
+        // MEMP-214: drop the (potentially multi-KB) payload/tags JSON unless explicitly asked — the snippet already
+        // conveys relevance; identity (dedupKey/project/status) is kept. Full payload is one notes_get away.
+        var hits = includePayload
+            ? packed
+            : packed.Select(hit => hit with { PayloadJson = null, TagsJson = null }).ToList();
 
         var neighbors = new List<RecallNeighbor>();
-        if (includeLinks && maxHops >= 1 && hits.Count > 0)
+        var cap = Math.Max(0, maxNeighbors);
+        if (includeLinks && maxHops >= 1 && cap > 0 && hits.Count > 0)
         {
             var seen = new HashSet<string>(hits.Select(hit => hit.Id), StringComparer.Ordinal);
             foreach (var hit in hits)
@@ -281,6 +291,16 @@ public sealed partial class NotesReader
 
                     neighbors.Add(new RecallNeighbor(link.NoteId, link.Title, link.Type, link.Domain, link.Rel, link.Direction, hit.Id));
                 }
+
+                if (neighbors.Count >= cap)
+                {
+                    break; // neighbors of the top-ranked hits win the cap
+                }
+            }
+
+            if (neighbors.Count > cap)
+            {
+                neighbors = neighbors.GetRange(0, cap);
             }
         }
 
