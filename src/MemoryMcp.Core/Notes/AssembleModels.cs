@@ -15,3 +15,16 @@ public sealed record AssembleLink(string ToId, string Rel);
 /// <param name="Nudge">An advisory hint when an identified agent wrote without a prior recall this session (MEMP-204); null otherwise.</param>
 public sealed record AssembleResult(string Id, bool Created, string UpdatedUtc, int LinksCreated, string? Project = null,
     IReadOnlyList<RelatedNote>? Related = null, string? Nudge = null);
+
+/// <summary>One link to create in a bulk assemble (MEMP-218). Endpoints are addressed by a batch item's
+/// dedupKey or by an existing note id, so notes created in the same call can be linked immediately.</summary>
+/// <param name="From">Source: a batch item's dedupKey, or an existing note id.</param>
+/// <param name="To">Target: a batch item's dedupKey, or an existing note id.</param>
+/// <param name="Rel">The relation verb (active-voice lower_snake_case).</param>
+public sealed record AssembleManyLink(string From, string To, string Rel);
+
+/// <summary>The result of an atomic bulk assemble (MEMP-218): per-item upsert results plus link tallies.</summary>
+/// <param name="Items">One result per upserted item, in order (id, created/unchanged, revision, type, dedupKey).</param>
+/// <param name="LinksCreated">Links newly created in the same transaction.</param>
+/// <param name="LinksAlreadyPresent">Links that already existed (idempotent no-ops).</param>
+public sealed record AssembleManyResult(IReadOnlyList<UpsertResult> Items, int LinksCreated, int LinksAlreadyPresent);

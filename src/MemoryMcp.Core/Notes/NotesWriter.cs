@@ -277,6 +277,112 @@ public sealed class NotesWriter
         return new AssembleResult(id, created, nowUtc, specs.Count, effectiveProject);
     }
 
+    /// <summary>
+    /// Upserts an ARRAY of notes AND links among them (and to existing notes) in ONE transaction, all-or-nothing
+    /// (MEMP-218). Link endpoints are addressed by a batch item's dedupKey or by an existing note id, so notes
+    /// created in the same call can be linked immediately — closing the gap between notes_upsert_many (project,
+    /// no links) and notes_assemble (links, no project). Every payload is validated and every relation checked
+    /// before anything is written; an unresolvable endpoint aborts the whole batch.
+    /// </summary>
+    public AssembleManyResult AssembleMany(IReadOnlyList<NoteUpsertInput> inputs, IReadOnlyList<AssembleManyLink> links, string? sourceAgent)
+    {
+        if (inputs.Count > MaxBatch)
+        {
+            throw new AssembleException($"Too many items: {inputs.Count} exceeds the {MaxBatch} per-batch limit.");
+        }
+
+        if (links.Count > MaxBatch)
+        {
+            throw new AssembleException($"Too many links: {links.Count} exceeds the {MaxBatch} per-batch limit.");
+        }
+
+        foreach (var link in links)
+        {
+            if (!RelationName.IsValid(link.Rel))
+            {
+                throw new AssembleException($"Invalid relation '{link.Rel}': {RelationName.Expectation}.");
+            }
+        }
+
+        var nowUtc = NowUtc();
+        var prepared = PrepareBatch(inputs); // validate every payload up front, before any write
+        var idByKey = new Dictionary<string, string>(StringComparer.Ordinal);
+        var emits = new List<(string Id, string Domain, string Type, string? Project, string? Tags, string Op)>();
+        var results = UpsertBatchWithLinks(prepared, links, sourceAgent, nowUtc, idByKey, emits, out var created, out var present);
+
+        foreach (var emit in emits)
+        {
+            Emit(emit.Id, emit.Domain, emit.Type, emit.Project, emit.Tags, emit.Op, nowUtc);
+        }
+
+        return new AssembleManyResult(results, created, present);
+    }
+
+    // The transactional core of AssembleMany: upsert every item (recording dedupKey->id), then resolve and
+    // insert every link, all under one transaction the method commits.
+    private List<UpsertResult> UpsertBatchWithLinks(
+        List<PreparedUpsert> prepared, IReadOnlyList<AssembleManyLink> links, string? sourceAgent, string nowUtc,
+        Dictionary<string, string> idByKey, List<(string, string, string, string?, string?, string)> emits,
+        out int linksCreated, out int linksAlreadyPresent)
+    {
+        var results = new List<UpsertResult>(prepared.Count);
+        linksCreated = 0;
+        linksAlreadyPresent = 0;
+        using var connection = _connectionFactory.Create();
+        using var transaction = connection.BeginTransaction();
+        for (var i = 0; i < prepared.Count; i++)
+        {
+            var item = prepared[i];
+            var (id, wasCreated, unchanged, revision) = PersistBatchItem(connection, transaction, item, sourceAgent, nowUtc, i);
+            results.Add(new UpsertResult(id, wasCreated, revision, item.Type, item.Input.DedupKey, unchanged));
+            if (item.Input.DedupKey is not null)
+            {
+                idByKey[item.Input.DedupKey] = id;
+            }
+
+            if (!unchanged)
+            {
+                emits.Add((id, item.Domain, item.Type, item.Project, item.Tags, wasCreated ? "create" : "update"));
+            }
+        }
+
+        for (var i = 0; i < links.Count; i++)
+        {
+            var from = ResolveEndpoint(connection, transaction, links[i].From, idByKey, i, "from");
+            var to = ResolveEndpoint(connection, transaction, links[i].To, idByKey, i, "to");
+            if (InsertLinkRow(connection, transaction, from, to, links[i].Rel, nowUtc))
+            {
+                linksCreated++;
+            }
+            else
+            {
+                linksAlreadyPresent++;
+            }
+        }
+
+        transaction.Commit();
+        return results;
+    }
+
+    // Resolves a link endpoint to a note id: a batch item's dedupKey (just upserted) or an existing note id.
+    private static string ResolveEndpoint(
+        SqliteConnection connection, SqliteTransaction transaction, string reference,
+        IReadOnlyDictionary<string, string> idByKey, int index, string side)
+    {
+        if (idByKey.TryGetValue(reference, out var batchId))
+        {
+            return batchId;
+        }
+
+        if (NoteExists(connection, transaction, reference))
+        {
+            return reference;
+        }
+
+        throw new AssembleException(
+            $"link[{index}] {side} '{reference}' is neither a batch item dedupKey nor an existing note id; nothing was written.");
+    }
+
     // Reads a note's current envelope project (used to echo the effective scope after a write).
     private static string? ReadNoteProject(SqliteConnection connection, string id)
     {

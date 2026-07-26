@@ -10,7 +10,8 @@ namespace MemoryMcp.Core.Maintenance;
 /// <summary>
 /// Read-only data-quality scan over live notes: flags notes that will be hard to find or maintain
 /// (no tags, no dedup key, no title), links that dangle, notes left <c>unstructured</c> past a review
-/// window, and bodies/payloads that look like they embed a secret. Suggests fixes; changes nothing.
+/// window, bodies/payloads that look like they embed a secret, and — for backlog items — semantic
+/// (cross-field) contradictions the JSON schema can't express (MEMP-215/216). Suggests fixes; changes nothing.
 /// </summary>
 public sealed class NotesLinter
 {
@@ -54,44 +55,51 @@ public sealed class NotesLinter
     }
 
     /// <summary>
-    /// Runs all rules and returns up to <paramref name="limit"/> findings. Optionally focuses one
-    /// <paramref name="domain"/>; <paramref name="restrictToDomains"/> (from the caller's scope) bounds
-    /// what is visible (null = unrestricted, empty = nothing).
+    /// Runs all rules and returns up to <paramref name="limit"/> findings. Scope filters (MEMP-221) narrow WHICH
+    /// notes are scanned: optional <paramref name="domain"/>, <paramref name="project"/>, <paramref name="types"/>,
+    /// <paramref name="noteIds"/>, <paramref name="dedupKeys"/>; <paramref name="restrictToDomains"/> (the caller's
+    /// scope) bounds what is visible (null = unrestricted, empty = nothing).
     /// </summary>
-    public IReadOnlyList<LintFinding> Lint(string? domain, IReadOnlyCollection<string>? restrictToDomains, int limit = 200)
+    public IReadOnlyList<LintFinding> Lint(
+        string? domain, IReadOnlyCollection<string>? restrictToDomains, int limit = 200,
+        string? project = null, IReadOnlyCollection<string>? types = null,
+        IReadOnlyCollection<string>? noteIds = null, IReadOnlyCollection<string>? dedupKeys = null)
     {
         limit = Math.Clamp(limit, 1, 1000);
+        var scope = new LintScope(domain, restrictToDomains, project, types, noteIds, dedupKeys);
         using var connection = _connectionFactory.Create();
 
         var findings = new List<LintFinding>();
-        findings.AddRange(NoteRule(connection, domain, restrictToDomains,
+        findings.AddRange(NoteRule(connection, scope,
             $"(tags_json IS NULL OR json_array_length(tags_json) = 0) AND type NOT IN ({NoTagsExemptTypes})",
             "no_tags", "warn", "Note has no tags — hard to find by facet."));
-        findings.AddRange(NoteRule(connection, domain, restrictToDomains,
+        findings.AddRange(NoteRule(connection, scope,
             "dedup_key IS NULL AND type <> 'journal'",
             "no_dedup_key", "warn", "Note has no dedupKey — not idempotently editable."));
-        findings.AddRange(NoteRule(connection, domain, restrictToDomains,
+        findings.AddRange(NoteRule(connection, scope,
             "(title IS NULL OR trim(title) = '') AND type <> 'journal'",
             "no_title", "info", "Note has no title."));
-        findings.AddRange(NoteRule(connection, domain, restrictToDomains,
+        findings.AddRange(NoteRule(connection, scope,
             "title IS NOT NULL AND trim(title) <> '' AND EXISTS (SELECT 1 FROM notes dup " +
             "WHERE dup.deleted = 0 AND dup.status = 'active' AND dup.id <> notes.id " +
             "AND dup.domain = notes.domain AND dup.type = notes.type AND lower(dup.title) = lower(notes.title))",
             "duplicate", "warn", "Another active note shares this (domain, type, title)."));
-        findings.AddRange(NoteRule(connection, domain, restrictToDomains,
+        findings.AddRange(NoteRule(connection, scope,
             "content_hash IS NOT NULL AND EXISTS (SELECT 1 FROM notes dup " +
             "WHERE dup.deleted = 0 AND dup.status = 'active' AND dup.id <> notes.id " +
             "AND dup.domain = notes.domain AND dup.content_hash = notes.content_hash)",
             "duplicate_content", "warn", "Another active note has identical content (same content hash) — merge or supersede one."));
-        findings.AddRange(StaleUnstructured(connection, domain, restrictToDomains));
-        findings.AddRange(StaleUnverified(connection, domain, restrictToDomains));
-        findings.AddRange(NoteRule(connection, domain, restrictToDomains,
+        findings.AddRange(StaleUnstructured(connection, scope));
+        findings.AddRange(StaleUnverified(connection, scope));
+        findings.AddRange(NoteRule(connection, scope,
             "body IS NOT NULL AND length(body) > 4000 AND body NOT LIKE '#%' " +
             "AND body NOT LIKE '%' || char(10) || '#%' AND json_extract(payload_json, '$.summary') IS NULL",
             "oversized_no_summary", "info", "Large body with no heading or summary — add an outline/summary so it's skimmable."));
-        findings.AddRange(BrokenLinks(connection, domain, restrictToDomains));
-        findings.AddRange(OrphanNotes(connection, domain, restrictToDomains));
-        findings.AddRange(PossibleSecrets(connection, domain, restrictToDomains));
+        findings.AddRange(BrokenLinks(connection, scope));
+        findings.AddRange(OrphanNotes(connection, scope));
+        findings.AddRange(PossibleSecrets(connection, scope));
+        findings.AddRange(SemanticBacklog(connection, scope));
+        findings.AddRange(DependencyDrift(connection, scope));
 
         return findings.Count <= limit ? findings : findings.GetRange(0, limit);
     }
@@ -99,7 +107,7 @@ public sealed class NotesLinter
     // Notes still tagged 'unstructured' and untouched for over StaleUnstructuredDays — a review queue so
     // autonomous appends don't quietly rot. updated_utc is stored round-trip ("O") UTC, so a same-format
     // string compare is chronological.
-    private List<LintFinding> StaleUnstructured(SqliteConnection connection, string? domain, IReadOnlyCollection<string>? restrict)
+    private List<LintFinding> StaleUnstructured(SqliteConnection connection, LintScope scope)
     {
         var cutoff = _timeProvider.GetUtcNow().UtcDateTime.AddDays(-StaleUnstructuredDays)
             .ToString("O", CultureInfo.InvariantCulture);
@@ -111,7 +119,7 @@ public sealed class NotesLinter
             "updated_utc < $cutoff",
         };
         command.Parameters.AddWithValue("$cutoff", cutoff);
-        BindScope(command, filters, "domain", domain, restrict);
+        BindScope(command, filters, string.Empty, scope);
         command.CommandText = $"SELECT id, title, domain, type FROM notes WHERE {string.Join(" AND ", filters)} ORDER BY updated_utc LIMIT 500;";
 
         var findings = new List<LintFinding>();
@@ -130,7 +138,7 @@ public sealed class NotesLinter
     // Notes that opted into verification (payload.stale_after_days) but haven't been verified within that
     // window — authoritative memory (e.g. memory_rule) rots like a failing test. Dates parsed in C# to avoid
     // SQLite date-format pitfalls; baseline = last_verified_at, else created_utc.
-    private List<LintFinding> StaleUnverified(SqliteConnection connection, string? domain, IReadOnlyCollection<string>? restrict)
+    private List<LintFinding> StaleUnverified(SqliteConnection connection, LintScope scope)
     {
         var now = _timeProvider.GetUtcNow();
         using var command = connection.CreateCommand();
@@ -138,7 +146,7 @@ public sealed class NotesLinter
         {
             "deleted = 0", "status = 'active'", "json_extract(payload_json, '$.stale_after_days') IS NOT NULL",
         };
-        BindScope(command, filters, "domain", domain, restrict);
+        BindScope(command, filters, string.Empty, scope);
         command.CommandText = $"SELECT id, title, domain, type, payload_json, created_utc FROM notes WHERE {string.Join(" AND ", filters)} LIMIT 500;";
 
         var findings = new List<LintFinding>();
@@ -189,11 +197,11 @@ public sealed class NotesLinter
 
     // Heuristic scan of body + payload for embedded credentials. Reports WHICH note and WHICH heuristic,
     // never the matched text itself, so the lint output cannot leak the secret it found.
-    private static List<LintFinding> PossibleSecrets(SqliteConnection connection, string? domain, IReadOnlyCollection<string>? restrict)
+    private static List<LintFinding> PossibleSecrets(SqliteConnection connection, LintScope scope)
     {
         using var command = connection.CreateCommand();
         var filters = new List<string> { "deleted = 0", "status = 'active'", "(body IS NOT NULL OR payload_json IS NOT NULL)" };
-        BindScope(command, filters, "domain", domain, restrict);
+        BindScope(command, filters, string.Empty, scope);
         command.CommandText = $"SELECT id, title, domain, type, body, payload_json FROM notes WHERE {string.Join(" AND ", filters)} ORDER BY domain, type LIMIT 500;";
 
         var findings = new List<LintFinding>();
@@ -235,12 +243,12 @@ public sealed class NotesLinter
     }
 
     private static List<LintFinding> NoteRule(
-        SqliteConnection connection, string? domain, IReadOnlyCollection<string>? restrict,
+        SqliteConnection connection, LintScope scope,
         string predicate, string rule, string severity, string message)
     {
         using var command = connection.CreateCommand();
         var filters = new List<string> { "deleted = 0", "status = 'active'", $"({predicate})" };
-        BindScope(command, filters, "domain", domain, restrict);
+        BindScope(command, filters, string.Empty, scope);
         command.CommandText = $"SELECT id, title, domain, type FROM notes WHERE {string.Join(" AND ", filters)} ORDER BY domain, type LIMIT 500;";
 
         var findings = new List<LintFinding>();
@@ -257,7 +265,7 @@ public sealed class NotesLinter
 
     // Eligible knowledge notes with no links (in or out), untouched past the age window — they sit outside the
     // knowledge graph and are hard to discover by traversal (MEMP-200). Ephemeral/standalone types are exempt.
-    private List<LintFinding> OrphanNotes(SqliteConnection connection, string? domain, IReadOnlyCollection<string>? restrict)
+    private List<LintFinding> OrphanNotes(SqliteConnection connection, LintScope scope)
     {
         var cutoff = _timeProvider.GetUtcNow().UtcDateTime.AddDays(-OrphanMinAgeDays).ToString("O", CultureInfo.InvariantCulture);
         using var command = connection.CreateCommand();
@@ -267,7 +275,7 @@ public sealed class NotesLinter
             "NOT EXISTS (SELECT 1 FROM note_links l WHERE l.from_id = notes.id OR l.to_id = notes.id)",
         };
         command.Parameters.AddWithValue("$cutoff", cutoff);
-        BindScope(command, filters, "domain", domain, restrict);
+        BindScope(command, filters, string.Empty, scope);
         command.CommandText = $"SELECT id, title, domain, type FROM notes WHERE {string.Join(" AND ", filters)} ORDER BY domain, type LIMIT 500;";
 
         var findings = new List<LintFinding>();
@@ -283,11 +291,11 @@ public sealed class NotesLinter
         return findings;
     }
 
-    private static List<LintFinding> BrokenLinks(SqliteConnection connection, string? domain, IReadOnlyCollection<string>? restrict)
+    private static List<LintFinding> BrokenLinks(SqliteConnection connection, LintScope scope)
     {
         using var command = connection.CreateCommand();
         var filters = new List<string> { "nf.deleted = 0", "(nt.id IS NULL OR nt.deleted = 1)" };
-        BindScope(command, filters, "nf.domain", domain, restrict);
+        BindScope(command, filters, "nf.", scope);
         command.CommandText =
             "SELECT l.from_id, nf.title, nf.domain, nf.type, l.to_id, l.rel " +
             "FROM note_links l JOIN notes nf ON nf.id = l.from_id LEFT JOIN notes nt ON nt.id = l.to_id " +
@@ -306,35 +314,235 @@ public sealed class NotesLinter
         return findings;
     }
 
-    // Appends the optional domain focus + scope restriction to a rule's WHERE clause.
-    private static void BindScope(SqliteCommand command, List<string> filters, string domainColumn, string? domain, IReadOnlyCollection<string>? restrict)
+    // MEMP-215: semantic (cross-field) checks the JSON schema can't express, for backlog_item workflow + deps.
+    // Dependencies live in payload.blocked_by (the canonical form, MEMP-216); a key resolves to another
+    // backlog item by dedup key. Flags: unresolved_dependency (dangling key), inconsistent_workflow_state
+    // (ready/next/in_progress while an open blocker exists), satisfied_dependency (blocked but all deps done).
+    private static List<LintFinding> SemanticBacklog(SqliteConnection connection, LintScope scope)
     {
-        if (domain is not null)
+        if (ExcludesBacklog(scope))
         {
-            filters.Add($"{domainColumn} = $domain");
-            command.Parameters.AddWithValue("$domain", Identifiers.Normalize(domain));
+            return new List<LintFinding>();
         }
 
-        if (restrict is null)
+        // Resolve keys across the caller's whole visible scope (not just the focused domain), so a blocked_by key
+        // still resolves when the lint is narrowed to one domain.
+        var statusByKey = BacklogStatusByKey(connection, scope.RestrictToDomains);
+
+        using var command = connection.CreateCommand();
+        var filters = new List<string> { "deleted = 0", "status = 'active'", "type = 'backlog_item'" };
+        BindScope(command, filters, string.Empty, scope with { Types = null });
+        command.CommandText = $"SELECT id, title, domain, type, payload_json FROM notes WHERE {string.Join(" AND ", filters)} LIMIT 500;";
+
+        var findings = new List<LintFinding>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            EvaluateBacklog(reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1),
+                reader.GetString(2), reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetString(4),
+                statusByKey, findings);
+        }
+
+        return findings;
+    }
+
+    private static void EvaluateBacklog(
+        string id, string? title, string domain, string type, string? payloadJson,
+        IReadOnlyDictionary<string, string?> statusByKey, List<LintFinding> findings)
+    {
+        if (string.IsNullOrEmpty(payloadJson))
         {
             return;
         }
 
-        if (restrict.Count == 0)
+        JsonDocument document;
+        try
+        {
+            document = JsonDocument.Parse(payloadJson);
+        }
+        catch (JsonException)
+        {
+            return;
+        }
+
+        using (document)
+        {
+            var root = document.RootElement;
+            var workflow = root.TryGetProperty("status", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString() : null;
+            if (!root.TryGetProperty("blocked_by", out var deps) || deps.ValueKind != JsonValueKind.Array || deps.GetArrayLength() == 0)
+            {
+                return;
+            }
+
+            ClassifyDependencies(deps, statusByKey, out var open, out var unresolved);
+
+            if (unresolved.Count > 0)
+            {
+                findings.Add(new LintFinding(id, title, domain, type, "unresolved_dependency", "warn",
+                    $"blocked_by references {string.Join(", ", unresolved)} which resolve to no active backlog item — fix the key or remove it."));
+            }
+
+            if (workflow is "ready" or "next" or "in_progress" && open.Count > 0)
+            {
+                findings.Add(new LintFinding(id, title, domain, type, "inconsistent_workflow_state", "warn",
+                    $"status is '{workflow}' but blocked by open dependency {string.Join(", ", open)} — set status=blocked or clear the dependency."));
+            }
+
+            if (workflow == "blocked" && open.Count == 0 && unresolved.Count == 0)
+            {
+                findings.Add(new LintFinding(id, title, domain, type, "satisfied_dependency", "info",
+                    "status is 'blocked' but every dependency is done — this can move to ready/next."));
+            }
+        }
+    }
+
+    // Splits blocked_by keys into open blockers (resolve to a not-done item) and unresolved (resolve to nothing).
+    private static void ClassifyDependencies(
+        JsonElement deps, IReadOnlyDictionary<string, string?> statusByKey, out List<string> open, out List<string> unresolved)
+    {
+        open = new List<string>();
+        unresolved = new List<string>();
+        foreach (var dep in deps.EnumerateArray())
+        {
+            if (dep.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(dep.GetString()))
+            {
+                continue;
+            }
+
+            var key = dep.GetString()!;
+            if (!statusByKey.TryGetValue(key, out var depStatus))
+            {
+                unresolved.Add(key);
+            }
+            else if (!string.Equals(depStatus, "done", StringComparison.Ordinal))
+            {
+                open.Add(key);
+            }
+        }
+    }
+
+    // MEMP-216: payload.blocked_by is the ONE canonical dependency representation; a graph depends_on link on a
+    // backlog item is drift (two sources of truth) — surface it so it can be folded into blocked_by.
+    private static List<LintFinding> DependencyDrift(SqliteConnection connection, LintScope scope)
+    {
+        if (ExcludesBacklog(scope))
+        {
+            return new List<LintFinding>();
+        }
+
+        using var command = connection.CreateCommand();
+        var filters = new List<string>
+        {
+            "n.deleted = 0", "n.status = 'active'", "n.type = 'backlog_item'",
+            "EXISTS (SELECT 1 FROM note_links l WHERE l.from_id = n.id AND l.rel = 'depends_on')",
+        };
+        BindScope(command, filters, "n.", scope with { Types = null });
+        command.CommandText = $"SELECT n.id, n.title, n.domain, n.type FROM notes n WHERE {string.Join(" AND ", filters)} ORDER BY n.domain LIMIT 500;";
+
+        var findings = new List<LintFinding>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            findings.Add(new LintFinding(
+                reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1),
+                reader.GetString(2), reader.GetString(3), "dependency_representation_drift", "warn",
+                "Dependency encoded as a graph depends_on link; payload.blocked_by is canonical (MEMP-216) — move it there and drop the link."));
+        }
+
+        return findings;
+    }
+
+    // A key -> payload.status map over every active backlog item the caller may read, for dependency resolution.
+    private static IReadOnlyDictionary<string, string?> BacklogStatusByKey(SqliteConnection connection, IReadOnlyCollection<string>? restrict)
+    {
+        using var command = connection.CreateCommand();
+        var filters = new List<string> { "deleted = 0", "status = 'active'", "type = 'backlog_item'", "dedup_key IS NOT NULL" };
+        BindScope(command, filters, string.Empty, new LintScope(null, restrict));
+        command.CommandText = $"SELECT dedup_key, json_extract(payload_json, '$.status') FROM notes WHERE {string.Join(" AND ", filters)};";
+
+        var map = new Dictionary<string, string?>(StringComparer.Ordinal);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            map[reader.GetString(0)] = reader.IsDBNull(1) ? null : reader.GetString(1);
+        }
+
+        return map;
+    }
+
+    // True when an explicit type filter is set and excludes backlog_item — the backlog-only rules then skip.
+    private static bool ExcludesBacklog(LintScope scope) =>
+        scope.Types is { Count: > 0 } && !scope.Types.Contains("backlog_item", StringComparer.Ordinal);
+
+    // Appends the optional domain focus, scope restriction, and MEMP-221 narrowing filters (project/types/
+    // noteIds/dedupKeys) to a rule's WHERE clause. <paramref name="prefix"/> is the table alias ("" or "nf.").
+    private static void BindScope(SqliteCommand command, List<string> filters, string prefix, LintScope scope)
+    {
+        if (scope.Domain is not null)
+        {
+            filters.Add($"{prefix}domain = $domain");
+            command.Parameters.AddWithValue("$domain", Identifiers.Normalize(scope.Domain));
+        }
+
+        if (scope.Project is not null)
+        {
+            filters.Add($"{prefix}project = $project");
+            command.Parameters.AddWithValue("$project", Identifiers.Normalize(scope.Project));
+        }
+
+        AppendIn(command, filters, $"{prefix}type", "$ty", scope.Types, Identifiers.Normalize);
+        AppendIn(command, filters, $"{prefix}id", "$nid", scope.NoteIds, value => value);
+        AppendIn(command, filters, $"{prefix}dedup_key", "$dk", scope.DedupKeys, value => value);
+
+        if (scope.RestrictToDomains is null)
+        {
+            return;
+        }
+
+        if (scope.RestrictToDomains.Count == 0)
         {
             filters.Add("0");
             return;
         }
 
-        var placeholders = new List<string>();
-        var index = 0;
-        foreach (var allowed in restrict)
+        AppendIn(command, filters, $"{prefix}domain", "$rd", scope.RestrictToDomains, value => value);
+    }
+
+    // Adds "<column> IN (...)" binding each value (transformed by <paramref name="normalize"/>); no-op if empty.
+    private static void AppendIn(
+        SqliteCommand command, List<string> filters, string column, string paramPrefix,
+        IReadOnlyCollection<string>? values, Func<string, string> normalize)
+    {
+        if (values is null || values.Count == 0)
         {
-            var parameter = $"$rd{index++}";
-            placeholders.Add(parameter);
-            command.Parameters.AddWithValue(parameter, allowed);
+            return;
         }
 
-        filters.Add($"{domainColumn} IN ({string.Join(", ", placeholders)})");
+        var placeholders = new List<string>();
+        var index = 0;
+        foreach (var value in values)
+        {
+            var parameter = $"{paramPrefix}{index++}";
+            placeholders.Add(parameter);
+            command.Parameters.AddWithValue(parameter, normalize(value));
+        }
+
+        filters.Add($"{column} IN ({string.Join(", ", placeholders)})");
     }
 }
+
+/// <summary>Which notes a <see cref="NotesLinter.Lint"/> run scans (MEMP-221): an optional domain focus, the
+/// caller's domain scope, and optional narrowing by project/types/noteIds/dedupKeys.</summary>
+/// <param name="Domain">Focus one domain (optional).</param>
+/// <param name="RestrictToDomains">The caller's readable domains; null = unrestricted, empty = nothing.</param>
+/// <param name="Project">Focus one project (optional).</param>
+/// <param name="Types">Only these note types (optional).</param>
+/// <param name="NoteIds">Only these note ids (optional).</param>
+/// <param name="DedupKeys">Only these dedup keys (optional).</param>
+public sealed record LintScope(
+    string? Domain,
+    IReadOnlyCollection<string>? RestrictToDomains,
+    string? Project = null,
+    IReadOnlyCollection<string>? Types = null,
+    IReadOnlyCollection<string>? NoteIds = null,
+    IReadOnlyCollection<string>? DedupKeys = null);

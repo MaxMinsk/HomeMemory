@@ -37,6 +37,10 @@ public static class NoteFilter
     {
         ["dedupKey"] = "dedup_key", ["sourceAgent"] = "source_agent", ["schemaVer"] = "schema_ver",
         ["createdUtc"] = "created_utc", ["updatedUtc"] = "updated_utc",
+        // MEMP-217: `lifecycleStatus` disambiguates the ENVELOPE status (active/archived) from the workflow
+        // status a typed payload may carry (e.g. backlog_item payload.status ready/blocked/done). Both map here;
+        // use `lifecycleStatus`/`status` for the envelope, `payload.status` for the workflow field.
+        ["lifecycleStatus"] = "status",
     };
 
     private static readonly Regex PayloadKey = new("^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled, TimeSpan.FromSeconds(1));

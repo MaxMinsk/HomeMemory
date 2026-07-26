@@ -17,7 +17,7 @@ public class StdioRoundTripTests
         "notes_graph", "notes_suggest_capture", "notes_get_by_key", "artifacts_find_text",
         "memory_capabilities", "schema_provenance", "domain_manifest", "memory_context", "skill_consolidate_plan",
         "notes_changes", "notes_tags", "notes_upsert_many", "notes_link_many",
-        "notes_saved_search_run", "notes_activity", "notes_patch_many", "notes_adoption",
+        "notes_saved_search_run", "notes_activity", "notes_patch_many", "notes_adoption", "notes_assemble_many",
     };
 
     [Fact]
@@ -67,6 +67,40 @@ public class StdioRoundTripTests
         await AssertProjectAsDomainResolution(client, cts.Token);
         await AssertCrossDomainContext(client, cts.Token);
         await AssertPrompts(client, cts.Token);
+        await AssertAssembleMany(client, cts.Token);
+    }
+
+    // MEMP-218: notes_assemble_many upserts notes AND links them (by batch dedupKey) in one call.
+    private static async Task AssertAssembleMany(McpClient client, CancellationToken ct)
+    {
+        var res = await client.CallToolAsync("notes_assemble_many", new Dictionary<string, object?>
+        {
+            ["items"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["domain"] = "memory-mcp", ["type"] = "backlog_item", ["title"] = "Assemble one",
+                    ["payload"] = new Dictionary<string, object?> { ["key"] = "AM-100", ["status"] = "ready" }, ["dedupKey"] = "AM-100",
+                },
+                new Dictionary<string, object?>
+                {
+                    ["domain"] = "memory-mcp", ["type"] = "backlog_item", ["title"] = "Assemble two",
+                    ["payload"] = new Dictionary<string, object?> { ["key"] = "AM-200", ["status"] = "ready" }, ["dedupKey"] = "AM-200",
+                },
+            },
+            ["links"] = new object[]
+            {
+                new Dictionary<string, object?> { ["from"] = "AM-200", ["to"] = "AM-100", ["rel"] = "relates_to" },
+            },
+        }, cancellationToken: ct);
+
+        Assert.True(res.IsError is not true, "notes_assemble_many reported an error: " + Text(res));
+        Assert.Contains("AM-100", Text(res), StringComparison.Ordinal);
+        var links = await client.CallToolAsync("notes_get_by_key", new Dictionary<string, object?>
+        {
+            ["domain"] = "memory-mcp", ["type"] = "backlog_item", ["dedupKey"] = "AM-200",
+        }, cancellationToken: ct);
+        Assert.True(links.IsError is not true, "notes_get_by_key after assemble_many errored: " + Text(links));
     }
 
     // MEMP-211: the server advertises capability prompts (start-task / end-task) and they render usable text.

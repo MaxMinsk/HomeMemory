@@ -24,6 +24,16 @@ public class NoteFilterTests
     }
 
     [Fact]
+    public void LifecycleStatus_aliases_the_envelope_status_column()
+    {
+        // MEMP-217: lifecycleStatus disambiguates the envelope lifecycle from payload.status (workflow).
+        var compiled = NoteFilter.Compile("lifecycleStatus == 'archived'");
+
+        Assert.Contains("n.status =", compiled.Sql);
+        Assert.Equal("archived", Assert.Single(compiled.Parameters).Value);
+    }
+
+    [Fact]
     public void Compiles_and_or_and_parentheses()
     {
         var compiled = NoteFilter.Compile("status == 'ready' OR (status == 'next' AND payload.sprint == 'S1')");

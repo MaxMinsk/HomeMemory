@@ -127,6 +127,43 @@ public sealed partial class MemoryTools
             return result with { Related = related, Nudge = nudge };
         });
 
+    /// <summary>Upserts many notes AND links among them atomically (all-or-nothing), scope-checked.</summary>
+    [McpServerTool(Name = "notes_assemble_many", Destructive = false, UseStructuredContent = true)]
+    [Description("Author many notes AND the links among them in ONE transaction, all-or-nothing (MEMP-218) — closes the gap where notes_upsert_many had projects but no links and notes_assemble had links but no project. `items` are upserted (each with its own project); `links` are then created, addressing endpoints by a batch item's dedupKey (so new notes link to each other immediately) OR by an existing note id. Every payload is validated and every relation/endpoint resolved before anything is written; an invalid item or unresolvable endpoint aborts the whole batch. Returns per-item results + link tallies. Max 100 items / 100 links.")]
+    public AssembleManyResult NotesAssembleMany(
+        [Description("Notes to upsert: each {domain, type, title?, body?, payload?, tags?, dedupKey?, project?, expectedRevision?}")] UpsertItem[] items,
+        [Description("Links among them: each {from, to, rel}. `from`/`to` = a batch item's dedupKey OR an existing note id; rel is active-voice lower_snake_case.")] AssembleManyLink[]? links = null,
+        [Description("Who is writing (provenance)")] string? sourceAgent = null)
+        => Translate(() =>
+        {
+            var itemList = items ?? Array.Empty<UpsertItem>();
+            foreach (var item in itemList)
+            {
+                _authz.AuthorizeWrite(item.Domain);
+            }
+
+            // Endpoints that name a batch item (by dedupKey) are authorized via that item's domain above;
+            // any other endpoint must be an existing note id — authorize it directly.
+            var batchKeys = new HashSet<string>(itemList.Where(item => item.DedupKey is not null).Select(item => item.DedupKey!), StringComparer.Ordinal);
+            var linkList = links ?? Array.Empty<AssembleManyLink>();
+            foreach (var link in linkList)
+            {
+                if (!batchKeys.Contains(link.From))
+                {
+                    AuthorizeNote(link.From);
+                }
+
+                if (!batchKeys.Contains(link.To))
+                {
+                    AuthorizeNote(link.To);
+                }
+            }
+
+            var inputs = itemList.Select(item => new NoteUpsertInput(item.Domain, item.Type, item.Title, item.Body,
+                JsonArg(item.Payload), JsonArg(item.Tags), item.DedupKey, item.Project, item.ExpectedRevision)).ToList();
+            return _notes.AssembleMany(inputs, linkList, sourceAgent ?? "mcp");
+        });
+
     /// <summary>Appends a schema-less free-text journal note (capture-first) and returns its envelope.</summary>
     [McpServerTool(Name = "notes_append_journal", Destructive = false, UseStructuredContent = true)]
     [Description("Append a schema-less free-text journal note (capture-first; structure it later). A title is derived from the first line if you omit one, a stable dedupKey is assigned, and the note is tagged 'unstructured' so it can be found for later structuring. Returns the created note's envelope (id, derived title, assigned dedupKey, typed tags) so you needn't follow up with a get.")]

@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.62.0
+
+Sprint 55 — Authoring workflow: semantic integrity + composable API. Acts on the TRD-131-134 authoring-workflow
+review: the schema and write-safety primitives are strong, but the JSON schema can't catch contradictions, and
+authoring a set of linked tasks took ~10 operations. (The review's context-efficiency half already shipped in 0.61.0.)
+
+- **Semantic lint (MEMP-215)**: `notes_lint` gains cross-field rules for backlog items the schema can't express —
+  `inconsistent_workflow_state` (status ready/next/in_progress while blocked by an OPEN dependency),
+  `unresolved_dependency` (a `blocked_by` key resolving to no active item), and `satisfied_dependency` (status
+  blocked but every dependency done). Dependency keys resolve across the caller's whole readable scope.
+- **Canonical dependencies (MEMP-216)**: decided — `payload.blocked_by` is the ONE source of truth for task
+  dependencies; the graph `depends_on` relation is not used for them. New lint `dependency_representation_drift`
+  flags a backlog item that still carries a `depends_on` graph link. (Decision recorded in memory.)
+- **lifecycle vs workflow status (MEMP-217)**: the envelope `status` (active/archived = lifecycle) is easy to
+  confuse with a typed note's `payload.status` (e.g. backlog ready/blocked/done). Added a filter-DSL alias
+  `lifecycleStatus` for the envelope field and spelled the distinction out in the search filter description.
+- **notes_lint scoping (MEMP-221)**: lint can now be narrowed by `project`, `types`, `noteIds` and `dedupKeys`
+  (not just domain) — so an agent can lint exactly the notes it just wrote.
+- **notes_assemble_many (MEMP-218)**: author many notes AND the links among them in ONE all-or-nothing
+  transaction — closing the gap where `notes_upsert_many` had projects but no links and `notes_assemble` had
+  links but no project. Link endpoints are addressed by a batch item's dedupKey (so new notes link to each
+  other immediately) or by an existing note id. Max 100 items / 100 links.
+
+No schema change (migrations through **0017**). 375 tests. Follow-up MEMP-228 (corpus hygiene sweep) migrates
+existing notes to these conventions once the cluster ships.
+
 ## 0.61.0
 
 Sprint 54 — Context economy. A plain `memory_context` was returning ~8-10K tokens (every recall hit carried

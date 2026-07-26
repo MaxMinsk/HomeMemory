@@ -53,6 +53,10 @@ public sealed class NotesRepository
         IReadOnlyList<AssembleLink>? links, string? sourceAgent)
         => _writer.Assemble(domain, type, title, body, payloadJson, tagsJson, dedupKey, links, sourceAgent);
 
+    /// <inheritdoc cref="NotesWriter.AssembleMany"/>
+    public AssembleManyResult AssembleMany(IReadOnlyList<NoteUpsertInput> inputs, IReadOnlyList<AssembleManyLink> links, string? sourceAgent)
+        => _writer.AssembleMany(inputs, links, sourceAgent);
+
     /// <inheritdoc cref="NotesWriter.Archive"/>
     public bool Archive(string id) => _writer.Archive(id);
 
