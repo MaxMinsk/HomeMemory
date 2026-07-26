@@ -58,4 +58,27 @@ public class AdoptionReportTests
 
         Assert.Equal("busy", report.Agents[0].Agent); // 2 writes ranks above 1
     }
+
+    [Fact]
+    public void Reports_which_projects_each_agent_wrote_to()
+    {
+        using var temp = new TempDatabase();
+        var factory = new SqliteConnectionFactory(temp.FilePath);
+        new Migrator(factory, SchemaMigrations.All).Migrate();
+        var repo = new NotesRepository(factory, SchemaRegistry.FromEmbeddedResources());
+
+        // 'dev' writes twice to project memory-mcp and once to unity-solitaire; a kitchen note has no project.
+        repo.Upsert("development", "fact", "a", "b", """{ "statement": "1" }""", null, "a", "dev", "memory-mcp");
+        repo.Upsert("development", "fact", "b", "b", """{ "statement": "2" }""", null, "b", "dev", "memory-mcp");
+        repo.Upsert("development", "fact", "c", "b", """{ "statement": "3" }""", null, "c", "dev", "unity-solitaire");
+        repo.Upsert("kitchen", "fact", "k", "b", """{ "statement": "4" }""", null, "k", "dev");
+
+        var dev = Assert.Single(repo.Adoption(null).Agents, a => a.Agent == "dev");
+
+        Assert.NotNull(dev.Projects);
+        Assert.Equal("memory-mcp", dev.Projects![0].Name);   // heaviest workspace first
+        Assert.Equal(2, dev.Projects[0].Writes);
+        Assert.Contains(dev.Projects, p => p.Name == "unity-solitaire" && p.Writes == 1);
+        Assert.Contains(dev.Projects, p => p.Name == "kitchen" && p.Writes == 1); // no project -> domain shown
+    }
 }

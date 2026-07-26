@@ -12,11 +12,21 @@ namespace MemoryMcp.Core.Notes;
 /// <param name="Creates">New-note writes.</param>
 /// <param name="Updates">Whole-note upsert updates.</param>
 /// <param name="Patches">Partial (notes_patch) updates.</param>
-public sealed record AgentAdoption(string Agent, long Reads, long Writes, long Creates, long Updates, long Patches)
+/// <param name="Projects">The workspaces this agent wrote to (project, or the domain when a note has no project),
+/// heaviest first — so it's obvious WHAT the agent worked on, not just how much (MEMP-229).</param>
+public sealed record AgentAdoption(
+    string Agent, long Reads, long Writes, long Creates, long Updates, long Patches,
+    IReadOnlyList<AgentWorkspace>? Projects = null)
 {
     /// <summary>True when the agent wrote but has no recorded reads — the "writes without reading" signal.</summary>
     public bool WritesWithoutReading => Writes > 0 && Reads == 0;
 }
+
+/// <summary>One workspace an agent wrote to (MEMP-229): a project slug, or the domain when the note has no
+/// project, with how many write events landed there.</summary>
+/// <param name="Name">The project slug (or domain when the note carries no project).</param>
+/// <param name="Writes">Write events this agent made in that workspace.</param>
+public sealed record AgentWorkspace(string Name, long Writes);
 
 /// <summary>
 /// The memory-adoption report (MEMP-207): one <see cref="AgentAdoption"/> row per agent, plus rollup totals.

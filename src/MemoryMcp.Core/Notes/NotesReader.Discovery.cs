@@ -183,18 +183,56 @@ public sealed partial class NotesReader
             }
         }
 
+        var projectsByAgent = WritesByWorkspace(connection, restrictToDomains);
         var agents = new HashSet<string>(writes.Keys, StringComparer.Ordinal);
         agents.UnionWith(reads.Keys);
         var rows = agents.Select(agent =>
             {
                 writes.TryGetValue(agent, out var w);
                 reads.TryGetValue(agent, out var r);
-                return new AgentAdoption(agent, r, w.Writes, w.Creates, w.Updates, w.Patches);
+                projectsByAgent.TryGetValue(agent, out var projects);
+                return new AgentAdoption(agent, r, w.Writes, w.Creates, w.Updates, w.Patches, projects);
             })
             .OrderByDescending(row => row.Writes).ThenByDescending(row => row.Reads).ThenBy(row => row.Agent, StringComparer.Ordinal)
             .ToList();
 
         return new AdoptionReport(rows, rows.Sum(row => row.Reads), rows.Sum(row => row.Writes));
+    }
+
+    // MEMP-229: per-agent write breakdown by workspace (envelope project, or the domain when a note has no
+    // project), heaviest first (top N) — so the adoption view shows WHICH project each agent worked on.
+    private static Dictionary<string, IReadOnlyList<AgentWorkspace>> WritesByWorkspace(
+        SqliteConnection connection, IReadOnlyCollection<string>? restrictToDomains, int topN = 3)
+    {
+        var byAgent = new Dictionary<string, List<AgentWorkspace>>(StringComparer.Ordinal);
+        using (var command = connection.CreateCommand())
+        {
+            var filters = new List<string> { "n.deleted = 0" };
+            AppendScopeIn(command, filters, "n.domain", restrictToDomains);
+            command.CommandText =
+                "SELECT COALESCE(e.actor, '(unknown)') AS agent, COALESCE(n.project, n.domain) AS ws, count(*) AS n " +
+                "FROM note_events e JOIN notes n ON n.id = e.note_id " +
+                $"WHERE {string.Join(" AND ", filters)} GROUP BY agent, ws;";
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                var agent = reader.GetString(0);
+                if (!byAgent.TryGetValue(agent, out var list))
+                {
+                    list = new List<AgentWorkspace>();
+                    byAgent[agent] = list;
+                }
+
+                list.Add(new AgentWorkspace(reader.IsDBNull(1) ? "(none)" : reader.GetString(1), reader.GetInt64(2)));
+            }
+        }
+
+        return byAgent.ToDictionary(
+            pair => pair.Key,
+            pair => (IReadOnlyList<AgentWorkspace>)pair.Value
+                .OrderByDescending(workspace => workspace.Writes).ThenBy(workspace => workspace.Name, StringComparer.Ordinal)
+                .Take(topN).ToList(),
+            StringComparer.Ordinal);
     }
 
     /// <summary>Returns distinct tags across live notes with their counts (facet discovery), most-used first.</summary>

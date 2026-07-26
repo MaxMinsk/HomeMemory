@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.65.0
+
+Sprint 58 — Viewer improvements from owner field use.
+
+- **Inbox → detail panel (MEMP-230)**: the Inbox review queue (open evolution suggestions + lint findings) now
+  renders into the RIGHT detail panel, like Adoption/Activity — instead of the left results list, where it was
+  easy to miss and looked like "nothing happened." (Verified earlier: the button and endpoints always worked;
+  this is purely placement.)
+- **Adoption shows each agent's project(s) (MEMP-229)**: `notes_adoption` now returns, per agent, the
+  workspace(s) it wrote to — the envelope `project`, or the note's domain when it has none — heaviest first
+  (top 3). The viewer's Adoption panel shows a new "project(s)" column, so it's obvious WHAT an agent worked on,
+  not just how much. (The near-duplicate agent labels themselves — e.g. `claude-code` vs `Claude Code` — are
+  a caller-side identity issue; the project column disambiguates what each did.)
+
+No schema change (migrations through **0017**). 383 tests.
+
 ## 0.64.1
 
 Hotfix — restore the add-on image build (broken since 0.60.0). The server csproj embeds the onboarding kit

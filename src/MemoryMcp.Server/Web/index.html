@@ -265,7 +265,7 @@ const RULE_LABEL = { no_tags:'No tags', no_dedup_key:'No dedup key', no_title:'N
 // Memory inbox: open evolution suggestions to review, then lint findings grouped by rule. Each row opens the note.
 async function inbox() {
   const dom = $('#domain').value;
-  const list = $('#list');
+  const det = $('#detail'); // MEMP-230: render into the right detail panel, like Adoption/Activity
   try {
     const sp = new URLSearchParams(); sp.set('type','memory_evolution_suggestion'); sp.set('filter', "payload.status == 'open'");
     if (dom) sp.set('domain', dom);
@@ -274,7 +274,6 @@ async function inbox() {
       ? `<div class="grouphdr">suggestions to review · ${sug.items.length}</div>` + sug.items.map(itemHtml).join('') : '';
 
     const findings = await api('/api/lint' + (dom ? '?domain=' + encodeURIComponent(dom) : ''));
-    const more = $('#more'); if (more) more.remove();
     const groups = {};
     for (const f of findings) (groups[f.rule] = groups[f.rule] || []).push(f);
     const lintHtml = Object.keys(groups).sort().map(rule => {
@@ -284,8 +283,10 @@ async function inbox() {
       return `<div class="grouphdr">${esc(RULE_LABEL[rule]||rule)} · ${groups[rule].length}</div>${rows}`;
     }).join('');
 
-    list.innerHTML = (sugHtml + lintHtml) || '<div class="empty">Inbox clear — nothing to review.</div>';
-  } catch(e){ list.innerHTML = '<div class="empty">'+esc(e.message)+'</div>'; }
+    det.dataset.sel = '';
+    const body = (sugHtml + lintHtml) || '<div class="empty">Inbox clear — nothing to review.</div>';
+    det.innerHTML = `<h2>Inbox &middot; review queue${dom ? ' · '+esc(dom) : ''}</h2>` + body;
+  } catch(e){ det.innerHTML = '<div class="empty">'+esc(e.message)+'</div>'; }
 }
 
 // Saved searches (MEMP-185/187): list saved_search notes; click one to load its params and run it.
@@ -342,11 +343,13 @@ async function adoption() {
   try {
     const a = await api('/api/adoption');
     const flag = g => g.writesWithoutReading ? ' <span style="color:#e0a0b0">(writes without reading)</span>' : '';
-    const rows = (a.agents||[]).map(g=>`<tr><td>${esc(g.agent)}${flag(g)}</td><td style="text-align:right">${g.reads}</td><td style="text-align:right">${g.writes}</td><td style="text-align:right" title="create/update/patch">${g.creates}/${g.updates}/${g.patches}</td></tr>`).join('') || '<tr><td class="k" colspan="4">none</td></tr>';
+    // MEMP-229: show which project(s)/workspace(s) each agent wrote to, so it's obvious what they worked on.
+    const proj = g => (g.projects||[]).map(p=>`${esc(p.name)} <span class="k">(${p.writes})</span>`).join(', ') || '<span class="k">—</span>';
+    const rows = (a.agents||[]).map(g=>`<tr><td>${esc(g.agent)}${flag(g)}</td><td>${proj(g)}</td><td style="text-align:right">${g.reads}</td><td style="text-align:right">${g.writes}</td><td style="text-align:right" title="create/update/patch">${g.creates}/${g.updates}/${g.patches}</td></tr>`).join('') || '<tr><td class="k" colspan="5">none</td></tr>';
     det.dataset.sel = '';
     det.innerHTML = `<h2>Adoption &middot; per agent</h2>` +
-      `<p class="k">${a.totalReads} read(s) vs ${a.totalWrites} write(s). Reads are counted only when an agent passes sourceAgent on recall/search.</p>` +
-      `<table class="kv"><tr><td class="k">agent</td><td class="k" style="text-align:right">reads</td><td class="k" style="text-align:right">writes</td><td class="k" style="text-align:right">c/u/p</td></tr>${rows}</table>`;
+      `<p class="k">${a.totalReads} read(s) vs ${a.totalWrites} write(s). Reads are counted only when an agent passes sourceAgent on recall/search. Project = envelope project, or the domain when a note has none.</p>` +
+      `<table class="kv"><tr><td class="k">agent</td><td class="k">project(s)</td><td class="k" style="text-align:right">reads</td><td class="k" style="text-align:right">writes</td><td class="k" style="text-align:right">c/u/p</td></tr>${rows}</table>`;
   } catch(e){ det.innerHTML = '<div class="empty">'+esc(e.message)+'</div>'; }
 }
 
