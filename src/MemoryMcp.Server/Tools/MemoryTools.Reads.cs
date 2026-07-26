@@ -344,13 +344,16 @@ public sealed partial class MemoryTools
         _schemas.All.Select(definition => $"{definition.Type}@{definition.Version}")
             .OrderBy(value => value, StringComparer.Ordinal).ToArray();
 
-    /// <summary>Returns the JSON Schema for a type at a specific version, or the latest.</summary>
-    [McpServerTool(Name = "schema_get", ReadOnly = true, OpenWorld = false)]
-    [Description("Get the JSON Schema document for a type. Omit version for the latest; pass a version to fetch that exact one. Null if unknown.")]
-    public string? SchemaGet(
+    /// <summary>Returns the JSON Schema for a type at a specific version, or the latest, as structured output.</summary>
+    [McpServerTool(Name = "schema_get", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("Get a type's JSON Schema as STRUCTURED output (MEMP-222): {type, version, found, schema} — `schema` is the JSON Schema document as a string. Omit version for the latest; pass a version to fetch that exact one. found=false (schema null) when the type/version is unknown, instead of a bare null that strict clients can't read.")]
+    public SchemaDocument SchemaGet(
         [Description("Note type, e.g. backlog_item")] string type,
-        [Description("Specific schema version (optional; default latest)")] int? version = null) =>
-        (version.HasValue ? _schemas.Get(type, version.Value) : _schemas.GetLatest(type))?.Json;
+        [Description("Specific schema version (optional; default latest)")] int? version = null)
+    {
+        var definition = version.HasValue ? _schemas.Get(type, version.Value) : _schemas.GetLatest(type);
+        return new SchemaDocument(type, definition?.Version, definition is not null, definition?.Json);
+    }
 
     /// <summary>Lists schema authoring provenance (who registered each type@version, and when).</summary>
     [McpServerTool(Name = "schema_provenance", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]

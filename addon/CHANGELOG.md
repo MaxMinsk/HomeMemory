@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.64.0
+
+Sprint 57 — Provenance & polish (closing the TRD-131-134 authoring review).
+
+- **Structured schema_get (MEMP-222)**: `schema_get` now returns structured output — `{type, version, found,
+  schema}` (the JSON Schema as a string) with an explicit `found` flag — instead of a bare JSON-string-or-null,
+  so strict MCP clients get a typed result and an unambiguous miss. (Behavior change: the schema text is now
+  under `schema`.)
+- **Authoring docs reconciliation (MEMP-227)** — shipped in shared memory, not this image: the commons
+  `memory-authoring` skill (v2) corrects "one project = one domain" to the real multi-project model (a domain
+  hosts many projects via the `project` sub-axis; operator manual is canonical), and adds the envelope-lifecycle
+  vs payload-workflow `status` distinction, exact-key lookup, `notes_assemble_many`, and lean-recall guidance.
+
+Deferred: MEMP-226 (session/token source-agent identity — near-no-op on the env root token prod uses), MEMP-224
+(rule relevance — needs an always_apply-semantics decision). No schema change (migrations through **0017**). 382 tests.
+
 ## 0.63.0
 
 Sprint 56 — Composable authoring finish + retrieval knobs. The clean, additive remainder of the TRD-131-134

@@ -69,6 +69,20 @@ public class StdioRoundTripTests
         await AssertCrossDomainContext(client, cts.Token);
         await AssertPrompts(client, cts.Token);
         await AssertAssembleMany(client, cts.Token);
+        await AssertSchemaGetStructured(client, cts.Token);
+    }
+
+    // MEMP-222: schema_get returns structured output with an explicit found flag (not a bare string/null).
+    private static async Task AssertSchemaGetStructured(McpClient client, CancellationToken ct)
+    {
+        var hit = Text(await client.CallToolAsync("schema_get", new Dictionary<string, object?> { ["type"] = "backlog_item" }, cancellationToken: ct))
+            .Replace(" ", string.Empty);
+        Assert.Contains("\"found\":true", hit, StringComparison.Ordinal);
+        Assert.Contains("backlog_item", hit, StringComparison.Ordinal);
+
+        var miss = Text(await client.CallToolAsync("schema_get", new Dictionary<string, object?> { ["type"] = "no_such_type" }, cancellationToken: ct))
+            .Replace(" ", string.Empty);
+        Assert.Contains("\"found\":false", miss, StringComparison.Ordinal);
     }
 
     // MEMP-218: notes_assemble_many upserts notes AND links them (by batch dedupKey) in one call.

@@ -9,6 +9,14 @@ namespace MemoryMcp.Core.Schemas;
 /// <param name="Compiled">The compiled schema used for validation.</param>
 public sealed record SchemaDefinition(string Type, int Version, string Json, JsonSchema Compiled);
 
+/// <summary>Structured result of <c>schema_get</c> (MEMP-222): a type's schema with an explicit found flag,
+/// so a strict client gets a typed object instead of a bare JSON-string-or-null.</summary>
+/// <param name="Type">The requested note type.</param>
+/// <param name="Version">The resolved schema version, or null when not found.</param>
+/// <param name="Found">True when a schema resolved.</param>
+/// <param name="Schema">The JSON Schema document as a string, or null when not found.</param>
+public sealed record SchemaDocument(string Type, int? Version, bool Found, string? Schema);
+
 /// <summary>Audit provenance for a registered schema (MEMP-122): who registered it and when.</summary>
 /// <param name="Type">The note type, e.g. <c>recipe</c>.</param>
 /// <param name="Version">The schema version.</param>
