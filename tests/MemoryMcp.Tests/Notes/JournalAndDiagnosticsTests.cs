@@ -73,6 +73,31 @@ public class JournalAndDiagnosticsTests
     }
 
     [Fact]
+    public void Diagnostics_note_counts_honor_the_callers_scope()
+    {
+        // MEMP-232: status/domains_list used to expose the whole corpus's shape (which domains exist and how
+        // big they are) to a domain-scoped token, while search correctly hid it.
+        using var temp = new TempDatabase();
+        var factory = new SqliteConnectionFactory(temp.FilePath);
+        new Migrator(factory, SchemaMigrations.All).Migrate();
+        var registry = SchemaRegistry.FromEmbeddedResources();
+        var notes = new NotesRepository(factory, registry);
+        notes.Upsert("kitchen", "backlog_item", "K", null, """{ "key": "KIT-300", "status": "ready" }""", null, "KIT-300", "me");
+        notes.Upsert("work", "backlog_item", "W", null, """{ "key": "WORK-300", "status": "ready" }""", null, "WORK-300", "me");
+        var diagnostics = new DiagnosticsService(factory, registry);
+
+        var scoped = diagnostics.Snapshot(new[] { "kitchen" });
+
+        Assert.Equal(1, scoped.NoteCount);
+        Assert.Equal(new[] { "kitchen" }, scoped.NotesByDomain.Keys);
+        Assert.Equal(1, scoped.NotesByType["backlog_item"]);
+        Assert.Equal(1, scoped.NotesByStatus["active"]);
+
+        Assert.Equal(2, diagnostics.Snapshot().NoteCount);                          // unrestricted still sees both
+        Assert.Empty(diagnostics.Snapshot(Array.Empty<string>()).NotesByDomain);    // empty scope sees nothing
+    }
+
+    [Fact]
     public void Diagnostics_counts_attachments_and_blob_bytes()
     {
         using var temp = new TempDatabase();

@@ -235,9 +235,6 @@ public sealed partial class NotesReader
             StringComparer.Ordinal);
     }
 
-    /// <summary>Returns distinct tags across live notes with their counts (facet discovery), most-used first.</summary>
-    public IReadOnlyDictionary<string, long> TagCounts() => TagFacets(null, null);
-
     /// <summary>
     /// Distinct tags with their counts across active notes (facet discovery, most-used first), scope-restricted and
     /// optionally limited to one domain (MEMP-165).
@@ -290,18 +287,21 @@ public sealed partial class NotesReader
     /// <param name="maxNeighbors">Cap on returned linked neighbors so a hub note can't flood the block (MEMP-214).</param>
     /// <param name="types">When set, restrict recall hits to these note types (MEMP-223).</param>
     /// <param name="noRelax">When true, forbid the AND->any-term auto-relaxation, so a precise query never widens to noisy partials (MEMP-223).</param>
+    /// <param name="tags">When set, restrict recall hits to notes carrying EVERY one of these tags (MEMP-234) — the facet
+    /// discovered via <see cref="TagFacets"/> is usable here, instead of degrading into free-text tokens.</param>
     public RecallResult Recall(
         string? query, string? domain, int limit, IReadOnlyCollection<string>? restrictToDomains,
         bool includeLinks = true, int maxHops = 1, int? budgetChars = null, bool explain = false,
         string? project = null, bool projectOnly = false, bool diverseByDomain = false,
         bool includePayload = false, int maxNeighbors = DefaultMaxNeighbors,
-        IReadOnlyCollection<string>? types = null, bool noRelax = false)
+        IReadOnlyCollection<string>? types = null, bool noRelax = false,
+        IReadOnlyCollection<string>? tags = null)
     {
         // Recall ranks for usefulness, not lexical purity: hybrid relevance is the default here (MEMP-174). When a
         // budget is set (or we interleave by domain), fetch a fuller page so packing/fairness has candidates to pick from.
         var fetch = budgetChars is int || diverseByDomain ? Math.Clamp(limit * 4, limit, MaxLimit) : limit;
         var typeFilter = TypeInFilter(types); // MEMP-223: restrict hits to these types via the DSL
-        var page = Search(query, domain, null, null, "active", fetch, 0, restrictToDomains, typeFilter, includePayload: true, rank: "hybrid", explain: explain,
+        var page = Search(query, domain, null, tags, "active", fetch, 0, restrictToDomains, typeFilter, includePayload: true, rank: "hybrid", explain: explain,
             match: noRelax ? "all" : null, boostProject: project, projectEquals: projectOnly ? project : null);
         var ranked = diverseByDomain ? InterleaveByDomain(page.Items) : page.Items;
         var (packed, budget, used, dropped) = PackToBudget(ranked, limit, budgetChars);

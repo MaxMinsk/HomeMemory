@@ -87,8 +87,9 @@ public sealed class NotesRepository
         bool includeLinks = true, int maxHops = 1, int? budgetChars = null, bool explain = false,
         string? project = null, bool projectOnly = false, bool diverseByDomain = false,
         bool includePayload = false, int maxNeighbors = NotesReader.DefaultMaxNeighbors,
-        IReadOnlyCollection<string>? types = null, bool noRelax = false)
-        => _reader.Recall(query, domain, limit, restrictToDomains, includeLinks, maxHops, budgetChars, explain, project, projectOnly, diverseByDomain, includePayload, maxNeighbors, types, noRelax);
+        IReadOnlyCollection<string>? types = null, bool noRelax = false,
+        IReadOnlyCollection<string>? tags = null)
+        => _reader.Recall(query, domain, limit, restrictToDomains, includeLinks, maxHops, budgetChars, explain, project, projectOnly, diverseByDomain, includePayload, maxNeighbors, types, noRelax, tags);
 
     /// <inheritdoc cref="NotesReader.Related"/>
     public IReadOnlyList<RelatedNote> Related(string id, int limit, IReadOnlyCollection<string>? restrictToDomains)
@@ -111,9 +112,6 @@ public sealed class NotesRepository
 
     /// <inheritdoc cref="NotesReader.Adoption"/>
     public AdoptionReport Adoption(IReadOnlyCollection<string>? restrictToDomains) => _reader.Adoption(restrictToDomains);
-
-    /// <inheritdoc cref="NotesReader.TagCounts"/>
-    public IReadOnlyDictionary<string, long> TagCounts() => _reader.TagCounts();
 
     /// <inheritdoc cref="NotesReader.TagFacets"/>
     public IReadOnlyDictionary<string, long> TagFacets(string? domain, IReadOnlyCollection<string>? restrictToDomains)

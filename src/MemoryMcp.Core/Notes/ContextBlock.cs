@@ -26,12 +26,14 @@ public sealed record ContextBlock(
 /// <param name="IncludeSkills">Include the skills section (default true).</param>
 /// <param name="NoRelax">Forbid the AND->any-term auto-relaxation of the recall query (default false).</param>
 /// <param name="MaxNeighbors">Cap on linked neighbors in the recall (default <see cref="NotesReader.DefaultMaxNeighbors"/>).</param>
+/// <param name="Tags">Restrict recall hits to notes carrying every one of these tags (MEMP-234; null = no tag filter).</param>
 public sealed record ContextOptions(
     IReadOnlyCollection<string>? Types = null,
     bool IncludeRules = true,
     bool IncludeSkills = true,
     bool NoRelax = false,
-    int MaxNeighbors = NotesReader.DefaultMaxNeighbors)
+    int MaxNeighbors = NotesReader.DefaultMaxNeighbors,
+    IReadOnlyCollection<string>? Tags = null)
 {
     /// <summary>The default knobs (everything included, no type filter, auto-relax on).</summary>
     public static readonly ContextOptions Default = new();

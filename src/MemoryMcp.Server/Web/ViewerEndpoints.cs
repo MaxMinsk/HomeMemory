@@ -31,7 +31,8 @@ internal static class ViewerEndpoints
         app.MapGet("/ui", () => Results.Content(IndexHtml(), "text/html; charset=utf-8"));
         app.MapHealth();
 
-        app.MapGet("/api/stats", (DiagnosticsService diagnostics) => Results.Json(diagnostics.Snapshot()));
+        app.MapGet("/api/stats", (DiagnosticsService diagnostics, RequestAuthorizer authz) =>
+            Results.Json(diagnostics.Snapshot(authz.ReadRestriction(null))));
         app.MapLint();
         app.MapSuggestionActions();
         app.MapAdminActions();

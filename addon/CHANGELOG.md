@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.68.0
+
+Sprint 61 — Scope-aware discovery (MEMP-232, MEMP-233, MEMP-234). Found in the field: a domain-scoped agent
+listed tags, reported "74 notes on feature:mining-rush", then retrieved none of them and said so. The agent was
+right — the discovery tools ignored the caller's scope while search honored it, so they advertised a corpus the
+token could not read.
+
+- **`tags_list`, `domains_list` and `status` now honor the caller's scope.** `tags_list` was calling the tag
+  facets with both the domain filter AND the auth restriction hardcoded to null; it is now an alias of
+  `notes_tags` and takes an optional `domain`. `domains_list` and the `status` note counts (`noteCount`,
+  `notesByType`, `notesByDomain`, `notesByStatus`) are filtered to the domains the token may read; storage and
+  operations figures (attachments, blob bytes, database size, pending confirmations) stay server-wide. The
+  unscoped `TagCounts()` primitive is deleted, so the unsafe path cannot be called again.
+- **The web viewer's `GET /api/stats` had the same hole** and is now scope-filtered like the sibling
+  `/api/tags` already was.
+- **A guard test covers the whole read surface, not the three tools that were broken.** It starts the server
+  with a single-domain token, enumerates every tool advertised with `readOnlyHint`, calls each one, and fails if
+  any response carries content from an out-of-scope domain. A tool added later is covered as soon as it appears
+  in `tools/list`.
+- **`notes_recall` and `memory_context` take a `tags` filter** (`query` is now optional, so a tag-only recall
+  works). Previously only `notes_search` accepted tags, so a discovered facet could only be pasted into the
+  query text — where the tokenizer splits `feature:mining-rush` into three words and matches them against prose
+  instead of the facet.
+- `memory_capabilities.contractVersion` -> **2**: an agent has to be able to detect that tag-recall exists.
+
+No schema change (migrations through **0017**). 392 tests.
+
 ## 0.67.0
 
 Sprint 60 — Dependency-drift lint reframed (MEMP-231), after the MEMP-228 corpus sweep found that

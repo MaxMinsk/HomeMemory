@@ -11,7 +11,9 @@ namespace MemoryMcp.Core.Diagnostics;
 public sealed class DiagnosticsService
 {
     // Bumped when the runtime tool contract changes in a way agents should detect (memory_capabilities).
-    private const int ContractVersion = 1;
+    // 2 (MEMP-232/234): discovery tools are scope-restricted, and notes_recall/memory_context take a `tags`
+    // filter (with `query` now optional) — an agent has to know whether tag-recall is available before using it.
+    private const int ContractVersion = 2;
     private const string SearchBackendDescription = "fts5-bm25 (lexical; no vectors)";
     private const string SkillsHint =
         "Read the 'commons' domain first (skills: memory-authoring, agent-memory-use, tag-unification) before authoring notes.";
@@ -36,18 +38,25 @@ public sealed class DiagnosticsService
         _blobs = blobs;
     }
 
-    /// <summary>Reads a fresh status snapshot (health + a breakdown of what is stored).</summary>
-    public StatusReport Snapshot()
+    /// <summary>
+    /// Reads a fresh status snapshot (health + a breakdown of what is stored). The NOTE counts
+    /// (<c>noteCount</c>, <c>notesByType</c>, <c>notesByDomain</c>, <c>notesByStatus</c>) honour
+    /// <paramref name="restrictToDomains"/>, so a domain-scoped caller cannot read the shape of domains it
+    /// may not search (MEMP-232). Storage and operations figures (attachments, blob bytes, database size,
+    /// pending confirmations) are server-wide by nature and are reported unscoped.
+    /// </summary>
+    /// <param name="restrictToDomains">Auth scope; null = unrestricted, empty = nothing visible.</param>
+    public StatusReport Snapshot(IReadOnlyCollection<string>? restrictToDomains = null)
     {
         using var connection = _connectionFactory.Create();
 
         var schemaVersion = Convert.ToInt32(Scalar(connection, "PRAGMA user_version;"));
         // Default-visible counts mirror the default search (active only); archived/superseded are split out in notesByStatus.
-        var noteCount = Convert.ToInt64(Scalar(connection, "SELECT count(*) FROM notes WHERE deleted = 0 AND status = 'active';"));
+        var noteCount = CountNotes(connection, activeOnly: true, restrictToDomains);
         var attachmentCount = Convert.ToInt64(Scalar(connection, "SELECT count(*) FROM attachments;"));
-        var notesByType = CountBy(connection, "type", activeOnly: true);
-        var notesByDomain = CountBy(connection, "domain", activeOnly: true);
-        var notesByStatus = CountBy(connection, "status", activeOnly: false);
+        var notesByType = CountBy(connection, "type", activeOnly: true, restrictToDomains);
+        var notesByDomain = CountBy(connection, "domain", activeOnly: true, restrictToDomains);
+        var notesByStatus = CountBy(connection, "status", activeOnly: false, restrictToDomains);
         var pending = Convert.ToInt64(Scalar(connection, "SELECT count(*) FROM pending_actions WHERE status = 'pending';"));
 
         var schemas = _registry.All
@@ -107,11 +116,13 @@ public sealed class DiagnosticsService
     private static long SidecarBytes(string path) => File.Exists(path) ? new FileInfo(path).Length : 0;
 
     // column is a fixed identifier ("type"/"domain"/"status"), never user input — safe to interpolate.
-    private static IReadOnlyDictionary<string, long> CountBy(SqliteConnection connection, string column, bool activeOnly)
+    private static IReadOnlyDictionary<string, long> CountBy(
+        SqliteConnection connection, string column, bool activeOnly, IReadOnlyCollection<string>? restrictToDomains)
     {
-        var statusFilter = activeOnly ? " AND status = 'active'" : string.Empty;
         using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT {column}, count(*) FROM notes WHERE deleted = 0{statusFilter} GROUP BY {column} ORDER BY {column};";
+        command.CommandText =
+            $"SELECT {column}, count(*) FROM notes WHERE {NoteFilters(command, activeOnly, restrictToDomains)} " +
+            $"GROUP BY {column} ORDER BY {column};";
         var counts = new Dictionary<string, long>(StringComparer.Ordinal);
         using var reader = command.ExecuteReader();
         while (reader.Read())
@@ -120,6 +131,44 @@ public sealed class DiagnosticsService
         }
 
         return counts;
+    }
+
+    private static long CountNotes(SqliteConnection connection, bool activeOnly, IReadOnlyCollection<string>? restrictToDomains)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT count(*) FROM notes WHERE {NoteFilters(command, activeOnly, restrictToDomains)};";
+        return Convert.ToInt64(command.ExecuteScalar());
+    }
+
+    // Shared WHERE body for the note counts: live rows, optionally active-only, bounded by the caller's scope.
+    // An empty restriction means "no domain is visible" and must count nothing rather than everything (MEMP-232).
+    private static string NoteFilters(SqliteCommand command, bool activeOnly, IReadOnlyCollection<string>? restrictToDomains)
+    {
+        var filters = new List<string> { "deleted = 0" };
+        if (activeOnly)
+        {
+            filters.Add("status = 'active'");
+        }
+
+        if (restrictToDomains is not null)
+        {
+            if (restrictToDomains.Count == 0)
+            {
+                filters.Add("0");
+            }
+            else
+            {
+                var names = restrictToDomains.Select((domain, index) =>
+                {
+                    var parameter = $"$sd{index}";
+                    command.Parameters.AddWithValue(parameter, domain);
+                    return parameter;
+                });
+                filters.Add($"domain IN ({string.Join(", ", names)})");
+            }
+        }
+
+        return string.Join(" AND ", filters);
     }
 
     private static object? Scalar(SqliteConnection connection, string sql)

@@ -39,7 +39,7 @@ public sealed partial class MemoryTools
     [McpServerTool(Name = "notes_recall", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
     [Description("Recall a prompt-ready context block for a query: the top matching notes PLUS their one-hop linked neighbors (both directions), scope-restricted, with relation labels and source ids/revisions — a case's surrounding context in one call instead of search + many gets. Hits are ranked by hybrid relevance (BM25 + recency + link-degree + importance + project). Pass `project` to lift that project's notes (cross-project hits still appear) or `projectOnly` to hard-restrict. OMIT `domain` to recall across ALL domains you're authorized for; pass `domain` to restrict to one. LEAN by default (MEMP-214): each hit is snippet + identity (id/title/type/domain/dedupKey/project/status), NOT its full payload — pass includePayload=true for a board/status view, or notes_get for one note's full payload. Neighbors are capped. Snippets only, never full bodies.")]
     public RecallResult NotesRecall(
-        [Description("Full-text query")] string query,
+        [Description("Full-text query. Optional when `tags` is supplied (a tag-only recall).")] string? query = null,
         [Description("Domain filter (optional)")] string? domain = null,
         [Description("Max primary hits (default 10)")] int limit = 10,
         [Description("Include one-hop linked neighbors of the hits (default true)")] bool includeLinks = true,
@@ -52,18 +52,19 @@ public sealed partial class MemoryTools
         [Description("Restrict hits to these note types (optional, MEMP-223)")] string[]? types = null,
         [Description("Forbid the AND->any-term auto-relaxation, so a precise query never widens to noisy partials (default false, MEMP-223)")] bool noRelax = false,
         [Description("Cap on returned linked neighbors (default 15, MEMP-214/223)")] int maxNeighbors = NotesReader.DefaultMaxNeighbors,
+        [Description("Restrict hits to notes carrying EVERY one of these tags (MEMP-234). This is a facet filter, not a search term — pass the tag verbatim as notes_tags reports it (e.g. \"feature:mining-rush\"); putting a tag in `query` instead matches its words against prose and will not do what you want.")] string[]? tags = null,
         [Description("Who is recalling (provenance). Pass your stable agent id so the server can tell you recalled before writing (MEMP-204).")] string? sourceAgent = null)
     {
         RecordAgentRead(sourceAgent);
         return Translate(() => _notes.Recall(query, domain, limit, _authz.ReadRestriction(domain), includeLinks, maxHops, budgetChars, explain, project, projectOnly,
-            includePayload: includePayload, maxNeighbors: maxNeighbors, types: types, noRelax: noRelax));
+            includePayload: includePayload, maxNeighbors: maxNeighbors, types: types, noRelax: noRelax, tags: tags));
     }
 
     /// <summary>Assembles a layered context block (rules + skills + recall) for a task in a domain.</summary>
     [McpServerTool(Name = "memory_context", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
     [Description("CALL THIS FIRST at the start of a task in a domain: it assembles a prompt-ready context block in one call — the active rules in force (memory_rule from the domain + commons, most important first), the guiding skills, and a recall of notes relevant to the query (FTS hits + one-hop neighbors), plus warnings when a project_state is going stale (MEMP-206). Pass `project` to load that project's rules/skills and lift its notes in recall (MEMP-209). Includes an advisory-policy reminder (memory is advisory; the live user/data wins). Use it instead of separate skill_list/search/recall calls. Omit `domain` to assemble a cross-domain overview across ALL domains you're authorized for (MEMP-213); pass a `domain` to focus on one. If you pass a PROJECT name as `domain` by mistake (e.g. domain='unity-solitaire'), it auto-resolves to the real domain + project and says so in warnings instead of returning empty (MEMP-212). LEAN by default (MEMP-214): recall hits are snippet + identity (not full payload), neighbors are capped, and the recall self-limits to a ~6000-char budget — so it orients without flooding your context; widen with budgetChars or includePayload=true. Null if the requested domain is out of scope.")]
     public ContextBlock? MemoryContext(
-        [Description("The task query to recall relevant notes for")] string query,
+        [Description("The task query to recall relevant notes for. Optional when `tags` is supplied.")] string? query = null,
         [Description("Namespace, e.g. development or kitchen. OMIT to get a cross-domain overview across all your authorized domains (MEMP-213); pass one to focus.")] string? domain = null,
         [Description("Max recall hits (default 10)")] int limit = 10,
         [Description("Include one-hop linked neighbors of the recall hits (default true)")] bool includeLinks = true,
@@ -76,10 +77,11 @@ public sealed partial class MemoryTools
         [Description("Include the skills section (default true, MEMP-223)")] bool includeSkills = true,
         [Description("Forbid the AND->any-term auto-relaxation of the recall query (default false, MEMP-223)")] bool noRelax = false,
         [Description("Cap on recall linked neighbors (default 15, MEMP-223)")] int maxNeighbors = NotesReader.DefaultMaxNeighbors,
+        [Description("Restrict recall hits to notes carrying EVERY one of these tags (MEMP-234). A facet filter, not a search term — pass the tag verbatim as notes_tags reports it (e.g. \"feature:mining-rush\").")] string[]? tags = null,
         [Description("Who is loading context (provenance). Pass your stable agent id so the server can tell you recalled before writing (MEMP-204).")] string? sourceAgent = null)
     {
         RecordAgentRead(sourceAgent);
-        var options = new ContextOptions(types, includeRules, includeSkills, noRelax, maxNeighbors);
+        var options = new ContextOptions(types, includeRules, includeSkills, noRelax, maxNeighbors, tags);
         return Translate(() => new ContextAssembler(_notes, _skills).Assemble(query, domain, limit, includeLinks, _authz.Scope, project, budgetChars, projectOnly, includePayload, options));
     }
 
@@ -360,20 +362,21 @@ public sealed partial class MemoryTools
     [Description("List schema authoring provenance for audit: each registered type@version with its author and last-write time. Built-ins show author 'system'; agent-authored schemas show the sourceAgent passed to schema_upsert (null for legacy ones). Schema authoring itself is not domain-restricted — this is visibility, not a gate.")]
     public IReadOnlyList<SchemaProvenance> SchemaProvenanceList() => SchemaRegistry.Provenance(_connectionFactory);
 
-    /// <summary>Returns server/database diagnostics.</summary>
+    /// <summary>Returns server/database diagnostics; the note counts are scope-restricted.</summary>
     [McpServerTool(Name = "status", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
-    [Description("Server and database diagnostics: server build version, schema version, registered schemas, note counts by type/domain/status, attachments, blob bytes + quota, on-disk DB size (dbSizeBytes), pending confirmations. Check serverVersion to confirm which build prod is running.")]
-    public StatusReport Status() => _diagnostics.Snapshot();
+    [Description("Server and database diagnostics: server build version, schema version, registered schemas, note counts by type/domain/status, attachments, blob bytes + quota, on-disk DB size (dbSizeBytes), pending confirmations. The note counts cover only the domains you are authorized for; storage/ops figures are server-wide. Check serverVersion to confirm which build prod is running.")]
+    public StatusReport Status() => Translate(() => _diagnostics.Snapshot(_authz.ReadRestriction(null)));
 
     /// <summary>Returns the runtime contract for the caller's scope (version, known types, domain access).</summary>
     [McpServerTool(Name = "memory_capabilities", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
     [Description("Runtime contract — call on connect to discover what this build supports instead of guessing from a stale tool list: server build version, schema version, contract version, the note types this build knows (latest schema version + whether built-in), your token's domain scope (readable/writable + commons), search backend and blob quota.")]
     public CapabilitiesReport Capabilities() => _diagnostics.Capabilities(_authz.Scope);
 
-    /// <summary>Lists domains (namespaces) with their note counts.</summary>
+    /// <summary>Lists domains (namespaces) with their note counts, scope-restricted.</summary>
     [McpServerTool(Name = "domains_list", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
-    [Description("List domains (namespaces/workspaces) with note counts — to discover what workspaces exist.")]
-    public IReadOnlyDictionary<string, long> DomainsList() => _diagnostics.Snapshot().NotesByDomain;
+    [Description("List domains (namespaces/workspaces) with note counts — to discover what workspaces exist. Scope-restricted: you see only the domains you are authorized to read.")]
+    public IReadOnlyDictionary<string, long> DomainsList() =>
+        Translate(() => _diagnostics.Snapshot(_authz.ReadRestriction(null)).NotesByDomain);
 
     /// <summary>Returns a compact orientation for a domain: note types, skills, and active rules.</summary>
     [McpServerTool(Name = "domain_manifest", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
@@ -411,10 +414,11 @@ public sealed partial class MemoryTools
         return new DomainManifest(domain, _notes.CountByTypeInDomain(domain), _skills.List(domain, null, project), rules, topTags, warnings);
     }
 
-    /// <summary>Lists tags (facets) with their counts, most-used first.</summary>
+    /// <summary>Lists tags (facets) with their counts, most-used first — an alias of <see cref="NotesTags"/>.</summary>
     [McpServerTool(Name = "tags_list", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
-    [Description("List tags (cross-cutting facets) with counts, most-used first — to discover the tag taxonomy.")]
-    public IReadOnlyDictionary<string, long> TagsList() => _notes.TagCounts();
+    [Description("List tags (cross-cutting facets) with counts, most-used first — to discover the tag taxonomy. Scope-restricted, optionally within one domain. Alias of notes_tags; prefer notes_tags in new code.")]
+    public IReadOnlyDictionary<string, long> TagsList(
+        [Description("Domain filter (optional)")] string? domain = null) => NotesTags(domain);
 
     /// <summary>Scans notes for data-quality issues (read-only), within the caller's scope.</summary>
     [McpServerTool(Name = "notes_lint", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
