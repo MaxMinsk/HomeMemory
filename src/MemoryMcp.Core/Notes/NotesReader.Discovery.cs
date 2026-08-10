@@ -606,7 +606,7 @@ public sealed partial class NotesReader
         AppendScopeIn(command, filters, "n.domain", restrictToDomains);
         command.CommandText =
             "SELECT n.id, n.title, n.type, n.domain FROM notes_fts JOIN notes n ON n.rowid = notes_fts.rowid " +
-            $"WHERE {string.Join(" AND ", filters)} ORDER BY bm25(notes_fts) LIMIT 10;";
+            $"WHERE {string.Join(" AND ", filters)} ORDER BY {Bm25Weights.Expression} LIMIT 10;";
 
         var results = new List<(string, string?, string, string)>();
         using var reader = command.ExecuteReader();
@@ -731,7 +731,9 @@ public sealed partial class NotesReader
 
         if (!string.IsNullOrWhiteSpace(trimmedTitle))
         {
-            var sameTitle = MatchNotes(domain, "type = $t AND lower(trim(title)) = lower($title)", "same title & type",
+            // mem_lower, not lower(): SQLite folds ASCII only, so two Russian titles differing in case read as
+            // distinct and the duplicate went unreported (MEMP-238).
+            var sameTitle = MatchNotes(domain, "type = $t AND mem_lower(trim(title)) = mem_lower($title)", "same title & type",
                 new[] { ("$t", type), ("$title", trimmedTitle!) });
             if (sameTitle.Count > 0)
             {
@@ -768,7 +770,7 @@ public sealed partial class NotesReader
         AppendScopeIn(command, filters, "n.domain", restrictToDomains);
         command.CommandText =
             "SELECT n.id, n.title, n.type, n.domain FROM notes_fts JOIN notes n ON n.rowid = notes_fts.rowid " +
-            $"WHERE {string.Join(" AND ", filters)} ORDER BY bm25(notes_fts) LIMIT 4;";
+            $"WHERE {string.Join(" AND ", filters)} ORDER BY {Bm25Weights.Expression} LIMIT 4;";
 
         var matches = new List<CaptureCandidate>();
         using var reader = command.ExecuteReader();

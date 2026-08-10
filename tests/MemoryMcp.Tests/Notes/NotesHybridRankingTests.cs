@@ -9,8 +9,11 @@ namespace MemoryMcp.Tests.Notes;
 // MEMP-174/175/176/177: hybrid RRF recall ranking, importance/pin boost, budget packing, score-breakdown explain.
 public class NotesHybridRankingTests
 {
+    // MEMP-237 changed the contract this pair of tests describes. Equal weights let two contextual signals
+    // outvote relevance, so a fresher, better-connected note displaced the stronger text match; relevance now
+    // leads and the contextual signals order what relevance leaves tied.
     [Fact]
-    public void Hybrid_lifts_a_fresh_well_linked_note_above_a_more_lexical_orphan()
+    public void Hybrid_keeps_the_stronger_text_match_above_a_fresher_better_linked_note()
     {
         using var temp = new TempDatabase();
         var repo = NewRepo(temp);
@@ -26,9 +29,26 @@ public class NotesHybridRankingTests
         var lexical = repo.Search("alpha", domain: "memory-mcp", rank: "lexical");
         Assert.Equal(orphan, lexical.Items[0].Id);
 
-        // Hybrid: recency + link-degree lift the fresh, connected note above the more-lexical orphan.
+        // Hybrid: recency and link-degree no longer overturn a better text match on their own.
         var hybrid = repo.Search("alpha", domain: "memory-mcp", rank: "hybrid");
+        Assert.Equal(orphan, hybrid.Items[0].Id);
+    }
+
+    [Fact]
+    public void Nontext_signals_order_hits_that_tie_on_relevance()
+    {
+        using var temp = new TempDatabase();
+        var repo = NewRepo(temp);
+        // Identical text, so BM25 and the title signal tie and only the contextual signals can separate them.
+        var orphan = Seed(repo, "MEMP-200", title: "alpha", body: "alpha");
+        var n1 = Seed(repo, "MEMP-210", title: "gamma", body: "gamma");
+        var fresh = Seed(repo, "MEMP-201", title: "alpha", body: "alpha"); // newest, and linked
+        repo.Link(fresh, n1, "relates_to");
+
+        var hybrid = repo.Search("alpha", domain: "memory-mcp", rank: "hybrid", explain: true);
         Assert.Equal(fresh, hybrid.Items[0].Id);
+        Assert.Equal(orphan, hybrid.Items[1].Id);
+        Assert.All(hybrid.Items, item => Assert.Equal(1, item.Explain!.LexicalRank)); // relevance really is a tie
     }
 
     [Fact]

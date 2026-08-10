@@ -120,15 +120,17 @@ public sealed partial class NotesReader
         command.Parameters.AddWithValue("$offset", offset);
         // envelope extras are always selected (cheap); they reach the caller only when includePayload is set.
         const string columns = "n.id, n.title, n.type, n.domain, n.body, {0} AS score, n.status, n.payload_json, n.tags_json, n.dedup_key, n.updated_utc, n.project";
-        var scoreExpr = useFts ? "bm25(notes_fts)" : "0.0";
+        var scoreExpr = useFts ? Bm25Weights.Expression : "0.0";
         var from = useFts ? "FROM notes_fts JOIN notes n ON n.rowid = notes_fts.rowid" : "FROM notes n";
         var orderBy = sortBody ?? (useFts ? "score" : "n.updated_utc DESC"); // explicit sort overrides relevance/recency
         if (exactKey is not null)
         {
             // Rank an exact dedup_key first (MEMP-159), then an exact title (MEMP-160), then relevance/recency.
+            // mem_lower, not lower(): a title is free-form text and SQLite's fold is ASCII-only, so a Russian
+            // title typed in another case missed its own exact-match tier (MEMP-238).
             command.Parameters.AddWithValue("$exactkey", exactKey);
-            orderBy = "(CASE WHEN n.dedup_key IS NOT NULL AND lower(n.dedup_key) = lower($exactkey) THEN 0 " +
-                "WHEN n.title IS NOT NULL AND lower(trim(n.title)) = lower($exactkey) THEN 1 ELSE 2 END), " + orderBy;
+            orderBy = "(CASE WHEN n.dedup_key IS NOT NULL AND mem_lower(n.dedup_key) = mem_lower($exactkey) THEN 0 " +
+                "WHEN n.title IS NOT NULL AND mem_lower(trim(n.title)) = mem_lower($exactkey) THEN 1 ELSE 2 END), " + orderBy;
         }
         command.CommandText =
             $"SELECT {string.Format(System.Globalization.CultureInfo.InvariantCulture, columns, scoreExpr)} " +
@@ -172,13 +174,14 @@ public sealed partial class NotesReader
         var where = ApplyFilters(command, true, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens, matchAny, projectEquals);
         command.Parameters.AddWithValue("$pool", RankingWeights.PoolSize);
         command.CommandText =
-            "SELECT n.id, n.title, n.type, n.domain, n.body, bm25(notes_fts) AS score, n.status, n.payload_json, " +
+            $"SELECT n.id, n.title, n.type, n.domain, n.body, {Bm25Weights.Expression} AS score, n.status, n.payload_json, " +
             "n.tags_json, n.dedup_key, n.updated_utc, n.project, " +
             "(SELECT count(*) FROM note_links l WHERE l.from_id = n.id OR l.to_id = n.id) AS degree " +
             $"FROM notes_fts JOIN notes n ON n.rowid = notes_fts.rowid WHERE {where} " +
-            "ORDER BY bm25(notes_fts) LIMIT $pool;";
+            $"ORDER BY {Bm25Weights.Expression} LIMIT $pool;";
 
         var rows = new List<RankRow>();
+        var terms = TitleRelevance.Terms(tokens); // stemmed once for the whole pool, not per row (MEMP-237)
         using (var reader = command.ExecuteReader())
         {
             while (reader.Read())
@@ -202,7 +205,7 @@ public sealed partial class NotesReader
                     reader.IsDBNull(11) ? null : reader.GetString(11));
                 var project = reader.IsDBNull(11) ? null : reader.GetString(11);
                 rows.Add(new RankRow(
-                    result, ExactKeyTier(dedupKey, title, exactKey), -bm25,
+                    result, ExactKeyTier(dedupKey, title, exactKey), -bm25, TitleRelevance.Goodness(title, terms),
                     HybridRanker.RecencyGoodness(updatedUtc), degree, HybridRanker.ImportanceGoodness(payloadJson, tagsJson),
                     HybridRanker.TypeGoodness(reader.GetString(2)), HybridRanker.ProjectGoodness(project, boostProject)));
             }
@@ -296,6 +299,8 @@ public sealed partial class NotesReader
         IReadOnlyCollection<string>? restrict, int limit, bool includePayload, bool includeLinks)
     {
         using var command = connection.CreateCommand();
+        // COLLATE NOCASE folds ASCII only, which is all this path needs: it is reached solely for a query that
+        // matched the ASCII ticket-key shape (see LooksLikeTicketKey), so there is no non-Latin case to fold.
         var filters = new List<string> { "deleted = 0", "dedup_key = $k COLLATE NOCASE" };
         command.Parameters.AddWithValue("$k", key.Trim());
         if (!string.IsNullOrWhiteSpace(status))

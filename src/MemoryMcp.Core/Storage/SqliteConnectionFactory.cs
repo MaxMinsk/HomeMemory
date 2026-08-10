@@ -54,6 +54,7 @@ public sealed class SqliteConnectionFactory : ISqliteConnectionFactory
         var connection = new SqliteConnection(_connectionString);
         connection.Open();
         ApplyPragmas(connection);
+        UnicodeSqlFunctions.Register(connection); // mem_contains / mem_lower — SQLite folds ASCII only (MEMP-238)
         return connection;
     }
 

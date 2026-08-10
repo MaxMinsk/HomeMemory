@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.69.0
+
+Sprint 62 — Search relevance for the owner's own notes (MEMP-237, MEMP-238). Both were found in the field on
+2026-08-10 by the owner searching their kitchen notes for the Russian word for "chili": the notes that carry
+that word in their TITLE ranked below notes that merely mention it, and the one filter that could have worked
+around it (`title contains '...'`) silently returned nothing in lower case.
+
+- **A note's title now carries weight in ranking (MEMP-237).** `bm25()` was called with no column weights, so
+  a title counted for exactly as much as a passing mention buried in a long body — the defect was in BM25
+  itself, before any fusion. The title is now weighted x5. On top of that, a **partial** title match became its
+  own ranking signal (how much of the query the title covers, plus a bonus when the title opens with it);
+  before, only an exact whole-title match got a boost, so "Chili in a kazan with minced beef" got nothing for
+  the query "chili".
+- **The hybrid blend no longer lets recency and note type outvote relevance.** All six signals were weighted
+  equally with an RRF damping constant of 60, which flattened everything: across a real query the top twelve
+  fused scores spanned 0.005 in total, and a hit ranked **first** on relevance landed second while one ranked
+  **sixteenth** took the top slot on recency and type. The two text signals (BM25 3, title 2) now outweigh the
+  four contextual ones, and k drops 60 -> 20 so ranks actually separate. Contextual signals still order hits
+  that relevance leaves tied, and still overturn a close call when several of them agree.
+- `explain=true` reports the new `titleRank` alongside the other per-signal ranks.
+- **The filter DSL's `contains` folds case for non-ASCII text (MEMP-238).** It compiled to SQLite `LIKE`, whose
+  folding covers ASCII A-Z only, so it behaved correctly for English keys and silently failed for Russian
+  notes: `title contains` found two notes in title case and **zero** in lower case, while the tool description
+  promised a case-insensitive substring. `contains` now runs on a .NET-backed `mem_contains` covering the whole
+  Unicode range, and takes the needle literally (no LIKE wildcards to escape).
+- **The same ASCII-only fold was fixed everywhere else it hid a match**, not just in `contains`: the exact-title
+  ranking tier, the duplicate probe behind `notes_suggest_capture`, and the `duplicate` lint all compared
+  `lower(title)` and so treated two identical Russian titles in different cases as different notes. The one
+  remaining `COLLATE NOCASE` is on `dedup_key`, which is reached only for the ASCII ticket-key shape.
+
+No schema change (migrations through **0017**) and no index rebuild — the BM25 weights are per query. 401 tests.
+
 ## 0.68.0
 
 Sprint 61 — Scope-aware discovery (MEMP-232, MEMP-233, MEMP-234). Found in the field: a domain-scoped agent

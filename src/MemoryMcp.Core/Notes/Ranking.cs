@@ -5,18 +5,24 @@ namespace MemoryMcp.Core.Notes;
 
 /// <summary>
 /// Relative weights for the hybrid recall ranking signals (MEMP-174/175). The ranker blends each signal's
-/// competition rank within the candidate pool via Reciprocal Rank Fusion (<c>w / (k + rank)</c>) — lexical
-/// relevance (BM25), recency, link-degree and an importance/pin boost. Defaults weight every signal equally.
+/// competition rank within the candidate pool via Reciprocal Rank Fusion (<c>w / (k + rank)</c>) — text
+/// relevance (BM25 and title match), recency, link-degree, an importance/pin boost, note type and project.
+/// <para>The text signals outweigh the rest (MEMP-237). Equal weights made relevance one vote in six, so a note
+/// with the query in its title lost to an off-topic note that was merely newer and of a more canonical type —
+/// the field report had a BM25-rank-1 hit land second while a rank-16 note took the top slot. Lexical (3) and title (2)
+/// now sum to 5 against the 4 non-text signals: what the user typed decides the order, and the rest breaks ties
+/// or overturns it only when several of them agree.</para>
 /// </summary>
 /// <param name="Lexical">Weight of the BM25 relevance signal.</param>
+/// <param name="Title">Weight of the title-match signal (MEMP-237; see <see cref="TitleRelevance"/>).</param>
 /// <param name="Recency">Weight of the newest-first signal.</param>
 /// <param name="Link">Weight of the more-connected-first signal.</param>
 /// <param name="Importance">Weight of the pinned/importance boost signal.</param>
 /// <param name="Type">Weight of the per-type signal (canonical types above ephemeral ones).</param>
 /// <param name="Project">Weight of the project-match signal (a requested project's notes lifted; MEMP-209).</param>
-public sealed record RankingWeights(double Lexical = 1.0, double Recency = 1.0, double Link = 1.0, double Importance = 1.0, double Type = 1.0, double Project = 1.0)
+public sealed record RankingWeights(double Lexical = 3.0, double Title = 2.0, double Recency = 1.0, double Link = 1.0, double Importance = 1.0, double Type = 1.0, double Project = 1.0)
 {
-    /// <summary>The default equal-weight blend.</summary>
+    /// <summary>The default blend: text relevance leads, the contextual signals follow.</summary>
     public static readonly RankingWeights Default = new();
 
     /// <summary>
@@ -26,8 +32,13 @@ public sealed record RankingWeights(double Lexical = 1.0, double Recency = 1.0, 
     /// </summary>
     public static readonly RankingWeights ProjectBoosted = Default with { Project = 2.0 };
 
-    /// <summary>RRF damping constant (k): larger flattens the gap between top ranks. 60 is the common default.</summary>
-    public const int K = 60;
+    /// <summary>
+    /// RRF damping constant (k): larger flattens the gap between top ranks. The common default of 60 flattened
+    /// this pool to nothing — the top twelve fused scores of a real query spanned 0.005 in total, so no signal
+    /// could actually order anything and ties fell through to arbitrary tiebreaks (MEMP-237). At 20 a one-rank
+    /// difference is worth roughly three times as much, so the ranks separate.
+    /// </summary>
+    public const int K = 20;
 
     /// <summary>Largest candidate pool the hybrid ranker re-ranks; bounds the O(n²) rank computation and paging.</summary>
     public const int PoolSize = 200;
@@ -39,13 +50,14 @@ public sealed record RankingWeights(double Lexical = 1.0, double Recency = 1.0, 
 /// (1 = best); a fused score is higher-is-better.
 /// </summary>
 /// <param name="LexicalRank">Rank by BM25 relevance (1 = most relevant).</param>
+/// <param name="TitleRank">Rank by title match (1 = title covers the query best; no-title pools tie at 1).</param>
 /// <param name="RecencyRank">Rank by last-update time (1 = newest).</param>
 /// <param name="LinkRank">Rank by link-degree (1 = most connected).</param>
 /// <param name="ImportanceRank">Rank by pinned/importance (1 = most important; all-neutral pools tie at 1).</param>
 /// <param name="TypeRank">Rank by per-type weight (1 = most canonical type).</param>
 /// <param name="ProjectRank">Rank by project-match (1 = in the requested project; all tie at 1 when no project is requested).</param>
 /// <param name="Fused">The fused RRF score (higher is better).</param>
-public sealed record ScoreBreakdown(int LexicalRank, int RecencyRank, int LinkRank, int ImportanceRank, int TypeRank, int ProjectRank, double Fused);
+public sealed record ScoreBreakdown(int LexicalRank, int TitleRank, int RecencyRank, int LinkRank, int ImportanceRank, int TypeRank, int ProjectRank, double Fused);
 
 /// <summary>
 /// One candidate in the hybrid re-rank pool: the result to return plus the raw signal values used to rank it.
@@ -55,12 +67,13 @@ public sealed record ScoreBreakdown(int LexicalRank, int RecencyRank, int LinkRa
 /// <param name="Result">The search hit to return (score/snippet/payload already populated).</param>
 /// <param name="Tier">Exact-key tier (0 = dedup_key match, 1 = title match, 2 = neither); kept ahead of the blend.</param>
 /// <param name="Lexical">Lexical goodness (negated BM25; higher = more relevant).</param>
+/// <param name="Title">Title goodness (query coverage of the title; higher = the title is more about the query).</param>
 /// <param name="Recency">Recency goodness (Unix ms of the last update; higher = newer).</param>
 /// <param name="Link">Link goodness (link-degree; higher = more connected).</param>
 /// <param name="Importance">Importance goodness (pinned/importance; higher = more important).</param>
 /// <param name="Type">Type goodness (canonical types higher than ephemeral ones).</param>
 /// <param name="Project">Project goodness (1 when the note is in the requested project, else 0; MEMP-209).</param>
-internal readonly record struct RankRow(SearchResult Result, int Tier, double Lexical, double Recency, double Link, double Importance, double Type, double Project);
+internal readonly record struct RankRow(SearchResult Result, int Tier, double Lexical, double Title, double Recency, double Link, double Importance, double Type, double Project);
 
 /// <summary>Reciprocal-rank-fusion re-ranker over a bounded candidate pool (MEMP-174). Pure and deterministic.</summary>
 internal static class HybridRanker
@@ -72,6 +85,7 @@ internal static class HybridRanker
     public static List<(SearchResult Result, ScoreBreakdown Breakdown)> Fuse(IReadOnlyList<RankRow> rows, RankingWeights weights)
     {
         var lexRanks = CompetitionRanks(rows, row => row.Lexical);
+        var titleRanks = CompetitionRanks(rows, row => row.Title);
         var recRanks = CompetitionRanks(rows, row => row.Recency);
         var linkRanks = CompetitionRanks(rows, row => row.Link);
         var impRanks = CompetitionRanks(rows, row => row.Importance);
@@ -83,13 +97,14 @@ internal static class HybridRanker
         {
             var fused =
                 (weights.Lexical / (RankingWeights.K + lexRanks[i])) +
+                (weights.Title / (RankingWeights.K + titleRanks[i])) +
                 (weights.Recency / (RankingWeights.K + recRanks[i])) +
                 (weights.Link / (RankingWeights.K + linkRanks[i])) +
                 (weights.Importance / (RankingWeights.K + impRanks[i])) +
                 (weights.Type / (RankingWeights.K + typeRanks[i])) +
                 (weights.Project / (RankingWeights.K + projRanks[i]));
             scored.Add((rows[i].Result, rows[i].Tier, rows[i].Result.Score,
-                new ScoreBreakdown(lexRanks[i], recRanks[i], linkRanks[i], impRanks[i], typeRanks[i], projRanks[i], fused)));
+                new ScoreBreakdown(lexRanks[i], titleRanks[i], recRanks[i], linkRanks[i], impRanks[i], typeRanks[i], projRanks[i], fused)));
         }
 
         // Exact-key matches stay on top; then strongest fused score; BM25 then id break ties for a stable order.

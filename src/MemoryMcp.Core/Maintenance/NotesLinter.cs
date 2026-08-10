@@ -82,7 +82,8 @@ public sealed class NotesLinter
         findings.AddRange(NoteRule(connection, scope,
             "title IS NOT NULL AND trim(title) <> '' AND EXISTS (SELECT 1 FROM notes dup " +
             "WHERE dup.deleted = 0 AND dup.status = 'active' AND dup.id <> notes.id " +
-            "AND dup.domain = notes.domain AND dup.type = notes.type AND lower(dup.title) = lower(notes.title))",
+            // mem_lower, not lower(): SQLite's fold is ASCII-only, so non-Latin duplicate titles slipped through (MEMP-238).
+            "AND dup.domain = notes.domain AND dup.type = notes.type AND mem_lower(dup.title) = mem_lower(notes.title))",
             "duplicate", "warn", "Another active note shares this (domain, type, title)."));
         findings.AddRange(NoteRule(connection, scope,
             "content_hash IS NOT NULL AND EXISTS (SELECT 1 FROM notes dup " +

@@ -22,6 +22,10 @@ public sealed record CompiledFilter(string Sql, IReadOnlyList<FilterParameter> P
 /// contains takes a string and matches a case-insensitive substring)</c>.
 /// Values are always bound as parameters; field names are whitelisted (envelope) or validated
 /// (payload.&lt;key&gt;) — user input never reaches the SQL text directly.
+/// <para>Case sensitivity (MEMP-238): <c>contains</c> folds case across the full Unicode range via
+/// <see cref="Storage.UnicodeSqlFunctions"/>. Every other operator (<c>==</c>, <c>!=</c>, <c>in</c> and the
+/// ordering comparisons) is an exact, case-<em>sensitive</em> comparison by design — reach for <c>contains</c>
+/// when case should not matter.</para>
 /// </summary>
 public static class NoteFilter
 {
@@ -250,10 +254,12 @@ public static class NoteFilter
                         throw new FilterException("Invalid filter: 'contains' needs a string value, e.g. payload.subject contains 'STU-12'.");
                     }
 
-                    // Case-insensitive (ASCII) substring via LIKE; escape the LIKE wildcards in the value.
-                    var pattern = "%" + substring.Replace("\\", "\\\\", StringComparison.Ordinal)
-                        .Replace("%", "\\%", StringComparison.Ordinal).Replace("_", "\\_", StringComparison.Ordinal) + "%";
-                    return $"{column} LIKE {AddParam(pattern)} ESCAPE '\\'";
+                    // Unicode-aware case-insensitive substring (MEMP-238). This was a LIKE '%…%', whose folding
+                    // is ASCII-only, so the Russian word for "chili" found nothing in lower case and two notes
+                    // in title case -- see UnicodeCaseFoldingTests for the exact pair.
+                    // mem_contains (registered per connection by SqliteConnectionFactory) folds the whole Unicode
+                    // range and takes the needle literally, so LIKE wildcards no longer need escaping either.
+                    return $"mem_contains({column}, {AddParam(substring)})";
                 default:
                     throw new FilterException($"Invalid filter: expected an operator (== != < <= > >= in contains, is null), got '{op.Text}'.");
             }
