@@ -143,6 +143,32 @@ public class NotesLinterTests
         Assert.Equal("Old rule", hit.Title); // 167 days > 30; the fresh one (7 days) is not flagged
     }
 
+    /// <summary>
+    /// MEMP-243: the staleness hint on a search hit only reaches whoever happens to retrieve the note, so lint
+    /// answers the review question instead — what in this domain has expired? Only a note that named a validity
+    /// date and is past it is flagged; the re-verification window is stale_unverified's job, not this rule's.
+    /// </summary>
+    [Fact]
+    public void Flags_a_note_whose_stated_validity_has_ended()
+    {
+        using var temp = new TempDatabase();
+        var (repo, factory) = NewRepo(temp);
+        repo.Upsert("memory-mcp", "fact", "Lapsed claim", "body",
+            """{ "statement": "true until spring", "valid_to": "2026-03-01" }""", """["f"]""", "fact-lapsed", "me");
+        repo.Upsert("memory-mcp", "fact", "Live claim", "body",
+            """{ "statement": "true until winter", "valid_to": "2026-12-01" }""", """["f"]""", "fact-live", "me");
+        repo.Upsert("memory-mcp", "fact", "Undated claim", "body",
+            """{ "statement": "no date at all" }""", """["f"]""", "fact-undated", "me");
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 6, 17, 0, 0, 0, TimeSpan.Zero));
+
+        var expired = new NotesLinter(factory, clock).Lint(domain: null, restrictToDomains: null)
+            .Where(f => f.Rule == "expired_content").ToList();
+
+        var hit = Assert.Single(expired);
+        Assert.Equal("Lapsed claim", hit.Title);
+        Assert.Contains("108 days ago", hit.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Flags_oversized_note_without_a_heading_or_summary()
     {

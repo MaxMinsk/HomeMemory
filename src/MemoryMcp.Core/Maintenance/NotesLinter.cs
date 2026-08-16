@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using MemoryMcp.Core.Naming;
+using MemoryMcp.Core.Notes;
 using MemoryMcp.Core.Storage;
 using Microsoft.Data.Sqlite;
 
@@ -92,6 +93,7 @@ public sealed class NotesLinter
             "duplicate_content", "warn", "Another active note has identical content (same content hash) — merge or supersede one."));
         findings.AddRange(StaleUnstructured(connection, scope));
         findings.AddRange(StaleUnverified(connection, scope));
+        findings.AddRange(ExpiredContent(connection, scope));
         findings.AddRange(NoteRule(connection, scope,
             "body IS NOT NULL AND length(body) > 4000 AND body NOT LIKE '#%' " +
             "AND body NOT LIKE '%' || char(10) || '#%' AND json_extract(payload_json, '$.summary') IS NULL",
@@ -163,6 +165,42 @@ public sealed class NotesLinter
                 reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1),
                 reader.GetString(2), reader.GetString(3), "stale_unverified", "warn",
                 $"Not verified in over {days} days — re-confirm and bump last_verified_at, or deprecate it."));
+        }
+
+        return findings;
+    }
+
+    // Notes that declared a date after which they stop holding, and are past it (MEMP-243). The staleness hint on
+    // a search hit only reaches whoever happens to retrieve the note; this answers "what in this domain has
+    // expired?", which is the question an owner doing a review actually asks. Scored by Core.Notes.Staleness so
+    // lint and recall can never disagree about what stale means; only the `expired` reason is reported here, since
+    // the re-verification window is already covered by stale_unverified above.
+    private List<LintFinding> ExpiredContent(SqliteConnection connection, LintScope scope)
+    {
+        var now = _timeProvider.GetUtcNow();
+        using var command = connection.CreateCommand();
+        var filters = new List<string>
+        {
+            "deleted = 0", "status = 'active'",
+            "(json_extract(payload_json, '$.valid_to') IS NOT NULL OR json_extract(payload_json, '$.valid_until') IS NOT NULL)",
+        };
+        BindScope(command, filters, string.Empty, scope);
+        command.CommandText = $"SELECT id, title, domain, type, payload_json, updated_utc FROM notes WHERE {string.Join(" AND ", filters)} LIMIT 500;";
+
+        var findings = new List<LintFinding>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            var payloadJson = reader.IsDBNull(4) ? null : reader.GetString(4);
+            if (Staleness.Evaluate(reader.GetString(3), payloadJson, reader.GetString(5), now) is not { Reason: "expired" } hint)
+            {
+                continue;
+            }
+
+            findings.Add(new LintFinding(
+                reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1),
+                reader.GetString(2), reader.GetString(3), "expired_content", "info",
+                $"Stated validity ended {hint.AgeDays} days ago — re-confirm and extend it, supersede it, or archive it."));
         }
 
         return findings;
