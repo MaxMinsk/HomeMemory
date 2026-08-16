@@ -319,7 +319,10 @@ public sealed partial class NotesReader
             var seen = new HashSet<string>(hits.Select(hit => hit.Id), StringComparer.Ordinal);
             foreach (var hit in hits)
             {
-                foreach (var link in Links(hit.Id))
+                // Active only (MEMP-241): recall's own hits are already restricted to active notes, and superseding
+                // CREATES a supersedes link, so an unfiltered expansion would drag every replaced note back into
+                // the context block through the very link that retired it.
+                foreach (var link in Links(hit.Id, activeOnly: true))
                 {
                     if (!seen.Add(link.NoteId))
                     {
@@ -555,7 +558,25 @@ public sealed partial class NotesReader
             }
         }
 
-        foreach (var link in Links(id))
+        AddLinkedCandidates(id, candidates, restrictToDomains);
+
+        candidates.Remove(id); // never relate a note to itself (e.g. reachable via its own tags)
+
+        return candidates.Values
+            .OrderByDescending(candidate => candidate.Score).ThenBy(candidate => candidate.Id, StringComparer.Ordinal)
+            .Take(Math.Clamp(limit, 1, 100))
+            .Select(candidate => new RelatedNote(candidate.Id, candidate.Title, candidate.Type, candidate.Domain,
+                candidate.SharedTags, OrderReasons(candidate.Reasons)))
+            .ToList();
+    }
+
+    // The link signal: a note already connected to the source is related by construction. Active only, matching
+    // the tag and text signals which both already filter it (MEMP-241) — every related note is a suggestion to
+    // act on, and a retired one is not something to link to or build on.
+    private void AddLinkedCandidates(
+        string id, IDictionary<string, RelatedAccumulator> candidates, IReadOnlyCollection<string>? restrictToDomains)
+    {
+        foreach (var link in Links(id, activeOnly: true))
         {
             if (restrictToDomains is not null && !restrictToDomains.Contains(link.Domain))
             {
@@ -566,15 +587,6 @@ public sealed partial class NotesReader
             acc.Score += RelatedLinkWeight;
             acc.Reasons.Add("link");
         }
-
-        candidates.Remove(id); // never relate a note to itself (e.g. reachable via its own tags)
-
-        return candidates.Values
-            .OrderByDescending(candidate => candidate.Score).ThenBy(candidate => candidate.Id, StringComparer.Ordinal)
-            .Take(Math.Clamp(limit, 1, 100))
-            .Select(candidate => new RelatedNote(candidate.Id, candidate.Title, candidate.Type, candidate.Domain,
-                candidate.SharedTags, OrderReasons(candidate.Reasons)))
-            .ToList();
     }
 
     // Active notes (excluding the source) sharing any of the given tags, with the concrete tags each shares.
@@ -865,16 +877,22 @@ public sealed partial class NotesReader
 
     /// <summary>Returns the note's links in both directions (each resolved to the note at the other end).</summary>
     /// <param name="id">The note id.</param>
-    public IReadOnlyList<LinkView> Links(string id)
+    /// <param name="activeOnly">When true, drops neighbours that are archived or superseded (MEMP-241). Off by
+    /// default so "what is connected to this?" still answers honestly; on for the surfaces that assemble context
+    /// out of neighbours, where a retired note would be presented as if it were current.</param>
+    public IReadOnlyList<LinkView> Links(string id, bool activeOnly = false)
     {
         using var connection = _connectionFactory.Create();
         using var command = connection.CreateCommand();
+        // Retired notes are reachable by link on purpose (see LinkView.Status), so this filters only when the
+        // caller is assembling context rather than answering "what is connected to this?" (MEMP-241).
+        var active = activeOnly ? "AND n.status = 'active' " : string.Empty;
         command.CommandText =
-            "SELECT 'out' AS dir, l.rel, l.to_id AS other, n.title, n.type, n.domain FROM note_links l JOIN notes n ON n.id = l.to_id " +
-            "WHERE l.from_id = $id AND n.deleted = 0 " +
+            "SELECT 'out' AS dir, l.rel, l.to_id AS other, n.title, n.type, n.domain, n.status FROM note_links l JOIN notes n ON n.id = l.to_id " +
+            $"WHERE l.from_id = $id AND n.deleted = 0 {active}" +
             "UNION ALL " +
-            "SELECT 'in' AS dir, l.rel, l.from_id AS other, n.title, n.type, n.domain FROM note_links l JOIN notes n ON n.id = l.from_id " +
-            "WHERE l.to_id = $id AND n.deleted = 0 " +
+            "SELECT 'in' AS dir, l.rel, l.from_id AS other, n.title, n.type, n.domain, n.status FROM note_links l JOIN notes n ON n.id = l.from_id " +
+            $"WHERE l.to_id = $id AND n.deleted = 0 {active}" +
             "ORDER BY dir, rel;";
         command.Parameters.AddWithValue("$id", id);
 
@@ -883,7 +901,7 @@ public sealed partial class NotesReader
         while (reader.Read())
         {
             links.Add(new LinkView(reader.GetString(0), reader.GetString(1), reader.GetString(2),
-                reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetString(4), reader.GetString(5)));
+                reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetString(4), reader.GetString(5), reader.GetString(6)));
         }
 
         return links;

@@ -161,6 +161,31 @@ public class TemporalValidityTests
             .Items.Select(item => item.Id));
     }
 
+    /// <summary>
+    /// MEMP-241: the neighbour half of the guarantee above. Superseding CREATES a `supersedes` link from the new
+    /// note to the old one, so recall's one-hop expansion used to drag every replaced note straight back into the
+    /// context block through the very link that retired it — while the note was correctly absent from the hits.
+    /// Deliberate traversal still reaches it, and now reports the status so a caller can tell.
+    /// </summary>
+    [Fact]
+    public void A_superseded_note_is_not_offered_as_a_recall_neighbour()
+    {
+        var repo = NewRepo(out var temp);
+        using var _ = temp;
+        var old = Upsert(repo, "reward-old", "MR reward is client authoritative", """{ "statement": "client" }""");
+        var current = Upsert(repo, "reward-new", "MR reward is server authoritative", """{ "statement": "server" }""");
+        Assert.True(repo.Supersede(old, current));
+
+        var recall = repo.Recall("reward authoritative", "development", 10, null);
+
+        Assert.Contains(current, recall.Hits.Select(hit => hit.Id));
+        Assert.DoesNotContain(old, recall.Neighbors.Select(neighbour => neighbour.Id));
+
+        // notes_links is the deliberate path and still resolves it, now with the status visible.
+        var link = Assert.Single(repo.Links(current), view => view.NoteId == old);
+        Assert.Equal("superseded", link.Status);
+    }
+
     private static string Iso(DateTimeOffset when) => when.ToString("O", CultureInfo.InvariantCulture);
 
     // `valid_to` is the field the built-in fact schema declares; the schema rejects anything it does not name.
