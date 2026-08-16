@@ -676,7 +676,10 @@ public sealed class NotesWriter
 
         if (_registry.GetLatest(current.Type) is not null)
         {
-            var validation = _validator.Validate(current.Type, newPayload ?? "{}");
+            // Through the same schema-aware strip the upsert path uses (MEMP-245): the MERGED payload still
+            // carries whatever `project` the note was created with, and a type that doesn't declare the field
+            // rejects it — so without this, a strict-typed project-scoped note could not be patched at all.
+            var validation = _validator.Validate(current.Type, PayloadForValidation(current.Type, newPayload ?? "{}"));
             if (!validation.IsValid)
             {
                 throw new NoteValidationException(validation.Errors);
@@ -746,7 +749,8 @@ public sealed class NotesWriter
 
         if (_registry.GetLatest(current.Type) is not null)
         {
-            var validation = _validator.Validate(current.Type, newPayload ?? "{}");
+            // Schema-aware strip, as in the single-note patch above (MEMP-245).
+            var validation = _validator.Validate(current.Type, PayloadForValidation(current.Type, newPayload ?? "{}"));
             if (!validation.IsValid)
             {
                 throw new NoteValidationException(validation.Errors.Select(error => $"item[{index}] ({item.Id}): {error}").ToList());
