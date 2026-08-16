@@ -18,6 +18,12 @@ internal static class TitleRelevance
     /// <summary>Extra goodness for a title that starts with a query word, on top of the 0..1 coverage.</summary>
     private const double LeadBonus = 0.25;
 
+    /// <summary>
+    /// The highest goodness <see cref="Goodness"/> can return — full query coverage plus the lead bonus. The
+    /// ranker divides by this to normalise the signal to 0..1 before weighting it (MEMP-239).
+    /// </summary>
+    public const double MaxGoodness = 1d + LeadBonus;
+
     private const int MinStemLength = 2;
 
     /// <summary>One query word paired with its stem (null when the word is not natural language).</summary>

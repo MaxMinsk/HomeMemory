@@ -171,17 +171,27 @@ public class JournalAndDiagnosticsTests
         Assert.DoesNotContain("commons", caps.Scope.WritableDomains); // read-shared, not write-shared
     }
 
+    /// <summary>
+    /// MEMP-236: an unrestricted token used to get two EMPTY domain lists, which read as "you may reach nothing"
+    /// but meant "you may reach everything" — indistinguishable to the caller, and it left `domains_list` as the
+    /// only way to learn what exists. The lists now enumerate the domains that do exist; `unrestricted` is what
+    /// says whether to read them as a limit or as an inventory.
+    /// </summary>
     [Fact]
-    public void Capabilities_marks_an_unrestricted_scope()
+    public void Capabilities_lists_the_existing_domains_for_an_unrestricted_scope()
     {
         using var temp = new TempDatabase();
         var factory = new SqliteConnectionFactory(temp.FilePath);
         new Migrator(factory, SchemaMigrations.All).Migrate();
-        var diagnostics = new DiagnosticsService(factory, SchemaRegistry.FromEmbeddedResources());
+        var registry = SchemaRegistry.FromEmbeddedResources();
+        var notes = new NotesRepository(factory, registry);
+        notes.Upsert("kitchen", "fact", "A note", "body", """{ "statement": "x" }""", null, "k1", "tester");
+        notes.Upsert("development", "fact", "Another", "body", """{ "statement": "x" }""", null, "d1", "tester");
 
-        var caps = diagnostics.Capabilities(RequestScope.Unrestricted);
+        var caps = new DiagnosticsService(factory, registry).Capabilities(RequestScope.Unrestricted);
 
         Assert.True(caps.Scope.Unrestricted);
-        Assert.Empty(caps.Scope.WritableDomains); // unrestricted => explicit lists are empty; the flag carries it
+        Assert.Equal(["development", "kitchen"], caps.Scope.ReadableDomains);
+        Assert.Equal(["development", "kitchen"], caps.Scope.WritableDomains);
     }
 }

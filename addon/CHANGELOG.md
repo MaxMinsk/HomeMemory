@@ -1,5 +1,58 @@
 # Changelog
 
+## 0.70.0
+
+Sprint 63 — Notes that know when they have aged, and a ranking fix that a measurement chose rather than a guess
+(MEMP-239, MEMP-240, MEMP-236, MEMP-235). The sprint's fifth item, semantic/vector recall (MEMP-196), delivered
+its decision and its measured baseline but ships no code yet — see the notes at the end.
+
+- **A note titled after your query no longer loses to one that mentions it once (MEMP-239).** BM25 normalises
+  every term by the row's TOTAL length across all indexed columns, so a note with an empty body and a large
+  structured payload is penalised as "long" even though the match is in its short title: on the reported query
+  the recipe named after the search term sat at lexical rank 17 of 44. The follow-up proposed two knobs; both
+  were measured and rejected. Raising the BM25 title weight only reverses the pair at about x20 rather than the
+  proposed x12, and by then a note that merely CONTAINS the word in its title has climbed most of the way to a
+  note genuinely about it. Raising the fusion weight moves everything equally and reorders almost nothing.
+  The real cause was underneath both: the title takes only a handful of distinct values, so its competition
+  ranks bunch (1, 2 and 4 out of 44 hits) and `w/(k+rank)` left the whole signal a 0.006 spread against
+  relevance's 0.032 — no weight makes a three-value rank compete with a two-hundred-value one. **The title is
+  now scored from its match quality instead of ranked**, and scaled to the pool's own relevance spread so a
+  full title match stays proportionate — decisive near the top, unable to overturn a large margin in
+  relevance. Weights are unchanged. `rank=lexical` deliberately stays pure BM25.
+- **Search and recall hits can now say that a note has aged (MEMP-240).** A note that declares `valid_to`
+  (alias `valid_until`), `stale_after_days` or `as_of` gets a `staleness` hint on every hit — `expired` or
+  `past_window`, with the age. It is advisory: nothing is filtered or reordered. The hint is computed on the
+  row, so it survives the lean recall projection that drops the payload it comes from. A note's own date beats
+  the envelope timestamp, because retagging a note is not re-verifying it. Facts with only an `as_of` age
+  against an opt-in horizon (`MEMORY_STALENESS_FACT_DAYS`, off by default) — a hint that fires on most of the
+  corpus is one an agent learns to ignore.
+- **Writing a note that restates an existing one now says so (MEMP-240).** The post-write related-notes hint
+  marks an existing note of the same type and project with a near-identical title as a `supersede_candidate`
+  and points at `notes_supersede`, instead of letting two parallel truths sit side by side with neither marked
+  as replaced. Notes merely about the same topic are not flagged.
+- **Superseding is now verified to do what the advice above assumes**: a superseded note measurably leaves
+  search and recall (only `active` rows are queried), while staying reachable through its `supersedes` link
+  and an explicit `status: "superseded"` search. This held already; nothing asserted it until now.
+- **`memory_capabilities` tells an unrestricted token which domains exist (MEMP-236).** It returned two empty
+  arrays, which read as "you may reach nothing" but meant "you may reach everything" — indistinguishable to
+  the caller, and it left `domains_list` as the only way to enumerate domains. The lists are now populated;
+  `scope.unrestricted` says whether to read them as a limit or as an inventory.
+- **`tags_list` is marked deprecated (MEMP-235)** in favour of `notes_tags`, which it has been an alias of
+  since 0.68.0. Removal waits for a later release, once no known client calls it by name.
+- `memory_capabilities.contractVersion` -> **3**: an agent that special-cased the old empty-means-all domain
+  lists, or that wants to use the staleness hint, has to be able to detect the change.
+
+No schema change (migrations through **0017**). 412 tests.
+
+**On semantic recall (MEMP-196), which did not ship code:** a 12-query golden set of paraphrase and
+cross-language queries was built from the real corpus and measured against 0.69.0. The headline is 8 of 12
+found in the top 8 — but **all twelve fell through to the any-term fallback**, meaning not one was a real
+lexical match, and the successes trace to incidental Latin tokens (a brand name, a dedup slug) rather than
+meaning. "three phase electricity monitoring device" does not retrieve the note about exactly that, because
+the note is written in Russian. The decision to add an opt-in embedding layer beside FTS5 is recorded; which
+embedder is deliberately left to be scored against the golden set rather than guessed, since guessing the
+analogous number is what MEMP-239 just had to undo.
+
 ## 0.69.0
 
 Sprint 62 — Search relevance for the owner's own notes (MEMP-237, MEMP-238). Both were found in the field on

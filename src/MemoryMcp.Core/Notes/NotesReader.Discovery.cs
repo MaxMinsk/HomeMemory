@@ -486,16 +486,22 @@ public sealed partial class NotesReader
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
+            var rowType = reader.GetString(2);
+            var payloadJson = reader.IsDBNull(5) ? null : reader.GetString(5);
+            var updatedUtc = reader.GetString(8);
             results.Add(new SearchResult(
                 reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1), null,
-                reader.GetString(2), reader.GetString(3), 0.0, reader.GetString(4),
-                reader.IsDBNull(5) ? null : reader.GetString(5), reader.IsDBNull(6) ? null : reader.GetString(6),
-                reader.IsDBNull(7) ? null : reader.GetString(7), reader.GetString(8)));
+                rowType, reader.GetString(3), 0.0, reader.GetString(4),
+                payloadJson, reader.IsDBNull(6) ? null : reader.GetString(6),
+                reader.IsDBNull(7) ? null : reader.GetString(7), updatedUtc,
+                Staleness: StalenessOf(rowType, payloadJson, updatedUtc)));
         }
 
         return results;
     }
 
+    // A competing statement outranks a merely-related note: it is the one candidate the writer has to decide about.
+    private const double RelatedSupersedeWeight = 200d;
     private const double RelatedTagWeight = 100d;  // each shared tag dominates a single text/link signal
     private const double RelatedTextWeight = 10d;
     private const double RelatedLinkWeight = 10d;
@@ -532,11 +538,21 @@ public sealed partial class NotesReader
         }
 
         var probe = !string.IsNullOrWhiteSpace(source.Title) ? source.Title! : FirstWords(source.Body, 12);
-        foreach (var (cid, title, type, domain) in RelatedByText(probe, id, restrictToDomains))
+        foreach (var (cid, title, type, domain, project) in RelatedByText(probe, id, restrictToDomains))
         {
             var acc = GetAccumulator(candidates, cid, title, type, domain);
             acc.Score += RelatedTextWeight;
             acc.Reasons.Add("text");
+            // Same type, same project, near-identical title: not merely related but a competing statement about the
+            // same thing (MEMP-240). Writing a second one creates two truths and leaves neither marked as replaced,
+            // which is how a fact silently outlives the change that falsified it.
+            if (string.Equals(type, source.Type, StringComparison.Ordinal)
+                && string.Equals(project, source.Project, StringComparison.Ordinal)
+                && RestatesTheSameSubject(source.Title, title))
+            {
+                acc.Score += RelatedSupersedeWeight;
+                acc.Reasons.Add(SupersedeCandidateReason);
+            }
         }
 
         foreach (var link in Links(id))
@@ -589,13 +605,13 @@ public sealed partial class NotesReader
     }
 
     // Active notes (excluding the source, any type) lexically similar to the probe (OR-FTS, BM25 order). Empty probe => none.
-    private IEnumerable<(string Id, string? Title, string Type, string Domain)> RelatedByText(
+    private IEnumerable<(string Id, string? Title, string Type, string Domain, string? Project)> RelatedByText(
         string probe, string excludeId, IReadOnlyCollection<string>? restrictToDomains)
     {
         var tokens = SnippetBuilder.Tokenize(probe);
         if (tokens.Count == 0)
         {
-            return Array.Empty<(string, string?, string, string)>();
+            return Array.Empty<(string, string?, string, string, string?)>();
         }
 
         using var connection = _connectionFactory.Create();
@@ -605,15 +621,15 @@ public sealed partial class NotesReader
         command.Parameters.AddWithValue("$id", excludeId);
         AppendScopeIn(command, filters, "n.domain", restrictToDomains);
         command.CommandText =
-            "SELECT n.id, n.title, n.type, n.domain FROM notes_fts JOIN notes n ON n.rowid = notes_fts.rowid " +
+            "SELECT n.id, n.title, n.type, n.domain, n.project FROM notes_fts JOIN notes n ON n.rowid = notes_fts.rowid " +
             $"WHERE {string.Join(" AND ", filters)} ORDER BY {Bm25Weights.Expression} LIMIT 10;";
 
-        var results = new List<(string, string?, string, string)>();
+        var results = new List<(string, string?, string, string, string?)>();
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
             results.Add((reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1),
-                reader.GetString(2), reader.GetString(3)));
+                reader.GetString(2), reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetString(4)));
         }
 
         return results;
@@ -631,9 +647,39 @@ public sealed partial class NotesReader
         return accumulator;
     }
 
-    // Reasons in a stable strength order (tags strongest), only those that fired.
+    /// <summary>Marks a candidate as a competing statement rather than merely a related one (MEMP-240).</summary>
+    public const string SupersedeCandidateReason = "supersede_candidate";
+
+    // Share of the shorter title's words that both titles use. Set high on purpose: two notes about the same topic
+    // ("Hybrid ranking design" / "Hybrid ranking rollout") are related and must NOT be called replacements, while
+    // two statements of the same fact differing in what they assert ("... is client authoritative" / "... is server
+    // authoritative") are. Only the second shape should ask the writer to make a decision.
+    private const double SupersedeTitleOverlap = 0.75;
+
+    // Whether two titles name the same subject closely enough that one plausibly replaces the other. Compared as
+    // the overlap of the SHORTER title, so a long title that fully contains a short one still counts.
+    private static bool RestatesTheSameSubject(string? sourceTitle, string? candidateTitle)
+    {
+        if (string.IsNullOrWhiteSpace(sourceTitle) || string.IsNullOrWhiteSpace(candidateTitle))
+        {
+            return false;
+        }
+
+        var left = new HashSet<string>(SnippetBuilder.Tokenize(sourceTitle!), StringComparer.OrdinalIgnoreCase);
+        var right = new HashSet<string>(SnippetBuilder.Tokenize(candidateTitle!), StringComparer.OrdinalIgnoreCase);
+        if (left.Count == 0 || right.Count == 0)
+        {
+            return false;
+        }
+
+        var shared = left.Count(right.Contains);
+        return shared / (double)Math.Min(left.Count, right.Count) >= SupersedeTitleOverlap;
+    }
+
+    // Reasons in a stable strength order (a competing statement first — it asks for a decision, the rest are
+    // context), only those that fired. A reason missing from this list is silently dropped from the output.
     private static IReadOnlyList<string> OrderReasons(ISet<string> reasons) =>
-        new[] { "tags", "text", "link" }.Where(reasons.Contains).ToArray();
+        new[] { SupersedeCandidateReason, "tags", "text", "link" }.Where(reasons.Contains).ToArray();
 
     // Mutable per-candidate tally while the three related-note signals are merged.
     private sealed class RelatedAccumulator(string id, string? title, string type, string domain)

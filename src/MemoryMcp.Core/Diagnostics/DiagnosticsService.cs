@@ -13,7 +13,9 @@ public sealed class DiagnosticsService
     // Bumped when the runtime tool contract changes in a way agents should detect (memory_capabilities).
     // 2 (MEMP-232/234): discovery tools are scope-restricted, and notes_recall/memory_context take a `tags`
     // filter (with `query` now optional) — an agent has to know whether tag-recall is available before using it.
-    private const int ContractVersion = 2;
+    // 3 (MEMP-236): an unrestricted caller's readable/writable domain lists are populated instead of empty, so
+    // "empty" now unambiguously means "no domains" — a caller that special-cased the old empty-means-all must know.
+    private const int ContractVersion = 3;
     private const string SearchBackendDescription = "fts5-bm25 (lexical; no vectors)";
     private const string SkillsHint =
         "Read the 'commons' domain first (skills: memory-authoring, agent-memory-use, tag-unification) before authoring notes.";
@@ -85,16 +87,35 @@ public sealed class DiagnosticsService
             .OrderBy(info => info.Type, StringComparer.Ordinal)
             .ToList();
 
-        var readable = scope.IsUnrestricted
-            ? Array.Empty<string>()
-            : scope.AllowedDomains.Append(ScopeGuard.CommonsDomain).OrderBy(d => d, StringComparer.Ordinal).ToArray();
-        var writable = scope.IsUnrestricted
-            ? Array.Empty<string>()
-            : scope.AllowedDomains.OrderBy(d => d, StringComparer.Ordinal).ToArray();
+        // An unrestricted caller used to get two empty arrays, which read as "no domains" but meant "all of them"
+        // — the caller could not tell those apart and had no other way to learn what exists (MEMP-236). It now gets
+        // the domains that actually exist; `unrestricted` still says the lists are an inventory, not a limit.
+        var existing = scope.IsUnrestricted ? ExistingDomains(connection) : null;
+        var readable = existing
+            ?? scope.AllowedDomains.Append(ScopeGuard.CommonsDomain).OrderBy(d => d, StringComparer.Ordinal).ToArray();
+        var writable = existing
+            ?? scope.AllowedDomains.OrderBy(d => d, StringComparer.Ordinal).ToArray();
         var scopeInfo = new ScopeInfo(scope.IsUnrestricted, readable, writable, CommonsReadable: true);
 
         return new CapabilitiesReport(ServerVersion, schemaVersion, ContractVersion, types, scopeInfo,
             SearchBackendDescription, _blobs?.QuotaBytes ?? 0, ScopeGuard.CommonsDomain, SkillsHint);
+    }
+
+    // Every domain that currently holds a note, ordered. Reported to an unrestricted caller as its readable and
+    // writable set: such a caller may also write to a domain that does not exist yet, so this is an inventory of
+    // what is there, not a limit on what it may reach — `ScopeInfo.Unrestricted` is what distinguishes the two.
+    private static string[] ExistingDomains(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT DISTINCT domain FROM notes WHERE deleted = 0 ORDER BY domain;";
+        var domains = new List<string>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            domains.Add(reader.GetString(0));
+        }
+
+        return [.. domains];
     }
 
     // On-disk database size: the main file (page_count * page_size) plus the WAL/SHM sidecars when present.

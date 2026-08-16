@@ -21,7 +21,7 @@ public sealed class NotesRepository
     /// <param name="eventSink">Sink for post-commit note-change events; defaults to a no-op sink.</param>
     public NotesRepository(ISqliteConnectionFactory connectionFactory, SchemaRegistry registry, TimeProvider? timeProvider = null, INoteEventSink? eventSink = null)
     {
-        _reader = new NotesReader(connectionFactory);
+        _reader = new NotesReader(connectionFactory, timeProvider);
         _writer = new NotesWriter(connectionFactory, registry, timeProvider, eventSink);
     }
 

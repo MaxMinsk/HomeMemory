@@ -61,7 +61,26 @@ public sealed partial class MemoryTools
             related = hits.Count > 0 ? hits : null;
         }
 
-        return (related, RecallNudge(sourceAgent));
+        return (related, SupersedeNudge(related) ?? RecallNudge(sourceAgent));
+    }
+
+    // When a new note competes with an existing one — same type, same project, overlapping content — say so and
+    // point at notes_supersede (MEMP-240). Two parallel statements of the same fact leave the reader no way to tell
+    // which one is current, and the older one keeps being recalled long after it stopped being true. Takes
+    // precedence over the recall nudge: the agent has already been handed the note it would have recalled.
+    private static string? SupersedeNudge(IReadOnlyList<RelatedNote>? related)
+    {
+        var competing = related?
+            .Where(note => note.Reasons.Contains(NotesReader.SupersedeCandidateReason, StringComparer.Ordinal))
+            .ToArray();
+        if (competing is not { Length: > 0 })
+        {
+            return null;
+        }
+
+        var names = string.Join(", ", competing.Select(note => $"'{note.Title ?? note.Id}' ({note.Id})"));
+        return $"This note may restate what {names} already says. If it replaces one, call notes_supersede rather " +
+            "than leaving both — a superseded note drops out of recall, a parallel one competes with it.";
     }
 
     // The nudge fires only for an agent that identifies itself (a real sourceAgent, not the anonymous "mcp"

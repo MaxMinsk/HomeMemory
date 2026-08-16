@@ -356,8 +356,6 @@ public sealed class ContextAssembler
     }
 
     private const int MaxStateWarnings = 3;
-    // A project_state has no stale_after_days field of its own, so it ages against a default window (MEMP-206).
-    private const int DefaultProjectStateStaleDays = 14;
 
     // State notes past their staleness window, so memory_context can nudge the agent to refresh them at the end of
     // the task (MEMP-206): a project_state older than the default window, or any note that opted in via
@@ -374,15 +372,14 @@ public sealed class ContextAssembler
         var warnings = new List<string>();
         foreach (var note in candidates)
         {
-            var stale = StaleAge(note.Type, note.PayloadJson, note.UpdatedUtc, now);
-            if (stale is null)
+            if (Staleness.Evaluate(note.Type, note.PayloadJson, note.UpdatedUtc, now) is not { } stale)
             {
                 continue;
             }
 
-            var (days, ageDays) = stale.Value;
             var label = string.IsNullOrWhiteSpace(note.Title) ? note.Id : note.Title!;
-            warnings.Add($"{note.Type} '{label}' ({note.Id}) may be stale: last updated {ageDays}d ago (window {days}d) — refresh it at the end of the task.");
+            var window = stale.WindowDays is int days ? $" (window {days}d)" : string.Empty;
+            warnings.Add($"{note.Type} '{label}' ({note.Id}) may be stale: last updated {stale.AgeDays}d ago{window} — refresh it at the end of the task.");
             if (warnings.Count >= MaxStateWarnings)
             {
                 break;
@@ -392,36 +389,6 @@ public sealed class ContextAssembler
         return warnings;
     }
 
-    // The (window, age) in days when a note is past its staleness window; null otherwise. Window = explicit
-    // payload.stale_after_days, else the default for a project_state. Reference time = payload.updated (a
-    // project_state's own timestamp), else payload.last_verified_at, else the note's updated_utc.
-    private static (int Days, int AgeDays)? StaleAge(string type, string? payloadJson, string? updatedUtc, DateTimeOffset now)
-    {
-        int? window = null;
-        if (Element(payloadJson, "stale_after_days") is { ValueKind: JsonValueKind.Number } sad && sad.TryGetInt32(out var days) && days > 0)
-        {
-            window = days;
-        }
-        else if (string.Equals(type, "project_state", StringComparison.Ordinal))
-        {
-            window = DefaultProjectStateStaleDays;
-        }
-
-        if (window is not int limit)
-        {
-            return null;
-        }
-
-        var reference = Field(payloadJson, "updated") ?? Field(payloadJson, "last_verified_at") ?? updatedUtc;
-        const DateTimeStyles styles = DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal;
-        if (reference is null || !DateTimeOffset.TryParse(reference, CultureInfo.InvariantCulture, styles, out var since))
-        {
-            return null;
-        }
-
-        var age = (now - since).TotalDays;
-        return age > limit ? (limit, (int)age) : null;
-    }
 
     private static JsonElement? Element(string? json, string name)
     {

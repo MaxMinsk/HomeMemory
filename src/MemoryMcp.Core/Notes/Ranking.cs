@@ -5,8 +5,9 @@ namespace MemoryMcp.Core.Notes;
 
 /// <summary>
 /// Relative weights for the hybrid recall ranking signals (MEMP-174/175). The ranker blends each signal's
-/// competition rank within the candidate pool via Reciprocal Rank Fusion (<c>w / (k + rank)</c>) — text
-/// relevance (BM25 and title match), recency, link-degree, an importance/pin boost, note type and project.
+/// competition rank within the candidate pool via Reciprocal Rank Fusion (<c>w / (k + rank)</c>) — BM25 relevance,
+/// recency, link-degree, an importance/pin boost, note type and project — plus the title match, which is scored
+/// from its goodness instead of ranked because it takes too few distinct values to rank usefully (MEMP-239).
 /// <para>The text signals outweigh the rest (MEMP-237). Equal weights made relevance one vote in six, so a note
 /// with the query in its title lost to an off-topic note that was merely newer and of a more canonical type —
 /// the field report had a BM25-rank-1 hit land second while a rank-16 note took the top slot. Lexical (3) and title (2)
@@ -14,7 +15,7 @@ namespace MemoryMcp.Core.Notes;
 /// or overturns it only when several of them agree.</para>
 /// </summary>
 /// <param name="Lexical">Weight of the BM25 relevance signal.</param>
-/// <param name="Title">Weight of the title-match signal (MEMP-237; see <see cref="TitleRelevance"/>).</param>
+/// <param name="Title">Weight of the title-match signal (MEMP-237; scored rather than ranked, see <see cref="TitleRelevance"/>).</param>
 /// <param name="Recency">Weight of the newest-first signal.</param>
 /// <param name="Link">Weight of the more-connected-first signal.</param>
 /// <param name="Importance">Weight of the pinned/importance boost signal.</param>
@@ -50,7 +51,9 @@ public sealed record RankingWeights(double Lexical = 3.0, double Title = 2.0, do
 /// (1 = best); a fused score is higher-is-better.
 /// </summary>
 /// <param name="LexicalRank">Rank by BM25 relevance (1 = most relevant).</param>
-/// <param name="TitleRank">Rank by title match (1 = title covers the query best; no-title pools tie at 1).</param>
+/// <param name="TitleRank">Rank by title match (1 = title covers the query best; no-title pools tie at 1). Ordering
+/// only: the title's contribution to <paramref name="Fused"/> is scored from its goodness rather than from this rank
+/// (MEMP-239), so the gap between two title ranks says nothing about the gap between their contributions.</param>
 /// <param name="RecencyRank">Rank by last-update time (1 = newest).</param>
 /// <param name="LinkRank">Rank by link-degree (1 = most connected).</param>
 /// <param name="ImportanceRank">Rank by pinned/importance (1 = most important; all-neutral pools tie at 1).</param>
@@ -92,12 +95,13 @@ internal static class HybridRanker
         var typeRanks = CompetitionRanks(rows, row => row.Type);
         var projRanks = CompetitionRanks(rows, row => row.Project);
 
+        var titleScale = TitleScale(rows.Count, weights.Title);
         var scored = new List<(SearchResult Result, int Tier, double Bm25, ScoreBreakdown Breakdown)>(rows.Count);
         for (var i = 0; i < rows.Count; i++)
         {
             var fused =
                 (weights.Lexical / (RankingWeights.K + lexRanks[i])) +
-                (weights.Title / (RankingWeights.K + titleRanks[i])) +
+                ((rows[i].Title / TitleRelevance.MaxGoodness) * titleScale) +
                 (weights.Recency / (RankingWeights.K + recRanks[i])) +
                 (weights.Link / (RankingWeights.K + linkRanks[i])) +
                 (weights.Importance / (RankingWeights.K + impRanks[i])) +
@@ -128,6 +132,24 @@ internal static class HybridRanker
 
         return scored.Select(item => (item.Result, item.Breakdown)).ToList();
     }
+
+    /// <summary>
+    /// How much a full title match is worth, in fused-score units (MEMP-239). The title is the one signal that is
+    /// scored rather than ranked: every other signal spreads across the pool — lexical relevance takes a distinct
+    /// value on nearly every row — but a title either covers the query or it does not, so its goodness takes only a
+    /// handful of values and its competition ranks bunch at the top (1, 2 and 4 out of 44 hits on the field query).
+    /// Under <c>w / (k + rank)</c> that left the whole signal a 0.006 spread against lexical's 0.032, which is why
+    /// the field report survived MEMP-237: a three-value rank cannot compete with a two-hundred-value one at any
+    /// weight.
+    /// <para>The scale is the pool's own lexical spread — the gap between the best and worst possible relevance
+    /// contribution — so the title is measured against how much relevance actually varies HERE. It has to be
+    /// relative: a fixed bonus that reads as modest against 44 hits is overwhelming in a pool of two, where first
+    /// and second place differ by 0.002 and any flat addition decides the order by itself. Bounded this way, a
+    /// title that fully covers the query can lift a note over one that merely mentions the word, and still cannot
+    /// overturn a genuinely large margin in relevance.</para>
+    /// </summary>
+    private static double TitleScale(int poolSize, double weight) =>
+        weight * ((1d / (RankingWeights.K + 1)) - (1d / (RankingWeights.K + Math.Max(poolSize, 1))));
 
     // Competition rank ("1224"): rank = 1 + how many pool items are strictly better. Ties share a rank, so a pool
     // where every item is equal on a signal (e.g. no note carries importance) ranks them all 1 — a no-op contribution.

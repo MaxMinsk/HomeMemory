@@ -24,9 +24,12 @@ public sealed record CapabilitiesReport(
 public sealed record NoteTypeInfo(string Type, int LatestVersion, bool Builtin);
 
 /// <summary>The caller's domain access, derived from the bearer token.</summary>
-/// <param name="Unrestricted">True for a trusted scope with access to every domain (e.g. local stdio / root token).</param>
-/// <param name="ReadableDomains">Domains the caller may read (includes commons); empty when unrestricted.</param>
-/// <param name="WritableDomains">Domains the caller may write (excludes commons); empty when unrestricted.</param>
+/// <param name="Unrestricted">True for a trusted scope with access to every domain (e.g. local stdio / root token).
+/// Read the two domain lists through this flag: when it is false they are the LIMIT of what the token may reach;
+/// when it is true they are an INVENTORY of the domains that currently exist, and the caller may also write to a
+/// domain that does not exist yet (MEMP-236).</param>
+/// <param name="ReadableDomains">Domains the caller may read (includes commons), or every existing domain when unrestricted.</param>
+/// <param name="WritableDomains">Domains the caller may write (excludes commons), or every existing domain when unrestricted.</param>
 /// <param name="CommonsReadable">Always true: the commons domain is world-readable.</param>
 public sealed record ScopeInfo(
     bool Unrestricted, IReadOnlyList<string> ReadableDomains,

@@ -38,11 +38,22 @@ public sealed partial class NotesReader
     public const int MaxGraphNodes = 200;
 
     private readonly ISqliteConnectionFactory _connectionFactory;
+    private readonly TimeProvider _clock;
+    private readonly StalenessOptions _staleness = StalenessOptions.FromEnvironment();
 
     /// <summary>Creates a reader over the given database.</summary>
     /// <param name="connectionFactory">Database connection factory.</param>
-    public NotesReader(ISqliteConnectionFactory connectionFactory) =>
+    /// <param name="timeProvider">Clock used to age hits for the staleness hint; defaults to the system clock.</param>
+    public NotesReader(ISqliteConnectionFactory connectionFactory, TimeProvider? timeProvider = null)
+    {
         _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
+        _clock = timeProvider ?? TimeProvider.System;
+    }
+
+    // The staleness hint carried by a hit (MEMP-240): computed here, on the row, because a lean recall nulls the
+    // payload it is derived from before the caller ever sees it.
+    private StalenessHint? StalenessOf(string type, string? payloadJson, string? updatedUtc) =>
+        Staleness.Evaluate(type, payloadJson, updatedUtc, _clock.GetUtcNow(), _staleness);
 
     /// <summary>Returns the full note by id, or <c>null</c> if it does not exist.</summary>
     /// <param name="id">The note id.</param>

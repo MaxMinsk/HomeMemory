@@ -109,7 +109,7 @@ public sealed partial class NotesReader
         return Convert.ToInt32(command.ExecuteScalar());
     }
 
-    private static IReadOnlyList<SearchResult> Page(
+    private IReadOnlyList<SearchResult> Page(
         SqliteConnection connection, bool useFts, IReadOnlyList<string> tokens,
         string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
         IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, int limit, int offset, bool includePayload, string? sortBody = null, string? exactKey = null, bool phrase = false, IReadOnlyList<string>? negTokens = null, bool matchAny = false, string? projectEquals = null)
@@ -142,19 +142,23 @@ public sealed partial class NotesReader
         {
             var title = reader.IsDBNull(1) ? null : reader.GetString(1);
             var body = reader.IsDBNull(4) ? null : reader.GetString(4);
+            var rowType = reader.GetString(2);
+            var payloadJson = reader.IsDBNull(7) ? null : reader.GetString(7);
+            var updatedUtc = reader.GetString(10);
             results.Add(new SearchResult(
                 reader.GetString(0),
                 title,
                 useFts ? SnippetBuilder.Build(title, body, tokens) : null,
-                reader.GetString(2),
+                rowType,
                 reader.GetString(3),
                 reader.GetDouble(5),
                 includePayload ? reader.GetString(6) : null,
-                includePayload && !reader.IsDBNull(7) ? reader.GetString(7) : null,
+                includePayload ? payloadJson : null,
                 includePayload && !reader.IsDBNull(8) ? reader.GetString(8) : null,
                 includePayload && !reader.IsDBNull(9) ? reader.GetString(9) : null,
-                includePayload ? reader.GetString(10) : null,
-                reader.IsDBNull(11) ? null : reader.GetString(11))); // project (envelope) always returned
+                includePayload ? updatedUtc : null,
+                reader.IsDBNull(11) ? null : reader.GetString(11), // project (envelope) always returned
+                Staleness: StalenessOf(rowType, payloadJson, updatedUtc)));
         }
 
         return results;
@@ -163,7 +167,7 @@ public sealed partial class NotesReader
     // Hybrid relevance (MEMP-174): pull a bounded BM25 candidate pool (with link-degree + payload), re-rank it by
     // RRF over relevance/recency/link-degree/importance in C#, then page within the re-ranked pool. exact-key matches
     // still float to the top. Deep paging past the pool returns nothing (recall uses small limits) — the pool caps cost.
-    private static IReadOnlyList<SearchResult> HybridPage(
+    private IReadOnlyList<SearchResult> HybridPage(
         SqliteConnection connection, IReadOnlyList<string> tokens,
         string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
         IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, int limit, int offset,
@@ -194,15 +198,17 @@ public sealed partial class NotesReader
                 var dedupKey = reader.IsDBNull(9) ? null : reader.GetString(9);
                 var updatedUtc = reader.GetString(10);
                 var degree = reader.GetInt64(12);
+                var rowType = reader.GetString(2);
                 var result = new SearchResult(
                     reader.GetString(0), title, SnippetBuilder.Build(title, body, tokens),
-                    reader.GetString(2), reader.GetString(3), bm25,
+                    rowType, reader.GetString(3), bm25,
                     includePayload ? reader.GetString(6) : null,
                     includePayload ? payloadJson : null,
                     includePayload ? tagsJson : null,
                     includePayload ? dedupKey : null,
                     includePayload ? updatedUtc : null,
-                    reader.IsDBNull(11) ? null : reader.GetString(11));
+                    reader.IsDBNull(11) ? null : reader.GetString(11),
+                    Staleness: StalenessOf(rowType, payloadJson, updatedUtc));
                 var project = reader.IsDBNull(11) ? null : reader.GetString(11);
                 rows.Add(new RankRow(
                     result, ExactKeyTier(dedupKey, title, exactKey), -bm25, TitleRelevance.Goodness(title, terms),
@@ -331,15 +337,19 @@ public sealed partial class NotesReader
         {
             while (reader.Read())
             {
+                var exactType = reader.GetString(2);
+                var exactPayload = reader.IsDBNull(5) ? null : reader.GetString(5);
+                var exactUpdated = reader.IsDBNull(8) ? null : reader.GetString(8);
                 rows.Add(new SearchResult(
                     reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1), null,
-                    reader.GetString(2), reader.GetString(3), 0.0,
+                    exactType, reader.GetString(3), 0.0,
                     includePayload ? reader.GetString(4) : null,
-                    includePayload && !reader.IsDBNull(5) ? reader.GetString(5) : null,
+                    includePayload ? exactPayload : null,
                     includePayload && !reader.IsDBNull(6) ? reader.GetString(6) : null,
                     includePayload && !reader.IsDBNull(7) ? reader.GetString(7) : null,
-                    includePayload && !reader.IsDBNull(8) ? reader.GetString(8) : null,
-                    includePayload && !reader.IsDBNull(9) ? reader.GetString(9) : null));
+                    includePayload ? exactUpdated : null,
+                    includePayload && !reader.IsDBNull(9) ? reader.GetString(9) : null,
+                    Staleness: StalenessOf(exactType, exactPayload, exactUpdated)));
             }
         }
 
