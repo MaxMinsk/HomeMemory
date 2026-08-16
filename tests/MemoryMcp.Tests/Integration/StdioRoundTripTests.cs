@@ -317,6 +317,34 @@ public class StdioRoundTripTests
         Assert.Contains("cross-domain overview", Description("memory_context"), StringComparison.OrdinalIgnoreCase);
     }
 
+    // MEMP-240/244: a note that restates an existing one of the same type and project is named as a competing
+    // statement and pointed at notes_supersede — on an UPDATE too, which is how two parallel truths usually appear
+    // (the new wording is written while the old statement sits untouched beside it).
+    private static async Task AssertSupersedeCandidateHint(McpClient client, CancellationToken ct)
+    {
+        await client.CallToolAsync("notes_upsert", new Dictionary<string, object?>
+        {
+            ["domain"] = "memory-mcp", ["type"] = "fact", ["title"] = "Reward is client authoritative",
+            ["payload"] = new Dictionary<string, object?> { ["statement"] = "the client decides the reward" },
+            ["dedupKey"] = "ADOPT-SUPERSEDE-OLD",
+        }, cancellationToken: ct);
+        var competing = await client.CallToolAsync("notes_upsert", new Dictionary<string, object?>
+        {
+            ["domain"] = "memory-mcp", ["type"] = "fact", ["title"] = "Reward is server authoritative",
+            ["payload"] = new Dictionary<string, object?> { ["statement"] = "the server decides the reward" },
+            ["dedupKey"] = "ADOPT-SUPERSEDE-NEW",
+        }, cancellationToken: ct);
+        Assert.Contains("notes_supersede", Text(competing), StringComparison.Ordinal);
+
+        var restated = await client.CallToolAsync("notes_upsert", new Dictionary<string, object?>
+        {
+            ["domain"] = "memory-mcp", ["type"] = "fact", ["title"] = "Reward is server authoritative",
+            ["payload"] = new Dictionary<string, object?> { ["statement"] = "the server decides it, confirmed" },
+            ["dedupKey"] = "ADOPT-SUPERSEDE-NEW", // same key => an update, not a create
+        }, cancellationToken: ct);
+        Assert.Contains("notes_supersede", Text(restated), StringComparison.Ordinal);
+    }
+
     // MEMP-205 (post-write related hint) + MEMP-204 (recall-before-write nudge): both surface on the write response.
     private static async Task AssertAdoptionHints(McpClient client, CancellationToken ct)
     {
@@ -335,6 +363,8 @@ public class StdioRoundTripTests
         }, cancellationToken: ct);
         Assert.True(created.IsError is not true, "adoption upsert reported an error: " + Text(created));
         Assert.Contains("Adopt anchor note", Text(created)); // the tag-sibling surfaced as a related hint
+
+        await AssertSupersedeCandidateHint(client, ct);
 
         // An identified agent that writes without recalling first is nudged (advisory, non-blocking).
         var nudged = await client.CallToolAsync("notes_upsert", new Dictionary<string, object?>

@@ -54,14 +54,13 @@ public sealed partial class MemoryTools
             return (null, null);
         }
 
-        IReadOnlyList<RelatedNote>? related = null;
-        if (created)
-        {
-            var hits = _notes.Related(id, 3, _authz.ReadRestriction(domain));
-            related = hits.Count > 0 ? hits : null;
-        }
+        // Candidates are computed for updates too (MEMP-244): rewriting a note is a common way to end up with two
+        // competing statements, since the older one sits untouched beside the new wording. Only the CREATE path
+        // returns the full related list, as documented — an update just gets told if it is restating something.
+        var hits = _notes.Related(id, 3, _authz.ReadRestriction(domain));
+        var related = created && hits.Count > 0 ? hits : null;
 
-        return (related, SupersedeNudge(related) ?? RecallNudge(sourceAgent));
+        return (related, SupersedeNudge(hits) ?? RecallNudge(sourceAgent));
     }
 
     // When a new note competes with an existing one — same type, same project, overlapping content — say so and
