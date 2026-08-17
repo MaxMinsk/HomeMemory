@@ -26,18 +26,20 @@ public class GoldenSetThreeArmTests(ITestOutputHelper output)
 {
     private sealed record CorpusNote(string Id, string Title, string Type, string Domain, string? Body, string? TagsJson, string? PayloadJson);
 
-    // Each entry: the query a person would actually type, the domain it belongs to, and a distinctive fragment
-    // of the title of the note that ought to come back.
+    // Each entry: the query a person would actually type, the domain it belongs to, and a fragment of the
+    // title of the note that ought to come back. The fragments are deliberately long enough to be UNIQUE in the
+    // corpus — a short one such as "Чили" also matches a measurement note and a chilli-pepper reference, and the
+    // measurement would then score whichever happened to rank first rather than the note it means.
     private static readonly (string Query, string Domain, string Expected)[] Golden =
     [
         ("spicy lamb curry cooked in a cauldron", "kitchen", "Do Pyaza"),
-        ("mussels steamed in their shells", "kitchen", "Мидии"),
+        ("mussels steamed in their shells", "kitchen", "Мидии В Створках"),
         ("cold summer soup on fermented milk", "kitchen", "Окрошка"),
         ("clay oven for baking bread", "kitchen", "Тандыр"),
         ("stone for baking pizza in a grill", "kitchen", "Камень"),
-        ("chili with minced beef", "kitchen", "Чили"),
+        ("chili with minced beef", "kitchen", "Чили В Казане С Фаршем"),
         ("what to cook for guests outdoors in summer", "kitchen", "Летние"),
-        ("which wireless sensors should I buy for the house", "home", "Zigbee"),
+        ("which wireless sensors should I buy for the house", "home", "Zigbee-бренды"),
         ("how much will utilities cost per year", "home", "коммунальн"),
         ("three phase electricity monitoring device", "home", "Shelly Pro 3EM"),
         ("почему заметка с нужным словом в заголовке не на первом месте", "development", "Title weighting"),
@@ -57,9 +59,9 @@ public class GoldenSetThreeArmTests(ITestOutputHelper output)
             + $"{corpus.Count(note => string.IsNullOrWhiteSpace(note.Body))} with an empty body");
 
         using var embedder = new E5OnnxEmbedder(directory);
-        var lexical = Measure(corpus, null, directory, embedder);
-        var legacy = Measure(corpus, registry => new LegacyRetrievalProjector(), directory, embedder);
-        var schema = Measure(corpus, registry => new SchemaRetrievalProjector(registry), directory, embedder);
+        var lexical = Measure(corpus, null, directory, embedder, out _);
+        var legacy = Measure(corpus, _ => new LegacyRetrievalProjector(), directory, embedder, out var legacyPassages);
+        var schema = Measure(corpus, registry => new SchemaRetrievalProjector(registry), directory, embedder, out var schemaPassages);
 
         output.WriteLine("");
         output.WriteLine("| # | query | lexical | legacy vectors | schema vectors |");
@@ -73,6 +75,8 @@ public class GoldenSetThreeArmTests(ITestOutputHelper output)
         output.WriteLine("");
         output.WriteLine($"recall@10 : lexical {Recall(lexical)}/{Golden.Length}, legacy {Recall(legacy)}/{Golden.Length}, schema {Recall(schema)}/{Golden.Length}");
         output.WriteLine($"mean rank : lexical {MeanRank(lexical):F1}, legacy {MeanRank(legacy):F1}, schema {MeanRank(schema):F1}   (misses counted as 200)");
+        output.WriteLine($"passages  : legacy {legacyPassages}, schema {schemaPassages} "
+            + $"({100.0 * (legacyPassages - schemaPassages) / Math.Max(1, legacyPassages):F0}% fewer vectors to store and scan)");
 
         // The bar MEMP-252 set: selecting fields must not be WORSE than sweeping every string in. It is
         // deliberately not "must be better" — the honest outcome may be that the two tie on this corpus and the
@@ -85,49 +89,42 @@ public class GoldenSetThreeArmTests(ITestOutputHelper output)
     // all) and returns each golden query's 1-based position, or null for a miss.
     private static int?[] Measure(
         IReadOnlyList<CorpusNote> corpus, Func<SchemaRegistry, IRetrievalProjector>? projectorFor,
-        string directory, IEmbedder embedder)
+        string directory, IEmbedder embedder, out long passageCount)
     {
+        passageCount = 0;
         using var temp = new TempDatabase();
         var factory = new SqliteConnectionFactory(temp.FilePath);
         new Migrator(factory, SchemaMigrations.All).Migrate();
         var registry = SchemaRegistry.FromEmbeddedResources();
+        RegisterExportedSchemas(registry, factory);
         var notes = new NotesRepository(factory, registry);
 
-        var seeded = new List<(string Id, CorpusNote Note)>();
-        foreach (var note in corpus)
-        {
-            // A payload that no longer validates (an older schema version, a hand-edited note) is seeded without
-            // it rather than skipped: dropping the note would change the corpus between arms.
-            string? id = null;
-            foreach (var payload in new[] { note.PayloadJson, null })
-            {
-                try
-                {
-                    id = notes.Upsert(note.Domain, note.Type, note.Title, note.Body, payload, note.TagsJson, note.Id, "eval").Id;
-                    break;
-                }
-                catch (Exception exception) when (exception is InvalidOperationException or ArgumentException or JsonException)
-                {
-                    // Try again without the payload.
-                }
-            }
-
-            if (id is not null)
-            {
-                seeded.Add((id, note));
-            }
-        }
+        var seeded = Seed(corpus, notes);
 
         VectorRecall? vectors = null;
         if (projectorFor is not null)
         {
             var projector = projectorFor(registry);
-            vectors = new VectorRecall(embedder, new PassageStore(factory), projector,
-                new EmbeddingOptions(Enabled: true, directory));
+            var passages = new PassageStore(factory);
+            vectors = new VectorRecall(embedder, passages, projector, new EmbeddingOptions(Enabled: true, directory));
             foreach (var (id, note) in seeded)
             {
                 vectors.Index(id, new NoteContent(note.Type, note.Title, note.Body, note.TagsJson, note.PayloadJson),
                     "2026-08-17T00:00:00Z");
+            }
+
+            passageCount = passages.Coverage(embedder.ModelId, projector.CurrentMappingHashes).Current;
+
+            // A near-tie between the arms would be indistinguishable from the schema arm having silently fallen
+            // back to legacy for every type — which is exactly what happens if the annotations do not reach the
+            // schemas the corpus actually uses. So state plainly which types were mapped.
+            if (projector is SchemaRetrievalProjector schemaProjector)
+            {
+                var (mapped, onLegacy) = schemaProjector.MappingCoverage();
+                Console.WriteLine($"MAPPED TYPES: {mapped} annotated, {onLegacy} on legacy. "
+                    + $"recipe -> {(schemaProjector.Describe("recipe").IsLegacy ? "LEGACY" : schemaProjector.Describe("recipe").MappingVersion)}, "
+                    + $"backlog_item -> {(schemaProjector.Describe("backlog_item").IsLegacy ? "LEGACY" : "mapped")}, "
+                    + $"reference -> {(schemaProjector.Describe("reference").IsLegacy ? "LEGACY" : "mapped")}");
             }
         }
 
@@ -143,6 +140,77 @@ public class GoldenSetThreeArmTests(ITestOutputHelper output)
         }
 
         return positions;
+    }
+
+    // Registers the schemas exported from the live server, plus any hand-annotated overrides. Without this the
+    // corpus is validated against the schemas this BUILD ships, which are behind what the server actually runs —
+    // and every note of a newer type would be seeded with its payload stripped, quietly gutting the measurement.
+    private static void RegisterExportedSchemas(SchemaRegistry registry, ISqliteConnectionFactory factory)
+    {
+        var root = Path.Combine(RepositoryRoot(), "Notes~", "embedding-eval");
+        foreach (var folder in new[] { "schemas", "schemas-annotated" })
+        {
+            var directory = Path.Combine(root, folder);
+            if (!Directory.Exists(directory))
+            {
+                continue;
+            }
+
+            foreach (var file in Directory.GetFiles(directory, "*.json").OrderBy(path => path, StringComparer.Ordinal))
+            {
+                try
+                {
+                    registry.Upsert(factory, File.ReadAllText(file), "eval");
+                }
+                catch (SchemaAuthoringException)
+                {
+                    // A built-in version is read-only, which is correct: this build's annotated copy must win
+                    // over the unannotated one the server currently has.
+                }
+            }
+        }
+    }
+
+    // Seeds the corpus into a fresh database. A payload that no longer validates is seeded WITHOUT it rather
+    // than skipped: dropping the note would change the corpus between arms, and a comparison across different
+    // corpora measures nothing.
+    private static List<(string Id, CorpusNote Note)> Seed(IReadOnlyList<CorpusNote> corpus, NotesRepository notes)
+    {
+        var seeded = new List<(string Id, CorpusNote Note)>();
+        var withoutPayload = 0;
+        foreach (var note in corpus)
+        {
+            string? id = null;
+            foreach (var payload in new[] { note.PayloadJson, null })
+            {
+                try
+                {
+                    id = notes.Upsert(note.Domain, note.Type, note.Title, note.Body, payload, note.TagsJson, note.Id, "eval").Id;
+                    break;
+                }
+                catch (Exception exception) when (exception is NoteValidationException or InvalidOperationException or ArgumentException or JsonException)
+                {
+                    if (payload is not null)
+                    {
+                        withoutPayload++;
+                    }
+                }
+            }
+
+            if (id is not null)
+            {
+                seeded.Add((id, note));
+            }
+        }
+
+        // Surfaced rather than swallowed: if many payloads failed to validate, the arms are comparing a corpus
+        // that has had its payloads stripped — precisely the content this measurement is about.
+        if (withoutPayload > 0)
+        {
+            Console.WriteLine($"WARNING: {withoutPayload} note(s) seeded without their payload (schema mismatch).");
+        }
+
+        return seeded;
     }
 
     private static string Show(int? position) =>

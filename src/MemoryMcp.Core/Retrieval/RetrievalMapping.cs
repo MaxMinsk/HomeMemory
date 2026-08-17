@@ -143,7 +143,7 @@ public sealed class RetrievalMapping
             var groups = new List<string>();
             if (root.TryGetProperty("properties", out var properties))
             {
-                Collect(properties, string.Empty, fields, groups);
+                Collect(properties, string.Empty, fields, groups, root, 0);
             }
 
             var hasTypeLevel = root.TryGetProperty(Keyword, out var typeLevel);
@@ -196,12 +196,20 @@ public sealed class RetrievalMapping
         return ($"{type}@_v/{version}".Replace("@_v", string.Empty, StringComparison.Ordinal), typeClass, halfLife);
     }
 
+    /// <summary>
+    /// Guards against a <c>$ref</c> cycle, which a schema is free to contain (a step whose sub-steps are steps).
+    /// A depth cap rather than a visited-set because the same definition legitimately appears at several paths.
+    /// </summary>
+    private const int MaxDepth = 12;
+
     // Walks the schema shape so a declared path matches the payload path a projector will produce: an array
     // contributes "[]" and an object contributes ".name". Annotations therefore cannot name a field that does
     // not exist — the walk only ever visits declared properties.
-    private static void Collect(JsonElement properties, string prefix, List<FieldRetrieval> fields, List<string> groups)
+    private static void Collect(
+        JsonElement properties, string prefix, List<FieldRetrieval> fields, List<string> groups,
+        JsonElement root, int depth)
     {
-        if (properties.ValueKind != JsonValueKind.Object)
+        if (properties.ValueKind != JsonValueKind.Object || depth > MaxDepth)
         {
             return;
         }
@@ -209,13 +217,16 @@ public sealed class RetrievalMapping
         foreach (var property in properties.EnumerateObject())
         {
             var path = prefix.Length == 0 ? property.Name : $"{prefix}.{property.Name}";
-            var schema = property.Value;
+            var schema = Resolve(property.Value, root, depth);
             if (schema.ValueKind != JsonValueKind.Object)
             {
                 continue;
             }
 
-            if (schema.TryGetProperty(Keyword, out var annotation))
+            // The annotation is read from the property, NOT from the resolved target: two properties can share
+            // one $defs entry and still want different retrieval treatment, and a shared definition must not
+            // acquire an annotation meant for one of its users.
+            if (property.Value.ValueKind == JsonValueKind.Object && property.Value.TryGetProperty(Keyword, out var annotation))
             {
                 var field = ReadField(path, annotation);
                 fields.Add(field);
@@ -227,15 +238,56 @@ public sealed class RetrievalMapping
 
             if (schema.TryGetProperty("properties", out var nested))
             {
-                Collect(nested, path, fields, groups);
+                Collect(nested, path, fields, groups, root, depth + 1);
             }
 
-            if (schema.TryGetProperty("items", out var items) && items.ValueKind == JsonValueKind.Object
-                && items.TryGetProperty("properties", out var itemProperties))
+            if (schema.TryGetProperty("items", out var items))
             {
-                Collect(itemProperties, path + "[]", fields, groups);
+                var resolvedItems = Resolve(items, root, depth);
+                if (resolvedItems.ValueKind == JsonValueKind.Object
+                    && resolvedItems.TryGetProperty("properties", out var itemProperties))
+                {
+                    Collect(itemProperties, path + "[]", fields, groups, root, depth + 1);
+                }
             }
         }
+    }
+
+    // Follows a local "#/$defs/name" pointer. Only same-document refs are followed: a remote ref would mean a
+    // fetch on a hot path, and the schemas this serves are self-contained by construction. An unresolvable ref
+    // yields the ref node itself, which simply contributes no annotated fields rather than throwing — the
+    // validator is what judges whether a schema is well-formed.
+    private static JsonElement Resolve(JsonElement schema, JsonElement root, int depth)
+    {
+        var current = schema;
+        for (var hop = 0; hop < MaxDepth - depth && current.ValueKind == JsonValueKind.Object; hop++)
+        {
+            if (!current.TryGetProperty("$ref", out var reference) || reference.ValueKind != JsonValueKind.String)
+            {
+                return current;
+            }
+
+            var pointer = reference.GetString();
+            if (pointer is null || !pointer.StartsWith("#/", StringComparison.Ordinal))
+            {
+                return current;
+            }
+
+            var target = root;
+            foreach (var segment in pointer[2..].Split('/', StringSplitOptions.RemoveEmptyEntries))
+            {
+                // JSON Pointer escapes, in the order the specification requires: ~1 before ~0.
+                var name = segment.Replace("~1", "/", StringComparison.Ordinal).Replace("~0", "~", StringComparison.Ordinal);
+                if (target.ValueKind != JsonValueKind.Object || !target.TryGetProperty(name, out target))
+                {
+                    return current;
+                }
+            }
+
+            current = target;
+        }
+
+        return current;
     }
 
     private static FieldRetrieval ReadField(string path, JsonElement annotation)

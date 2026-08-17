@@ -14,6 +14,68 @@ public class SchemaRetrievalProjectorTests
 {
     private static readonly SchemaRegistry Schemas = SchemaRegistry.FromEmbeddedResources();
 
+    // A schema in the shape the live server actually uses: $ref into $defs, shared between two properties.
+    // The built-in schemas are all flat, so without this the walker's ref handling would be untested against
+    // the only schemas that need it.
+    private const string RefSchema = """
+        {
+          "$id": "dish@1", "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object",
+          "properties": {
+            "preparation": { "type": "array", "items": { "$ref": "#/$defs/step" } },
+            "cooking": { "type": "array", "items": { "$ref": "#/$defs/step" } },
+            "parts": { "type": "array", "items": { "$ref": "#/$defs/part" } }
+          },
+          "$defs": {
+            "step": {
+              "type": "object",
+              "properties": {
+                "text": { "type": "string", "x-retrieval": { "lexical": "primary", "semantic": "steps" } },
+                "phase": { "type": "string", "x-retrieval": { "lexical": "none", "semantic": false } }
+              }
+            },
+            "part": {
+              "type": "object",
+              "properties": { "name": { "type": "string", "x-retrieval": { "semantic": "parts" } } }
+            }
+          }
+        }
+        """;
+
+    /// <summary>
+    /// The live corpus's richest type composes through <c>$ref</c> and <c>$defs</c>, so a walker that does not
+    /// follow refs finds no annotated fields at all on exactly the type where field selection matters most —
+    /// and it fails SILENTLY, by falling back to legacy.
+    /// </summary>
+    [Fact]
+    public void Annotations_behind_a_local_ref_are_found_and_shared_definitions_serve_every_user()
+    {
+        var mapping = RetrievalMapping.FromSchema("dish", 1, RefSchema)!;
+
+        Assert.Equal("steps", mapping.ForPath("preparation[].text")?.SemanticGroup);
+        Assert.Equal("steps", mapping.ForPath("cooking[].text")?.SemanticGroup);
+        Assert.Equal("parts", mapping.ForPath("parts[].name")?.SemanticGroup);
+        // A field the shared definition marks as noise stays noise wherever it appears.
+        Assert.Null(mapping.ForPath("preparation[].phase")?.SemanticGroup);
+    }
+
+    /// <summary>A ref that points nowhere must not throw: the validator judges schema well-formedness, not this.</summary>
+    [Fact]
+    public void An_unresolvable_ref_yields_no_fields_rather_than_an_error()
+    {
+        const string Dangling = """
+            {
+              "$id": "dish@1", "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object",
+              "x-retrieval": { "version": "r1" },
+              "properties": { "steps": { "type": "array", "items": { "$ref": "#/$defs/missing" } } }
+            }
+            """;
+
+        var mapping = RetrievalMapping.FromSchema("dish", 1, Dangling);
+
+        Assert.NotNull(mapping);
+        Assert.Empty(mapping!.Fields);
+    }
+
     private static SchemaRetrievalProjector Projector() => new(Schemas);
 
     private static string TextOf(IReadOnlyList<RetrievalPassage> passages) =>

@@ -153,20 +153,11 @@ public sealed class SchemaRegistry
             throw new SchemaAuthoringException($"Not a valid JSON Schema: {exception.Message}");
         }
 
-        // Retrieval annotations are validated HERE, where an author can still fix them. The projector's own
-        // fallback (legacy indexing on a parse failure) keeps the server running but is silent — a typo'd
-        // annotation would simply stop taking effect, and nothing would ever say so.
-        try
-        {
-            Retrieval.RetrievalMapping.FromSchema(type, version, json);
-        }
-        catch (ArgumentException exception)
-        {
-            throw new SchemaAuthoringException($"Invalid {Retrieval.RetrievalMapping.Keyword} annotation: {exception.Message}");
-        }
+        ValidateAnnotations(type, version, json);
 
         var existing = Get(type, version);
-        if (existing is not null && !string.Equals(existing.Json, json, StringComparison.Ordinal) && NotesExist(connectionFactory, type))
+        if (existing is not null && !string.Equals(existing.Json, json, StringComparison.Ordinal)
+            && !OnlyRetrievalAnnotationsChanged(existing.Json, json) && NotesExist(connectionFactory, type))
         {
             throw new SchemaAuthoringException(
                 $"Schema '{type}@{version}' is already in use by existing notes; bump the version for changes.");
@@ -246,6 +237,65 @@ public sealed class SchemaRegistry
         command.Parameters.AddWithValue("$j", definition.Json);
         command.Parameters.AddWithValue("$a", (object?)author ?? DBNull.Value);
         command.ExecuteNonQuery();
+    }
+
+    // Retrieval annotations are validated HERE, where an author can still fix them. The projector's own
+    // fallback (legacy indexing on a parse failure) keeps the server running but is silent — a typo'd
+    // annotation would simply stop taking effect, and nothing would ever say so.
+    private static void ValidateAnnotations(string type, int version, string json)
+    {
+        try
+        {
+            Retrieval.RetrievalMapping.FromSchema(type, version, json);
+        }
+        catch (ArgumentException exception)
+        {
+            throw new SchemaAuthoringException($"Invalid {Retrieval.RetrievalMapping.Keyword} annotation: {exception.Message}");
+        }
+    }
+
+    /// <summary>
+    /// True when two versions of a schema differ ONLY in their <c>x-retrieval</c> annotations (MEMP-252).
+    /// <para>This is what lets retrieval be retuned without a data-contract version bump. The immutability rule
+    /// exists because changing a published type can invalidate stored notes — but an annotation cannot: JSON
+    /// Schema validators ignore unknown keywords, so by construction every note that validated before still
+    /// validates. What an annotation change DOES invalidate is the index, and that is tracked separately by the
+    /// mapping hash, which marks the affected vectors stale and schedules a selective reindex.</para>
+    /// <para>Comparison is structural, not textual: the two documents are re-serialised with every
+    /// <c>x-retrieval</c> node removed, so reformatting alone will not slip a real change past this.</para>
+    /// </summary>
+    private static bool OnlyRetrievalAnnotationsChanged(string existing, string candidate)
+    {
+        try
+        {
+            using var before = System.Text.Json.JsonDocument.Parse(existing);
+            using var after = System.Text.Json.JsonDocument.Parse(candidate);
+            return string.Equals(
+                WithoutAnnotations(before.RootElement), WithoutAnnotations(after.RootElement), StringComparison.Ordinal);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return false;
+        }
+    }
+
+    // A canonical rendering of a schema with retrieval annotations stripped: object keys sorted, so key order
+    // is not mistaken for a contract change either.
+    private static string WithoutAnnotations(System.Text.Json.JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case System.Text.Json.JsonValueKind.Object:
+                var parts = element.EnumerateObject()
+                    .Where(property => !string.Equals(property.Name, Retrieval.RetrievalMapping.Keyword, StringComparison.Ordinal))
+                    .OrderBy(property => property.Name, StringComparer.Ordinal)
+                    .Select(property => $"{System.Text.Json.JsonSerializer.Serialize(property.Name)}:{WithoutAnnotations(property.Value)}");
+                return "{" + string.Join(",", parts) + "}";
+            case System.Text.Json.JsonValueKind.Array:
+                return "[" + string.Join(",", element.EnumerateArray().Select(WithoutAnnotations)) + "]";
+            default:
+                return element.GetRawText();
+        }
     }
 
     private static bool NotesExist(ISqliteConnectionFactory connectionFactory, string type)
