@@ -76,25 +76,45 @@ public sealed partial class NotesReader
             return exact;
         }
 
-        var total = Count(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens, any, projectEquals);
-        // auto: an AND query that matched nothing is re-run as any-term ranked partials, flagged relaxed (MEMP-190).
-        var relaxed = false;
-        if (useFts && !any && total == 0 && string.Equals(mode, "auto", StringComparison.Ordinal) && tokens.Count > 1)
-        {
-            any = true;
-            relaxed = true;
-            total = Count(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens, any, projectEquals);
-        }
+        var (total, relaxed) = CountWithRelaxation(
+            connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase,
+            negTokens, mode, projectEquals, ref any);
 
+        var pooled = 0;
         var items = hybrid
-            ? HybridPage(connection, query, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload, exactKey, phrase, negTokens, explain, any, boostProject, projectEquals, relaxed)
+            ? HybridPage(connection, query, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload, exactKey, phrase, negTokens, explain, any, boostProject, projectEquals, relaxed, count => pooled = count)
             : Page(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload, sortBody, exactKey, phrase, negTokens, any, projectEquals);
         if (includeLinks)
         {
             items = items.Select(item => item with { Links = Links(item.Id) }).ToList();
         }
 
-        return new SearchPage(items, total, offset, limit, offset + items.Count < total, relaxed);
+        // `total` counts what the LEXICAL query matched. Once semantic candidates can enter the pool (MEMP-196)
+        // that number no longer describes the page: a note found only by meaning shares no token with the query
+        // and is not counted, so a vector-only page reported items alongside total=0 — and hasMore then said
+        // false, telling a paginating caller to stop on a page it had not finished (MEMP-265).
+        var fusedTotal = Math.Max(total, pooled);
+        return new SearchPage(items, fusedTotal, offset, limit, offset + items.Count < fusedTotal, relaxed,
+            TotalIsLowerBound: pooled > total);
+    }
+
+    // Counts the lexical matches, re-running an AND query that matched nothing as ranked any-term partials
+    // (MEMP-190). Returns whether it had to relax, because the ranker weights meaning more heavily when the
+    // strict pass found nothing at all.
+    private static (int Total, bool Relaxed) CountWithRelaxation(
+        SqliteConnection connection, bool useFts, IReadOnlyList<string> tokens, string? domain, string? type,
+        IReadOnlyCollection<string>? tags, string status, IReadOnlyCollection<string>? restrictToDomains,
+        CompiledFilter? compiledFilter, bool phrase, IReadOnlyList<string> negTokens, string? mode,
+        string? projectEquals, ref bool any)
+    {
+        var total = Count(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens, any, projectEquals);
+        if (!useFts || any || total != 0 || !string.Equals(mode, "auto", StringComparison.Ordinal) || tokens.Count <= 1)
+        {
+            return (total, false);
+        }
+
+        any = true;
+        return (Count(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens, any, projectEquals), true);
     }
 
     private static int Count(
@@ -173,7 +193,7 @@ public sealed partial class NotesReader
         string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
         IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, int limit, int offset,
         bool includePayload, string? exactKey, bool phrase, IReadOnlyList<string> negTokens, bool explain, bool matchAny = false,
-        string? boostProject = null, string? projectEquals = null, bool relaxed = false)
+        string? boostProject = null, string? projectEquals = null, bool relaxed = false, Action<int>? reportPool = null)
     {
         using var command = connection.CreateCommand();
         var where = ApplyFilters(command, true, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens, matchAny, projectEquals);
@@ -194,6 +214,7 @@ public sealed partial class NotesReader
         var weights = SelectWeights(boostProject, relaxed);
         weights = ApplyVectorScores(queryText, rows, weights);
         var fused = HybridRanker.Fuse(rows, weights);
+        reportPool?.Invoke(fused.Count);
         return fused.Skip(offset).Take(limit)
             .Select(item => explain ? item.Result with { Explain = item.Breakdown } : item.Result)
             .ToList();

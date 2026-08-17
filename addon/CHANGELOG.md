@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.72.0
+
+Sprint 65 — a note's TYPE now decides how it is indexed, instead of every string being swept into the vector
+regardless of what it means (MEMP-252, MEMP-247, MEMP-258, MEMP-261, MEMP-264, MEMP-265, MEMP-196 closed).
+
+- **Types can declare how they are retrieved.** A schema property can now carry an `x-retrieval` annotation
+  saying what part it plays in search: which passage group it is embedded into, its weight in the full-text
+  index, and whether it supplies a universal signal such as "when this was observed". `fact`, `decision`,
+  `recipe`, `backlog_item` and `episode` ship with these declared. Any type that declares nothing keeps the old
+  behaviour exactly, so this rolls out one type at a time rather than as a cutover.
+- **Measured before believed, and the honest answer is a tie.** Against 1515 real notes, selecting fields
+  scored **9/12 on recall, the same as embedding every string**. Its real wins are an **8% smaller index**
+  (6099 vectors down to 5603) and explainability. Reported that way rather than dressed up as a search
+  improvement, because that is not what the numbers say. The step that DID earn its place is vectors
+  themselves: 8/12 lexical to 9/12, and the query that motivated the whole feature goes from unfindable to
+  fifth. Two of twelve queries got worse — vectors reorder losers as well as winners.
+- **A search result can now tell you why it matched.** For a semantic hit, `explain` names the passage that
+  won and the exact fields it was built from: "matched on `ingredients`, from `payload.ingredients[2].name`".
+  Previously the only answer available was a number.
+- **Retuning retrieval no longer needs a new type version.** Editing annotations changes how a type is
+  indexed, not what it is allowed to contain, so no stored note can become invalid — the schema is compared
+  with its annotations stripped, and only a real contract change is refused.
+- **Fixed: search reported "no vectors" while running vectors.** Both `status` and `memory_capabilities`
+  carried a fixed string claiming the engine was lexical-only, whatever was actually loaded. They now derive it
+  from the live model, so they cannot contradict each other or the engine.
+- **Fixed: a semantically-found result was reported as zero results.** A note found by meaning shares no word
+  with the query, so it was not counted — a page could return an item while reporting `total: 0`, which also
+  told anything paging through the results to stop early. The count now includes what was actually returned,
+  and says when it is a floor rather than an exact figure.
+- **You can see what semantic search costs.** `memory_load` reports the model, how much of your corpus is
+  indexed, and how long embedding takes; Home Assistant gets two more sensors for the same. Index coverage
+  below 100% means search is answering from part of your notes — worth knowing before trusting a result.
+- **Skills are easier to find and to fetch.** `skill_get` now falls back to the shared `commons` domain, so a
+  skill you were offered can always be fetched back instead of silently returning nothing, and it tells you
+  which scope answered. Skills can also carry tags now, and the shipped ones were rewritten to say when to
+  reach for them rather than only what they are.
+
 ## 0.71.1
 
 Semantic recall now sets itself up. Switching `embeddings_enabled` on is the entire procedure (MEMP-196).

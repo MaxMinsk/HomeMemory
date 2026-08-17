@@ -83,6 +83,13 @@ public class SemanticRecallEndToEndTests(ITestOutputHelper output)
         var winner = page.Items[0].Explain!;
         Assert.NotNull(winner.VectorPassage);
         Assert.NotEmpty(winner.VectorPaths!);
+
+        // MEMP-265: the page contract must not contradict the page. `total` counts LEXICAL matches, and this
+        // query has none — so a vector-only page used to report items alongside total=0, and hasMore=false told
+        // a paginating caller to stop on a page it had not finished.
+        Assert.True(page.Total >= page.Items.Count,
+            $"total ({page.Total}) cannot be below the number of items returned ({page.Items.Count})");
+        Assert.True(page.TotalIsLowerBound, "a semantic-candidate page must say its total is a floor, not a count");
     }
 
     // A small corpus with distractors, so ranking first actually means something.
