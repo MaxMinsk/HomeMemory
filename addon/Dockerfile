@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1.7
 
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-debian:bookworm
+# The Home Assistant builder passes BUILD_ARCH but NOT BUILD_FROM, so the base has to be selected here.
+# It must be declared before the first FROM to be usable in one. Debian rather than the Alpine default is
+# forced by ONNX Runtime, which publishes no musl builds at all (see addon/build.yaml).
+ARG BUILD_ARCH=amd64
 
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 
@@ -45,7 +48,7 @@ RUN \
       -p:PublishTrimmed=false \
       -p:InvariantGlobalization=true
 
-FROM ${BUILD_FROM}
+FROM ghcr.io/home-assistant/${BUILD_ARCH}-base-debian:bookworm
 
 ARG BUILD_ARCH=amd64
 ARG BUILD_VERSION=0.1.0
