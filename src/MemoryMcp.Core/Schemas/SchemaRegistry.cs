@@ -19,6 +19,20 @@ public sealed class SchemaRegistry
     private readonly HashSet<string> _builtinTypes = new(StringComparer.Ordinal);
     private readonly HashSet<string> _builtinVersions = new(StringComparer.Ordinal); // "type@version" of code-owned schemas
     private readonly object _gate = new();
+    private int _generation;
+
+    /// <summary>
+    /// Bumped whenever a schema is registered or re-registered. Anything caching something DERIVED from a
+    /// schema — a retrieval mapping, a type policy — must watch this rather than the type version.
+    /// <para>Version is not enough on its own: an annotation-only edit deliberately keeps the same version
+    /// (that is the whole point of MEMP-252's immutability exclusion), so a cache keyed by <c>type@version</c>
+    /// keeps serving the answer from before the edit. Retrieval could then only be retuned by restarting the
+    /// server, which is exactly what the exclusion existed to avoid.</para>
+    /// </summary>
+    public int Generation
+    {
+        get { lock (_gate) { return _generation; } }
+    }
 
     private SchemaRegistry(IEnumerable<SchemaDefinition> builtins)
     {
@@ -310,6 +324,7 @@ public sealed class SchemaRegistry
     // Caller holds _gate (or is the ctor before publication).
     private void Index(SchemaDefinition definition)
     {
+        _generation++;
         _byTypeVersion[Key(definition.Type, definition.Version)] = definition;
         if (!_latestByType.TryGetValue(definition.Type, out var existing) || definition.Version >= existing.Version)
         {

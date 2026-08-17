@@ -61,6 +61,7 @@ public sealed class TypePolicy
     private readonly SchemaRegistry? _schemas;
     private readonly Dictionary<string, TypeTraits> _cache = new(StringComparer.Ordinal);
     private readonly object _gate = new();
+    private int _cachedGeneration = -1;
 
     /// <summary>Creates the policy over a schema registry; null uses the bridge and defaults alone.</summary>
     /// <param name="schemas">Where type annotations are read from.</param>
@@ -90,7 +91,16 @@ public sealed class TypePolicy
 
         lock (_gate)
         {
-            if (_cache.TryGetValue(type, out var cached))
+            // An annotation edit keeps the type's VERSION, so the registry's generation is what says the cached
+            // answer is stale. Keyed on the version alone, a retuned type would keep its old behaviour until
+            // the next restart — which is the thing annotation-only edits exist to avoid.
+            var generation = _schemas?.Generation ?? 0;
+            if (generation != _cachedGeneration)
+            {
+                _cache.Clear();
+                _cachedGeneration = generation;
+            }
+            else if (_cache.TryGetValue(type, out var cached))
             {
                 return cached;
             }

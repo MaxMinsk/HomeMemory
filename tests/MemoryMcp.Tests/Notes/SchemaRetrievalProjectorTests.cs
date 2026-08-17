@@ -1,5 +1,7 @@
 using MemoryMcp.Core.Retrieval;
 using MemoryMcp.Core.Schemas;
+using MemoryMcp.Core.Storage;
+using MemoryMcp.Tests.Storage;
 using Xunit;
 
 namespace MemoryMcp.Tests.Notes;
@@ -74,6 +76,46 @@ public class SchemaRetrievalProjectorTests
 
         Assert.NotNull(mapping);
         Assert.Empty(mapping!.Fields);
+    }
+
+    /// <summary>
+    /// The point of allowing an annotation-only edit is that retrieval can be retuned WITHOUT a version bump.
+    /// That only holds if everything derived from the schema notices — and both the projector and the type
+    /// policy cached per type@version, so an edit that deliberately keeps the version kept serving the old
+    /// answer until the next restart. Found on production: `reference` was annotated and left the type-policy
+    /// bridge, while the projector went on treating it as unmapped.
+    /// </summary>
+    [Fact]
+    public void An_annotation_edit_takes_effect_without_a_version_bump_or_a_restart()
+    {
+        using var temp = new TempDatabase();
+        var factory = new SqliteConnectionFactory(temp.FilePath);
+        new Migrator(factory, SchemaMigrations.All).Migrate();
+        var registry = SchemaRegistry.FromEmbeddedResources();
+        var projector = new SchemaRetrievalProjector(registry);
+        var policy = new TypePolicy(registry);
+
+        registry.Upsert(factory, """
+            {
+              "$id": "widget@1", "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object",
+              "properties": { "note": { "type": "string" } }
+            }
+            """, "test");
+        Assert.True(projector.Describe("widget").IsLegacy);
+        Assert.Equal(90.0, policy.HalfLifeDays("widget"));
+
+        // Same $id, same VERSION — only the annotations change.
+        registry.Upsert(factory, """
+            {
+              "$id": "widget@1", "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object",
+              "x-retrieval": { "version": "r1", "class": "canonical", "halfLifeDays": 3650 },
+              "properties": { "note": { "type": "string", "x-retrieval": { "semantic": "text" } } }
+            }
+            """, "test");
+
+        Assert.False(projector.Describe("widget").IsLegacy);
+        Assert.Equal(3650.0, policy.HalfLifeDays("widget"));
+        Assert.Equal(2.0, policy.Goodness("widget"));
     }
 
     private static SchemaRetrievalProjector Projector() => new(Schemas);

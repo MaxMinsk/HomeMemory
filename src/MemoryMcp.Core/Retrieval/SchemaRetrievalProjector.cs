@@ -23,6 +23,7 @@ public sealed class SchemaRetrievalProjector : IRetrievalProjector
     private readonly SchemaRegistry _schemas;
     private readonly LegacyRetrievalProjector _legacy = new();
     private readonly ConcurrentDictionary<string, RetrievalMapping?> _cache = new(StringComparer.Ordinal);
+    private int _cachedGeneration = -1;
 
     /// <summary>Creates the projector over a schema registry.</summary>
     /// <param name="schemas">Where type schemas and their annotations come from.</param>
@@ -186,8 +187,10 @@ public sealed class SchemaRetrievalProjector : IRetrievalProjector
         }
     }
 
-    // Cached per type AND schema version, so republishing a schema with edited annotations takes effect without
-    // a restart while a hot path still costs one dictionary lookup.
+    // Cached against the registry's GENERATION, not the type version. An annotation-only edit deliberately
+    // keeps the same version (MEMP-252), so a cache keyed by type@version would keep serving the mapping from
+    // before the edit and the change would only appear after a restart — defeating the point of allowing the
+    // edit at all. The hot path still costs one dictionary lookup.
     private RetrievalMapping? MappingFor(string type)
     {
         if (string.IsNullOrEmpty(type))
@@ -199,6 +202,13 @@ public sealed class SchemaRetrievalProjector : IRetrievalProjector
         if (schema is null)
         {
             return null;
+        }
+
+        var generation = _schemas.Generation;
+        if (generation != _cachedGeneration)
+        {
+            _cache.Clear();
+            _cachedGeneration = generation;
         }
 
         return _cache.GetOrAdd(
