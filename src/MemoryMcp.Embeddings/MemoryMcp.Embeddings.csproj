@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The embedding runtime, kept in its own assembly (MEMP-196). ONNX Runtime ships ~25MB of native binaries
+       per architecture; isolating it here means Core stays dependency-light, the assembly is testable without
+       linking the ASP.NET host, and a build that does not want vector recall can simply drop this project. -->
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" />
+    <PackageReference Include="Microsoft.ML.Tokenizers" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MemoryMcp.Core\MemoryMcp.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Token id construction is an implementation detail with a silent failure mode (the XLM-R fairseq
+         offset), so it stays internal but must be assertable directly against reference values. -->
+    <InternalsVisibleTo Include="MemoryMcp.Tests" />
+  </ItemGroup>
+
+</Project>

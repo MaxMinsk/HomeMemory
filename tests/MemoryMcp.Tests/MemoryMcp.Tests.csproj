@@ -16,6 +16,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\MemoryMcp.Core\MemoryMcp.Core.csproj" />
+    <!-- Linked so the embedder's tokenisation can be asserted directly; the ASP.NET host still is not. -->
+    <ProjectReference Include="..\..\src\MemoryMcp.Embeddings\MemoryMcp.Embeddings.csproj" />
     <!-- Build the server so the stdio integration test can launch it; do not link it (keeps ASP.NET out of the test process). -->
     <ProjectReference Include="..\..\src\MemoryMcp.Server\MemoryMcp.Server.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>

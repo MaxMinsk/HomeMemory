@@ -16,6 +16,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\MemoryMcp.Core\MemoryMcp.Core.csproj" />
+    <!-- Vector recall (MEMP-196). Isolated so its ~25MB of native ONNX binaries are one project reference
+         away from being dropped, and so Core stays dependency-light. -->
+    <ProjectReference Include="..\MemoryMcp.Embeddings\MemoryMcp.Embeddings.csproj" />
   </ItemGroup>
 
   <ItemGroup>

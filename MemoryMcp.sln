@@ -13,6 +13,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{AC2BFB5F
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MemoryMcp.Tests", "tests\MemoryMcp.Tests\MemoryMcp.Tests.csproj", "{D2EE7D65-7236-4A68-A01A-553AF3CE3758}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MemoryMcp.Embeddings", "src\MemoryMcp.Embeddings\MemoryMcp.Embeddings.csproj", "{31DA77B1-97D8-4ED0-A784-404792218FB3}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -34,10 +36,15 @@ Global
 		{D2EE7D65-7236-4A68-A01A-553AF3CE3758}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D2EE7D65-7236-4A68-A01A-553AF3CE3758}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D2EE7D65-7236-4A68-A01A-553AF3CE3758}.Release|Any CPU.Build.0 = Release|Any CPU
+		{31DA77B1-97D8-4ED0-A784-404792218FB3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{31DA77B1-97D8-4ED0-A784-404792218FB3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{31DA77B1-97D8-4ED0-A784-404792218FB3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{31DA77B1-97D8-4ED0-A784-404792218FB3}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{1DB31106-283C-4758-8ACE-FE4573148857} = {14709DB2-8A26-4DCF-8D91-F35154E11CB9}
 		{C10D54E1-7F3E-46BE-8D20-B922535738F4} = {14709DB2-8A26-4DCF-8D91-F35154E11CB9}
 		{D2EE7D65-7236-4A68-A01A-553AF3CE3758} = {AC2BFB5F-73B0-4378-8C81-034578FE6607}
+		{31DA77B1-97D8-4ED0-A784-404792218FB3} = {14709DB2-8A26-4DCF-8D91-F35154E11CB9}
 	EndGlobalSection
 EndGlobal

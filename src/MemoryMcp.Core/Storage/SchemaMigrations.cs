@@ -28,5 +28,6 @@ public static class SchemaMigrations
         new Migration0015PayloadValuesFts(),
         new Migration0016FleetingVowelStems(),
         new Migration0017AgentReads(),
+        new Migration0018NotePassages(),
     };
 }
