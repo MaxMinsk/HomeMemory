@@ -83,6 +83,12 @@ if (args.Length > 0 && args[0] == "tokens")
     return;
 }
 
+if (args.Length > 0 && args[0] == "fetch-model")
+{
+    await RunFetchModel();
+    return;
+}
+
 if (args.Length > 0 && args[0] == "index-embeddings")
 {
     RunIndexEmbeddings(args, dbPath);
@@ -259,7 +265,8 @@ static void RegisterRetrieval(IServiceCollection services)
         }
 
         return new VectorRecall(embedder, provider.GetRequiredService<PassageStore>(),
-            provider.GetRequiredService<IRetrievalProjector>(), options);
+            provider.GetRequiredService<IRetrievalProjector>(), options,
+            provider.GetRequiredService<OperationMetrics>());
     });
 }
 
@@ -393,6 +400,49 @@ static void RunMaintenance(string[] args, string dbPath)
     {
         Console.WriteLine($"  WARNING: {backfill.Collisions.Count} note(s) skipped due to dedup collisions: {string.Join(", ", backfill.Collisions)}");
     }
+}
+
+// Fetches the embedding model into the configured directory (MEMP-196), so the add-on image stays lean: the
+// ~25MB runtime ships with the binary, but the model is far larger and only matters to someone who turns the
+// layer on. One command instead of "copy two files off a website", and it is idempotent — an existing file of
+// the right size is left alone, so re-running after a partial download resumes rather than restarts.
+static async Task RunFetchModel()
+{
+    var options = EmbeddingOptions.FromEnvironment();
+    var directory = options.ModelDirectory;
+    if (string.IsNullOrWhiteSpace(directory))
+    {
+        Console.WriteLine("fetch-model: set MEMORY_EMBEDDING_MODEL_DIR (add-on option embedding_model_dir) first.");
+        return;
+    }
+
+    const string BaseUrl = "https://huggingface.co/intfloat/multilingual-e5-small/resolve/main/";
+    Directory.CreateDirectory(directory!);
+    using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
+
+    foreach (var (remote, local) in new[] { ("onnx/model.onnx", "model.onnx"), ("sentencepiece.bpe.model", "sentencepiece.bpe.model") })
+    {
+        var target = Path.Combine(directory!, local);
+        Console.WriteLine($"fetch-model: {remote} -> {target}");
+        using var response = await http.GetAsync(BaseUrl + remote, HttpCompletionOption.ResponseHeadersRead);
+        if (!response.IsSuccessStatusCode)
+        {
+            Console.WriteLine($"  FAILED: {(int)response.StatusCode} {response.ReasonPhrase}. The host may be unreachable from this network.");
+            return;
+        }
+
+        // Write to a temporary name first so an interrupted download can never be mistaken for a valid model.
+        var partial = target + ".partial";
+        await using (var file = File.Create(partial))
+        {
+            await response.Content.CopyToAsync(file);
+        }
+
+        File.Move(partial, target, overwrite: true);
+        Console.WriteLine($"  {new FileInfo(target).Length / 1048576.0:F1} MB");
+    }
+
+    Console.WriteLine("fetch-model: done. Set embeddings_enabled, restart, then run index-embeddings once.");
 }
 
 // One-off embedding index build (MEMP-196). A note is embedded when it is written, so this exists for the

@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.71.0
+
+Sprint 64 — semantic recall arrives, opt-in and off by default, behind a seam that stops the next retrieval
+change from being hardcoded too (MEMP-251, MEMP-196, MEMP-241, MEMP-243, MEMP-244, MEMP-245, MEMP-247).
+
+**Nothing below changes anything unless you turn it on.** With `embeddings_enabled` off — the default — no model
+is loaded, no vectors are written, and search behaves exactly as it did in 0.70.0.
+
+- **Search can now find a note that shares no words with your query (MEMP-196).** A Russian note whose title says "tryohfaznyy vvod" (three-phase supply)
+  is returned first for the English query "three phase electricity monitoring device" — a
+  query that previously returned it nowhere at all. That gap is the whole reason for the feature: measured
+  against a twelve-query golden set, **every single query's strict lexical pass returned zero**, so what looked
+  like 8/12 recall was really whichever token happened to be shared, usually a loanword or a dedup slug.
+- **The model was chosen by measurement, not preference.** `multilingual-e5-small` beat the cheaper static
+  alternative on identical data (6/12 against 5/12, and position 1 against 32 on the query that started this
+  work). Its 20x speed disadvantage is not a reason to prefer the other one until telemetry says the hardware
+  minds.
+- **Notes are indexed as passages, not as one vector each.** A single mean-pooled vector per note measured
+  WORSE than indexing only the title — the topic drifts to a generic centre and short queries stop landing near
+  it. Chunked and scored by best passage, a one-word-titled note went from rank 143 to 12, and mean rank across
+  the golden set improved from 23.0 to 17.2.
+- **Semantic hits enter the results, they do not merely re-order them.** Re-ranking what the keyword search
+  already found can never answer a query the keyword search returns nothing for. Candidates are fetched through
+  the same filters as everything else, so a semantic hit cannot escape a domain, scope, type or status
+  restriction.
+- **When the keyword pass finds no real match, meaning leads.** The engine already knew when it had fallen back
+  to matching any single word; now that admission is used, instead of letting one incidental match outrank a
+  note that is genuinely about the question.
+- **Setup is two commands.** `fetch-model` downloads the model into `/share` (kept out of the image, which
+  carries only the ~25 MB runtime), and `index-embeddings` builds the index once for notes that already exist.
+  New notes index themselves as they are written — after the transaction commits, so writes never queue behind
+  the model. `memory_capabilities` reports the live model, how many notes are indexed, and how many passages
+  are stale after a model change.
+- **A retrieval seam, so the next change is a declaration rather than a rewrite (MEMP-251).** Every indexer now
+  obtains a note's text from one projector, which reports the JSON path each piece came from. That provenance
+  is what makes selective reindex and "which field produced this hit" possible; the old code walked the payload
+  in several places and threw the paths away. Landed behaviour-neutral — all 424 pre-existing tests passed
+  unchanged, which is the proof.
+
+Also in this release:
+
+- **Superseded notes no longer come back as recall neighbours (MEMP-241).** They correctly left the hits in
+  0.70.0, but superseding CREATES a link from the replacement to the replaced note, so the one-hop expansion
+  dragged every retired note back in through the very link that retired it.
+- **`notes_patch` accepts what `notes_upsert` accepts (MEMP-245).** A note of a strict type carrying a project
+  in its payload — most of the corpus — could not be patched at all, for any field.
+- **A competing note is flagged on update, not only on create (MEMP-244)**, and **`expired_content` lint**
+  reports notes whose stated validity has passed, so ageing can be reviewed in bulk (MEMP-243).
+- **`memory_load` reports what the server costs to run (MEMP-247)** — per-operation p50/p95, memory and CPU —
+  and publishes it as Home Assistant sensors, so "is this too heavy for the box" is a reading rather than an
+  argument. It landed before the vector work on purpose.
+
+**Schema change: migration 0018** adds `note_passages` (empty and unused unless embeddings are enabled). 444 tests.
+
 ## 0.70.0
 
 Sprint 63 — Notes that know when they have aged, and a ranking fix that a measurement chose rather than a guess

@@ -1,3 +1,5 @@
+using MemoryMcp.Core.Diagnostics;
+
 namespace MemoryMcp.Core.Retrieval;
 
 /// <summary>
@@ -11,10 +13,19 @@ namespace MemoryMcp.Core.Retrieval;
 /// mistake as embedding the whole note as one vector — measured to be worse than indexing the title alone.</para>
 /// </summary>
 public sealed class VectorRecall(
-    IEmbedder? embedder, PassageStore? passages, IRetrievalProjector projector, EmbeddingOptions options)
+    IEmbedder? embedder, PassageStore? passages, IRetrievalProjector projector, EmbeddingOptions options,
+    OperationMetrics? metrics = null)
 {
     private readonly IRetrievalProjector _projector = projector ?? throw new ArgumentNullException(nameof(projector));
     private readonly EmbeddingOptions _options = options ?? throw new ArgumentNullException(nameof(options));
+
+    // Timed because "is this too heavy for the box?" must be a reading, not an argument (MEMP-247). Query and
+    // index embedding are recorded separately: one happens on every search, the other once per write, and they
+    // fail in different ways.
+    private IReadOnlyList<float[]> Timed(string operation, IReadOnlyList<string> texts, EmbeddingKind kind) =>
+        metrics is null
+            ? embedder!.Embed(texts, kind)
+            : metrics.Measure(operation, () => embedder!.Embed(texts, kind));
 
     /// <summary>True when a model is loaded and the layer is switched on; false makes every method a no-op.</summary>
     public bool Enabled => _options.Enabled && embedder is not null && passages is not null;
@@ -43,8 +54,8 @@ public sealed class VectorRecall(
             return;
         }
 
-        var vectors = embedder!.Embed([.. projected.Select(passage => passage.Text)], EmbeddingKind.Passage);
-        passages!.Replace(noteId, projected, vectors, embedder, _projector.Describe(content.Type).MappingHash, nowUtc);
+        var vectors = Timed("embed_passages", [.. projected.Select(passage => passage.Text)], EmbeddingKind.Passage);
+        passages!.Replace(noteId, projected, vectors, embedder!, _projector.Describe(content.Type).MappingHash, nowUtc);
     }
 
     /// <summary>Drops a note's passages (used when it is purged).</summary>
@@ -72,10 +83,10 @@ public sealed class VectorRecall(
             return new Dictionary<string, double>(StringComparer.Ordinal);
         }
 
-        var queryVector = embedder!.Embed([query!], EmbeddingKind.Query)[0];
+        var queryVector = Timed("embed_query", [query!], EmbeddingKind.Query)[0];
         var mappingHash = _projector.Describe(string.Empty).MappingHash;
         var best = new Dictionary<string, double>(StringComparer.Ordinal);
-        foreach (var passage in passages!.ForScoring(embedder.ModelId, mappingHash, noteIds))
+        foreach (var passage in passages!.ForScoring(embedder!.ModelId, mappingHash, noteIds))
         {
             var score = Dot(passage.Vector, queryVector);
             if (!best.TryGetValue(passage.NoteId, out var current) || score > current)
@@ -106,10 +117,10 @@ public sealed class VectorRecall(
             return Array.Empty<string>();
         }
 
-        var queryVector = embedder!.Embed([query!], EmbeddingKind.Query)[0];
+        var queryVector = Timed("embed_query", [query!], EmbeddingKind.Query)[0];
         var mappingHash = _projector.Describe(string.Empty).MappingHash;
         var best = new Dictionary<string, double>(StringComparer.Ordinal);
-        foreach (var passage in passages!.ForScoring(embedder.ModelId, mappingHash))
+        foreach (var passage in passages!.ForScoring(embedder!.ModelId, mappingHash))
         {
             var score = Dot(passage.Vector, queryVector);
             if (!best.TryGetValue(passage.NoteId, out var current) || score > current)

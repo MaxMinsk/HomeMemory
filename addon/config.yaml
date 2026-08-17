@@ -1,5 +1,5 @@
 name: Memory MCP
-version: "0.70.0"
+version: "0.71.0"
 slug: memory_mcp
 description: Shared memory / notes / skills data-plane (MCP) for Home Assistant agents.
 url: https://github.com/MaxMinsk/HomeMemory/tree/main/addon
@@ -17,6 +17,10 @@ image: ghcr.io/maxminsk/homememory
 webui: "http://[HOST]:[PORT:8099]/ui"
 # Supervisor pings this unauthenticated liveness probe; a failure restarts the add-on.
 watchdog: "http://[HOST]:[PORT:8099]/health"
+# The embedding model lives outside the image (MEMP-196): it is far larger than the runtime, and a user who
+# never enables vector recall should not carry it. /share is where it is expected to be placed.
+map:
+  - share:rw
 ports:
   "8099/tcp": 8099
 ports_description:
@@ -37,6 +41,9 @@ options:
   webhook_url: ""
   webhook_secret: ""
   adoption_hints: true
+  embeddings_enabled: false
+  embedding_model_dir: "/share/memory-mcp/model"
+  embedding_weight: 2.0
 schema:
   db_path: str
   bearer_token: password?
@@ -53,3 +60,6 @@ schema:
   webhook_url: str?
   webhook_secret: password?
   adoption_hints: bool
+  embeddings_enabled: bool
+  embedding_model_dir: str?
+  embedding_weight: float?

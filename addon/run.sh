@@ -55,5 +55,18 @@ fi
 # Advisory write-time adoption hints: recall-before-write nudge + post-write related-notes hint (MEMP-204/205). On by default.
 export MEMORY_ADOPTION_HINTS="$(bashio::config 'adoption_hints')"
 
+# Opt-in semantic recall (MEMP-196). Off by default: with it off no model is loaded and search stays lexical.
+# The model is NOT in the image; fetch it once with `MemoryMcp.Server fetch-model` into embedding_model_dir.
+export MEMORY_EMBEDDINGS="$(bashio::config 'embeddings_enabled')"
+if bashio::config.true 'embeddings_enabled'; then
+  export MEMORY_EMBEDDING_MODEL_DIR="$(bashio::config 'embedding_model_dir')"
+  export MEMORY_EMBEDDING_WEIGHT="$(bashio::config 'embedding_weight')"
+  if [ ! -f "${MEMORY_EMBEDDING_MODEL_DIR}/sentencepiece.bpe.model" ]; then
+    bashio::log.warning "Semantic recall is on but no model in ${MEMORY_EMBEDDING_MODEL_DIR}; run fetch-model. Falling back to lexical search."
+  else
+    bashio::log.info "Semantic recall enabled (model=${MEMORY_EMBEDDING_MODEL_DIR}, weight=${MEMORY_EMBEDDING_WEIGHT})"
+  fi
+fi
+
 bashio::log.info "Starting Memory MCP (HTTP on :8099, db=${MEMORY_DB_PATH})"
 exec /opt/memory-mcp/MemoryMcp.Server

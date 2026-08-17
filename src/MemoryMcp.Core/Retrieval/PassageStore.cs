@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using MemoryMcp.Core.Diagnostics;
 using MemoryMcp.Core.Notes;
 using MemoryMcp.Core.Storage;
 using Microsoft.Data.Sqlite;
