@@ -32,7 +32,8 @@ public sealed partial class MemoryTools
         [Description("Who is searching (provenance). Pass your stable agent id so the server can tell you recalled before writing (MEMP-204).")] string? sourceAgent = null)
     {
         RecordAgentRead(sourceAgent);
-        return Translate(() => _notes.Search(query, domain, type, tags, status, limit, offset, _authz.ReadRestriction(domain), filter, includePayload, includeLinks, sort, rank, explain, match));
+        return _metrics.Measure("notes_search", () =>
+            Translate(() => _notes.Search(query, domain, type, tags, status, limit, offset, _authz.ReadRestriction(domain), filter, includePayload, includeLinks, sort, rank, explain, match)));
     }
 
     /// <summary>Recalls a compact context block (hits + linked neighbors) for a query, scope-restricted.</summary>
@@ -56,8 +57,9 @@ public sealed partial class MemoryTools
         [Description("Who is recalling (provenance). Pass your stable agent id so the server can tell you recalled before writing (MEMP-204).")] string? sourceAgent = null)
     {
         RecordAgentRead(sourceAgent);
-        return Translate(() => _notes.Recall(query, domain, limit, _authz.ReadRestriction(domain), includeLinks, maxHops, budgetChars, explain, project, projectOnly,
-            includePayload: includePayload, maxNeighbors: maxNeighbors, types: types, noRelax: noRelax, tags: tags));
+        return _metrics.Measure("notes_recall", () =>
+            Translate(() => _notes.Recall(query, domain, limit, _authz.ReadRestriction(domain), includeLinks, maxHops, budgetChars, explain, project, projectOnly,
+                includePayload: includePayload, maxNeighbors: maxNeighbors, types: types, noRelax: noRelax, tags: tags)));
     }
 
     /// <summary>Assembles a layered context block (rules + skills + recall) for a task in a domain.</summary>
@@ -82,7 +84,8 @@ public sealed partial class MemoryTools
     {
         RecordAgentRead(sourceAgent);
         var options = new ContextOptions(types, includeRules, includeSkills, noRelax, maxNeighbors, tags);
-        return Translate(() => new ContextAssembler(_notes, _skills).Assemble(query, domain, limit, includeLinks, _authz.Scope, project, budgetChars, projectOnly, includePayload, options));
+        return _metrics.Measure("memory_context", () =>
+            Translate(() => new ContextAssembler(_notes, _skills).Assemble(query, domain, limit, includeLinks, _authz.Scope, project, budgetChars, projectOnly, includePayload, options)));
     }
 
     /// <summary>Lists the most-recently-updated (or most-used) notes in scope.</summary>
@@ -371,6 +374,11 @@ public sealed partial class MemoryTools
     [McpServerTool(Name = "memory_capabilities", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
     [Description("Runtime contract — call on connect to discover what this build supports instead of guessing from a stale tool list: server build version, schema version, contract version, the note types this build knows (latest schema version + whether built-in), your token's domain scope (readable/writable + commons), search backend and blob quota. READ THE DOMAIN LISTS THROUGH `scope.unrestricted` (MEMP-236): when it is false they are the limit of what your token may reach; when it is true they enumerate every domain that currently exists, and you may also write to a new one.")]
     public CapabilitiesReport Capabilities() => _diagnostics.Capabilities(_authz.Scope);
+
+    /// <summary>Reports what the server costs to run right now: per-operation timings plus process figures.</summary>
+    [McpServerTool(Name = "memory_load", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
+    [Description("What this server COSTS to run right now (MEMP-247), as opposed to `status`, which reports what is STORED. Per-operation call counts with p50/p95/max durations in milliseconds (worst p95 first), plus resident memory, managed heap, total CPU seconds and uptime. Use it to answer 'is memory getting slow / is this box coping', and to size heavy work before starting it. In-memory and bounded to the most recent calls per operation; a restart resets it, by design — this is a health signal, not an audit trail (note_events is the audit).")]
+    public LoadReport MemoryLoad() => _metrics.Snapshot();
 
     /// <summary>Lists domains (namespaces) with their note counts, scope-restricted.</summary>
     [McpServerTool(Name = "domains_list", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]

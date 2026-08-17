@@ -18,7 +18,7 @@ public class StdioRoundTripTests
         "memory_capabilities", "schema_provenance", "domain_manifest", "memory_context", "skill_consolidate_plan",
         "notes_changes", "notes_tags", "notes_upsert_many", "notes_link_many",
         "notes_saved_search_run", "notes_activity", "notes_patch_many", "notes_adoption", "notes_assemble_many",
-        "notes_get_many_by_key", "next_key",
+        "notes_get_many_by_key", "next_key", "memory_load",
     };
 
     [Fact]

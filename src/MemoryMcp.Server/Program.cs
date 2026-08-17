@@ -241,6 +241,8 @@ static void RegisterServices(IServiceCollection services, string dbPath)
     // Write-time adoption hints (MEMP-204/205): a process-local recall tracker + the on/off toggle.
     services.AddSingleton(provider => new ReadActivityTracker(provider.GetRequiredService<TimeProvider>()));
     services.AddSingleton(AdoptionOptions.FromEnvironment());
+    // One recorder for the whole process: the timings are only meaningful aggregated across every caller (MEMP-247).
+    services.AddSingleton(provider => new OperationMetrics(provider.GetRequiredService<TimeProvider>()));
     services.AddSingleton(BuildBlobStore(dbPath));
     services.AddSingleton<ArtifactsService>();
     services.AddSingleton(new ArtifactIngestOptions(Environment.GetEnvironmentVariable("MEMORY_INGEST_ROOT")));

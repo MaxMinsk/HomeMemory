@@ -28,7 +28,8 @@ public sealed partial class MemoryTools
         try
         {
             _authz.AuthorizeWrite(domain);
-            var result = _notes.Upsert(domain, type, title, body, JsonArg(payload), JsonArg(tags), dedupKey, sourceAgent ?? "mcp", project, expectedRevision);
+            var result = _metrics.Measure("notes_upsert", () =>
+                _notes.Upsert(domain, type, title, body, JsonArg(payload), JsonArg(tags), dedupKey, sourceAgent ?? "mcp", project, expectedRevision));
             if (result.Unchanged)
             {
                 return result; // idempotent no-op: nothing was written, so no adoption hints
