@@ -1,4 +1,6 @@
 using MemoryMcp.Core.Schemas;
+using MemoryMcp.Tests.Storage;
+using MemoryMcp.Core.Storage;
 using Xunit;
 
 namespace MemoryMcp.Tests.Notes;
@@ -101,5 +103,52 @@ public class SchemaClosureTests
     {
         Assert.False(Validator.Validate("fact", """{ "statement": "x", "importance": 99 }""").IsValid);
         Assert.False(Validator.Validate("fact", """{ "statement": "x", "pinned": "yes" }""").IsValid);
+    }
+
+    /// <summary>
+    /// A dangling <c>$ref</c> is refused when the schema is AUTHORED, not later when a note happens to be
+    /// validated against it. Deferred, the failure surfaces as a rejected write on an unrelated note, long
+    /// after whoever could fix the schema has moved on.
+    /// </summary>
+    [Fact]
+    public void A_reference_that_resolves_to_nothing_is_refused_at_authoring_time()
+    {
+        using var temp = new TempDatabase();
+        var factory = new SqliteConnectionFactory(temp.FilePath);
+        new Migrator(factory, SchemaMigrations.All).Migrate();
+        var registry = SchemaRegistry.FromEmbeddedResources();
+
+        var error = Assert.Throws<SchemaAuthoringException>(() => registry.Upsert(factory, """
+            {
+              "$id": "widget@1", "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object",
+              "allOf": [{ "$ref": "memory:trait/no-such-trait@1" }],
+              "properties": { "note": { "type": "string" } }
+            }
+            """, "test"));
+
+        Assert.Contains("cannot be resolved", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>And a schema composing a REAL trait is accepted, so the check does not simply refuse composition.</summary>
+    [Fact]
+    public void A_schema_composing_a_registered_trait_is_accepted()
+    {
+        using var temp = new TempDatabase();
+        var factory = new SqliteConnectionFactory(temp.FilePath);
+        new Migrator(factory, SchemaMigrations.All).Migrate();
+        var registry = SchemaRegistry.FromEmbeddedResources();
+
+        registry.Upsert(factory, """
+            {
+              "$id": "widget@1", "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object",
+              "allOf": [{ "$ref": "memory:trait/rankable@1" }],
+              "unevaluatedProperties": false,
+              "properties": { "note": { "type": "string" } }
+            }
+            """, "test");
+
+        var validator = new SchemaValidator(registry);
+        Assert.True(validator.Validate("widget", """{ "note": "x", "pinned": true }""").IsValid);
+        Assert.False(validator.Validate("widget", """{ "note": "x", "nonsense": 1 }""").IsValid);
     }
 }

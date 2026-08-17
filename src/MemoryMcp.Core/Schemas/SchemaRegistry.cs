@@ -220,6 +220,7 @@ public sealed class SchemaRegistry
         }
 
         ValidateAnnotations(type, version, json);
+        ValidateReferences(type, version, compiled);
 
         var existing = Get(type, version);
         if (existing is not null && !string.Equals(existing.Json, json, StringComparison.Ordinal)
@@ -303,6 +304,24 @@ public sealed class SchemaRegistry
         command.Parameters.AddWithValue("$j", definition.Json);
         command.Parameters.AddWithValue("$a", (object?)author ?? DBNull.Value);
         command.ExecuteNonQuery();
+    }
+
+    // A $ref that resolves to nothing compiles fine and only fails when a note is validated against it — by
+    // which point the author is gone and the error surfaces as a rejected WRITE on an unrelated note. Resolving
+    // it once here, against a trivial instance, moves the failure to the moment it can still be fixed.
+    private static void ValidateReferences(string type, int version, JsonSchema compiled)
+    {
+        try
+        {
+            compiled.Evaluate(new JsonObject(), new EvaluationOptions { OutputFormat = OutputFormat.Flag });
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
+        {
+            throw new SchemaAuthoringException(
+                $"Schema '{type}@{version}' has a reference that cannot be resolved: {exception.Message}. "
+                + "A $ref must point at a registered trait (pinned to its version, e.g. memory:trait/rankable@1) "
+                + "or at a local $defs entry.");
+        }
     }
 
     // Retrieval annotations are validated HERE, where an author can still fix them. The projector's own
