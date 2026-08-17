@@ -16,15 +16,28 @@ public sealed class MqttConnection : IAsyncDisposable
     private readonly IMqttClient _client;
     private readonly MqttClientOptions _clientOptions;
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly TimeProvider _clock;
     private bool _reportedFailure;
+    private DateTimeOffset _nextAttempt = DateTimeOffset.MinValue;
+
+    /// <summary>
+    /// How long to wait after a failed connect before trying again.
+    /// <para>Without this, a connect is attempted on EVERY publish, and Home Assistant discovery publishes
+    /// several messages back to back — so a broker that rejects the credentials saw the same client id
+    /// reconnect eight times in one second, forever. A rejection is a standing answer, not a transient one;
+    /// hammering the broker cannot change it and only fills its log.</para>
+    /// </summary>
+    private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(30);
 
     /// <summary>Builds the client and its connection options from <paramref name="options"/>.</summary>
     /// <param name="options">The MQTT configuration.</param>
     /// <param name="logger">Logger for connect/publish failures.</param>
-    public MqttConnection(MqttOptions options, ILogger<MqttConnection> logger)
+    /// <param name="timeProvider">Clock used to space out reconnection attempts.</param>
+    public MqttConnection(MqttOptions options, ILogger<MqttConnection> logger, TimeProvider? timeProvider = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _clock = timeProvider ?? TimeProvider.System;
         _client = new MqttClientFactory().CreateMqttClient();
 
         var builder = new MqttClientOptionsBuilder()
@@ -87,7 +100,13 @@ public sealed class MqttConnection : IAsyncDisposable
                 return true;
             }
 
+            if (_clock.GetUtcNow() < _nextAttempt)
+            {
+                return false;
+            }
+
             await _client.ConnectAsync(_clientOptions, cancellationToken).ConfigureAwait(false);
+            _nextAttempt = DateTimeOffset.MinValue;
             if (_client.IsConnected && _reportedFailure)
             {
                 _reportedFailure = false;
@@ -102,26 +121,40 @@ public sealed class MqttConnection : IAsyncDisposable
             // that could not be reached produced complete silence at the default log level — and "MQTT is on
             // but no device appeared in Home Assistant" had nothing anywhere to explain it. Only the first is
             // raised, because this is retried on every publish and a warning per attempt would be its own problem.
-            if (!_reportedFailure)
-            {
-                _reportedFailure = true;
-                _logger.LogWarning(ex,
-                    "MQTT connect to {Host}:{Port} failed, so no Home Assistant sensors will appear. Check that "
-                    + "mqtt_host is a bare host or IP (no mqtt:// prefix), that the broker is reachable from the "
-                    + "add-on, and that the credentials are right. Retrying quietly from here on.",
-                    _options.Host, _options.Port);
-            }
-            else
-            {
-                _logger.LogDebug(ex, "MQTT connect to {Host}:{Port} failed; will retry later.", _options.Host, _options.Port);
-            }
-
+            _nextAttempt = _clock.GetUtcNow() + RetryDelay;
+            ReportFailure(ex);
             return false;
         }
         finally
         {
             _gate.Release();
         }
+    }
+
+    // Named separately so the connect path stays readable: the FIRST failure explains itself in full, the
+    // rest are debug, because this is retried indefinitely and a warning per attempt is its own problem.
+    private void ReportFailure(Exception exception)
+    {
+        if (_reportedFailure)
+        {
+            _logger.LogDebug(exception, "MQTT connect to {Host}:{Port} failed; will retry later.", _options.Host, _options.Port);
+            return;
+        }
+
+        _reportedFailure = true;
+
+        // The username is named and the password only described. "not authorised" from a broker means the same
+        // thing whether the wrong credentials were sent or NONE were, and those need opposite fixes — so say
+        // which of the two happened rather than leaving it to be guessed.
+        _logger.LogWarning(exception,
+            "MQTT connect to {Host}:{Port} failed, so no Home Assistant sensors will appear. Sent username "
+            + "{Username} and {PasswordState}. If the broker log says 'not authorised', the credentials reached "
+            + "it and were refused; if this line says username (none), mqtt_username is not getting through. "
+            + "Retrying at most every {RetrySeconds}s from here on.",
+            _options.Host, _options.Port,
+            _options.Username is null ? "(none)" : $"'{_options.Username}'",
+            _options.Password is null ? "no password" : $"a password of {_options.Password.Length} characters",
+            RetryDelay.TotalSeconds);
     }
 
     /// <summary>Disconnects (best-effort) and disposes the underlying client.</summary>

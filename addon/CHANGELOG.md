@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.73.1
+
+Follow-up to 0.73.0, from a broker rejecting the add-on in the field (MEMP-267).
+
+- **A rejected connection no longer hammers the broker.** A connection was attempted on every publish, and
+  Home Assistant discovery publishes several messages back to back, so a broker refusing the credentials saw
+  the same client reconnect eight times per second, indefinitely. A refusal is a standing answer rather than a
+  transient one, so a failed connect now waits 30 seconds before the next attempt.
+- **The log now says which credentials were sent.** A broker reports "not authorised" both when the wrong
+  credentials arrive and when none do, and those need opposite fixes. The add-on now names the username it
+  used and states whether a password was sent at all, so the two are distinguishable without guessing.
+
 ## 0.73.0
 
 Sprint 66 — a note type's ranking and lint behaviour now comes from its own schema, and MQTT stops failing in
