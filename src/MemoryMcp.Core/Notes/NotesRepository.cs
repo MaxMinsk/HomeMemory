@@ -1,3 +1,4 @@
+using MemoryMcp.Core.Retrieval;
 using MemoryMcp.Core.Schemas;
 using MemoryMcp.Core.Storage;
 
@@ -13,15 +14,20 @@ public sealed class NotesRepository
 {
     private readonly NotesReader _reader;
     private readonly NotesWriter _writer;
+    private readonly VectorRecall? _vectors;
+    private readonly TimeProvider _clock;
 
     /// <summary>Creates the facade over the given database, schema registry and clock.</summary>
     /// <param name="connectionFactory">Database connection factory.</param>
     /// <param name="registry">Schema registry used for validation and version stamping.</param>
     /// <param name="timeProvider">Clock for timestamps; defaults to the system clock.</param>
     /// <param name="eventSink">Sink for post-commit note-change events; defaults to a no-op sink.</param>
-    public NotesRepository(ISqliteConnectionFactory connectionFactory, SchemaRegistry registry, TimeProvider? timeProvider = null, INoteEventSink? eventSink = null)
+    /// <param name="vectors">Semantic recall (MEMP-196); null or disabled keeps retrieval purely lexical.</param>
+    public NotesRepository(ISqliteConnectionFactory connectionFactory, SchemaRegistry registry, TimeProvider? timeProvider = null, INoteEventSink? eventSink = null, VectorRecall? vectors = null)
     {
-        _reader = new NotesReader(connectionFactory, timeProvider);
+        _clock = timeProvider ?? TimeProvider.System;
+        _vectors = vectors;
+        _reader = new NotesReader(connectionFactory, timeProvider, vectors);
         _writer = new NotesWriter(connectionFactory, registry, timeProvider, eventSink);
     }
 
@@ -30,7 +36,30 @@ public sealed class NotesRepository
         string domain, string type, string? title, string? body,
         string? payloadJson, string? tagsJson, string? dedupKey, string? sourceAgent, string? project = null,
         string? expectedRevision = null)
-        => _writer.Upsert(domain, type, title, body, payloadJson, tagsJson, dedupKey, sourceAgent, project, expectedRevision);
+    {
+        var result = _writer.Upsert(domain, type, title, body, payloadJson, tagsJson, dedupKey, sourceAgent, project, expectedRevision);
+        Reindex(result, type, title, body, tagsJson, payloadJson);
+        return result;
+    }
+
+    /// <summary>
+    /// Rebuilds a note's passages after a write (MEMP-196).
+    /// <para>Deliberately AFTER the write transaction has committed, not inside it: embedding takes hundreds of
+    /// milliseconds, and holding a write lock for that long would make every concurrent writer wait on a model.
+    /// The cost is a brief window where the note is searchable lexically but not yet semantically, which is the
+    /// right trade — the alternative serialises all writes behind inference.</para>
+    /// <para>An unchanged upsert is skipped: the content is identical, so its vectors are too.</para>
+    /// </summary>
+    private void Reindex(UpsertResult result, string type, string? title, string? body, string? tagsJson, string? payloadJson)
+    {
+        if (_vectors is not { Enabled: true } vectors || result.Unchanged)
+        {
+            return;
+        }
+
+        vectors.Index(result.Id, new NoteContent(type, title, body, tagsJson, payloadJson),
+            _clock.GetUtcNow().UtcDateTime.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
+    }
 
     /// <inheritdoc cref="NotesWriter.UpsertMany"/>
     public IReadOnlyList<UpsertResult> UpsertMany(IReadOnlyList<NoteUpsertInput> inputs, string? sourceAgent)

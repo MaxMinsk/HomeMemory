@@ -1,5 +1,6 @@
 using MemoryMcp.Core.Naming;
 using MemoryMcp.Core.Query;
+using MemoryMcp.Core.Retrieval;
 using Microsoft.Data.Sqlite;
 
 namespace MemoryMcp.Core.Notes;
@@ -86,7 +87,7 @@ public sealed partial class NotesReader
         }
 
         var items = hybrid
-            ? HybridPage(connection, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload, exactKey, phrase, negTokens, explain, any, boostProject, projectEquals)
+            ? HybridPage(connection, query, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload, exactKey, phrase, negTokens, explain, any, boostProject, projectEquals)
             : Page(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload, sortBody, exactKey, phrase, negTokens, any, projectEquals);
         if (includeLinks)
         {
@@ -168,7 +169,7 @@ public sealed partial class NotesReader
     // RRF over relevance/recency/link-degree/importance in C#, then page within the re-ranked pool. exact-key matches
     // still float to the top. Deep paging past the pool returns nothing (recall uses small limits) — the pool caps cost.
     private IReadOnlyList<SearchResult> HybridPage(
-        SqliteConnection connection, IReadOnlyList<string> tokens,
+        SqliteConnection connection, string? queryText, IReadOnlyList<string> tokens,
         string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
         IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, int limit, int offset,
         bool includePayload, string? exactKey, bool phrase, IReadOnlyList<string> negTokens, bool explain, bool matchAny = false,
@@ -219,6 +220,8 @@ public sealed partial class NotesReader
 
         // Up-weight the project signal only when a project was requested; otherwise it's a no-op tie (see ProjectGoodness).
         var weights = boostProject is null ? RankingWeights.Default : RankingWeights.ProjectBoosted;
+
+        weights = ApplyVectorScores(queryText, rows, weights);
         var fused = HybridRanker.Fuse(rows, weights);
         return fused.Skip(offset).Take(limit)
             .Select(item => explain ? item.Result with { Explain = item.Breakdown } : item.Result)
@@ -360,6 +363,34 @@ public sealed partial class NotesReader
 
         var hit = includeLinks ? rows[0] with { Links = Links(rows[0].Id) } : rows[0];
         return new SearchPage(new[] { hit }, 1, 0, limit, false);
+    }
+
+    /// <summary>
+    /// Attaches each candidate's best-passage cosine and turns the vector weight on (MEMP-196).
+    /// <para>Scores are looked up ONLY for the notes BM25 already surfaced. Scoring the whole corpus would need
+    /// an approximate-nearest-neighbour index this deliberately does not have at a two-thousand-note scale; the
+    /// vector signal is here to re-order and rescue within the lexical pool, which is what the golden set showed
+    /// it is good at. Weight stays 0 when nothing scored, so a pool with no indexed notes ranks exactly as before.</para>
+    /// </summary>
+    private RankingWeights ApplyVectorScores(string? queryText, List<RankRow> rows, RankingWeights weights)
+    {
+        if (_vectors is not { Enabled: true } vectors)
+        {
+            return weights;
+        }
+
+        var scores = vectors.Score(queryText, [.. rows.Select(row => row.Result.Id)]);
+        if (scores.Count == 0)
+        {
+            return weights;
+        }
+
+        for (var i = 0; i < rows.Count; i++)
+        {
+            rows[i] = rows[i] with { Vector = scores.TryGetValue(rows[i].Result.Id, out var score) ? score : null };
+        }
+
+        return weights with { Vector = vectors.Weight };
     }
 
     // Binds all filter parameters to the command and returns the shared WHERE clause (reused by Count + Page).

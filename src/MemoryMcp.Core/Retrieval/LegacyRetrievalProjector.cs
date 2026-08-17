@@ -90,7 +90,10 @@ public sealed class LegacyRetrievalProjector : IRetrievalProjector
         for (var start = 0; start < all.Length; start += PassageChars - PassageOverlap)
         {
             var window = all.Substring(start, Math.Min(PassageChars, all.Length - start)).Trim();
-            if (window.Length < MinPassageChars)
+            // The length floor exists to drop a meaningless trailing remnant, not to skip short notes: a note
+            // whose whole text is under the floor must still be embedded, or every brief note in the corpus
+            // would be searchable by its title alone.
+            if (window.Length == 0 || (window.Length < MinPassageChars && ordinal > 0))
             {
                 continue;
             }

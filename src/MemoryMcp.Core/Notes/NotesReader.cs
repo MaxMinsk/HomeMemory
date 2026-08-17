@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using MemoryMcp.Core.Naming;
 using MemoryMcp.Core.Query;
+using MemoryMcp.Core.Retrieval;
 using MemoryMcp.Core.Storage;
 using Microsoft.Data.Sqlite;
 
@@ -40,14 +41,17 @@ public sealed partial class NotesReader
     private readonly ISqliteConnectionFactory _connectionFactory;
     private readonly TimeProvider _clock;
     private readonly StalenessOptions _staleness = StalenessOptions.FromEnvironment();
+    private readonly VectorRecall? _vectors;
 
     /// <summary>Creates a reader over the given database.</summary>
     /// <param name="connectionFactory">Database connection factory.</param>
     /// <param name="timeProvider">Clock used to age hits for the staleness hint; defaults to the system clock.</param>
-    public NotesReader(ISqliteConnectionFactory connectionFactory, TimeProvider? timeProvider = null)
+    /// <param name="vectors">Semantic recall (MEMP-196); null or disabled leaves ranking purely lexical.</param>
+    public NotesReader(ISqliteConnectionFactory connectionFactory, TimeProvider? timeProvider = null, VectorRecall? vectors = null)
     {
         _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
         _clock = timeProvider ?? TimeProvider.System;
+        _vectors = vectors;
     }
 
     // The staleness hint carried by a hit (MEMP-240): computed here, on the row, because a lean recall nulls the

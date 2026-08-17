@@ -8,10 +8,12 @@ using MemoryMcp.Core.Confirmation;
 using MemoryMcp.Core.Diagnostics;
 using MemoryMcp.Core.Maintenance;
 using MemoryMcp.Core.Notes;
+using MemoryMcp.Core.Retrieval;
 using MemoryMcp.Core.Schemas;
 using MemoryMcp.Core.Security;
 using MemoryMcp.Core.Skills;
 using MemoryMcp.Core.Storage;
+using MemoryMcp.Embeddings;
 using MemoryMcp.Server.Logging;
 using MemoryMcp.Server.Mqtt;
 using MemoryMcp.Server.Webhook;
@@ -225,17 +227,49 @@ static BlobStore BuildBlobStore(string dbPath)
 static JsonSerializerOptions StructuredToolJson() =>
     new(ModelContextProtocol.McpJsonUtilities.DefaultOptions) { DefaultIgnoreCondition = JsonIgnoreCondition.Never };
 
+// Semantic recall (MEMP-196), off unless configured. The model is loaded eagerly so a bad path fails at
+// startup with a clear message rather than on the first search; a failure downgrades to lexical-only rather
+// than taking the server down, because a memory server that will not start is worse than one without vectors.
+static void RegisterRetrieval(IServiceCollection services)
+{
+    var options = EmbeddingOptions.FromEnvironment();
+    services.AddSingleton(options);
+    services.AddSingleton<IRetrievalProjector>(new LegacyRetrievalProjector());
+    services.AddSingleton(provider => new PassageStore(provider.GetRequiredService<ISqliteConnectionFactory>()));
+    services.AddSingleton(provider =>
+    {
+        IEmbedder? embedder = null;
+        if (options.Enabled && !string.IsNullOrWhiteSpace(options.ModelDirectory))
+        {
+            try
+            {
+                embedder = new E5OnnxEmbedder(options.ModelDirectory!);
+            }
+            catch (Exception exception) when (exception is IOException or InvalidOperationException or DllNotFoundException)
+            {
+                provider.GetRequiredService<ILoggerFactory>().CreateLogger("Embeddings")
+                    .LogError(exception, "Embedding model could not be loaded from {Directory}; continuing without vector recall.", options.ModelDirectory);
+            }
+        }
+
+        return new VectorRecall(embedder, provider.GetRequiredService<PassageStore>(),
+            provider.GetRequiredService<IRetrievalProjector>(), options);
+    });
+}
+
 static void RegisterServices(IServiceCollection services, string dbPath)
 {
     services.AddSingleton(TimeProvider.System);
     services.AddSingleton<ISqliteConnectionFactory>(new SqliteConnectionFactory(dbPath));
     services.AddSingleton(SchemaRegistry.FromEmbeddedResources());
     RegisterEventSinks(services);
+    RegisterRetrieval(services);
     services.AddSingleton(provider => new NotesRepository(
         provider.GetRequiredService<ISqliteConnectionFactory>(),
         provider.GetRequiredService<SchemaRegistry>(),
         provider.GetRequiredService<TimeProvider>(),
-        provider.GetRequiredService<INoteEventSink>()));
+        provider.GetRequiredService<INoteEventSink>(),
+        provider.GetRequiredService<VectorRecall>()));
     services.AddSingleton<SkillsService>();
     services.AddSingleton<ConfirmationService>();
     // Write-time adoption hints (MEMP-204/205): a process-local recall tracker + the on/off toggle.

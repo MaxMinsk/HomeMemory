@@ -28,7 +28,14 @@ public sealed record CapabilitiesReport(
 /// <param name="MappingHash">Stable hash of that mapping; a change means stored passages are stale.</param>
 /// <param name="TypesWithMapping">Types with a declared retrieval mapping.</param>
 /// <param name="TypesOnLegacy">Types still indexing every string because they declare none.</param>
-public sealed record RetrievalInfo(string MappingVersion, string MappingHash, int TypesWithMapping, int TypesOnLegacy);
+/// <param name="VectorModel">The embedding model in use, or null when the layer is off (MEMP-196). Null means
+/// recall is purely lexical — which an agent needs to know, or it cannot tell why the same paraphrased query
+/// behaves differently on two instances.</param>
+/// <param name="IndexedNotes">Notes with at least one passage under the current model and mapping.</param>
+/// <param name="StalePassages">Passages left over from an older model or mapping, awaiting reindex.</param>
+public sealed record RetrievalInfo(
+    string MappingVersion, string MappingHash, int TypesWithMapping, int TypesOnLegacy,
+    string? VectorModel = null, long IndexedNotes = 0, long StalePassages = 0);
 
 /// <summary>A note type the server recognizes.</summary>
 /// <param name="Type">The type discriminator (e.g. <c>backlog_item</c>, <c>recipe</c>).</param>

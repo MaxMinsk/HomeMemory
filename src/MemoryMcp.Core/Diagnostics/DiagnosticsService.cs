@@ -29,16 +29,23 @@ public sealed class DiagnosticsService
     private readonly ISqliteConnectionFactory _connectionFactory;
     private readonly SchemaRegistry _registry;
     private readonly BlobStore? _blobs;
+    private readonly VectorRecall? _vectors;
+    private readonly PassageStore? _passages;
 
     /// <summary>Creates the service over the database, schema registry and (optionally) the blob store.</summary>
     /// <param name="connectionFactory">Database connection factory.</param>
     /// <param name="registry">The schema registry to report from.</param>
     /// <param name="blobs">Blob store, for the stored-bytes figure; null reports 0.</param>
-    public DiagnosticsService(ISqliteConnectionFactory connectionFactory, SchemaRegistry registry, BlobStore? blobs = null)
+    /// <param name="vectors">Semantic recall, to report which model is live; null means the layer is off.</param>
+    /// <param name="passages">Embedding index, for the coverage and stale figures.</param>
+    public DiagnosticsService(ISqliteConnectionFactory connectionFactory, SchemaRegistry registry, BlobStore? blobs = null,
+        VectorRecall? vectors = null, PassageStore? passages = null)
     {
         _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
         _registry = registry ?? throw new ArgumentNullException(nameof(registry));
         _blobs = blobs;
+        _vectors = vectors;
+        _passages = passages;
     }
 
     /// <summary>
@@ -101,7 +108,12 @@ public sealed class DiagnosticsService
         // Every type is on the legacy projector until MEMP-252 declares mappings; reported rather than assumed,
         // because "all legacy" is exactly the state in which retrieval behaves as it did before the seam existed.
         var legacy = new LegacyRetrievalProjector().Describe(string.Empty);
-        var retrieval = new RetrievalInfo(legacy.MappingVersion, legacy.MappingHash, TypesWithMapping: 0, types.Count);
+        var model = _vectors?.ModelId;
+        var (_, stale, indexed) = model is not null && _passages is not null
+            ? _passages.Coverage(model, legacy.MappingHash)
+            : (0L, 0L, 0L);
+        var retrieval = new RetrievalInfo(
+            legacy.MappingVersion, legacy.MappingHash, TypesWithMapping: 0, types.Count, model, indexed, stale);
 
         return new CapabilitiesReport(ServerVersion, schemaVersion, ContractVersion, types, scopeInfo,
             SearchBackendDescription, _blobs?.QuotaBytes ?? 0, ScopeGuard.CommonsDomain, SkillsHint, retrieval);
