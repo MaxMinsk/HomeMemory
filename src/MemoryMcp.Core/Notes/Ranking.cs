@@ -35,6 +35,17 @@ public sealed record RankingWeights(double Lexical = 3.0, double Title = 2.0, do
     public static readonly RankingWeights ProjectBoosted = Default with { Project = 2.0 };
 
     /// <summary>
+    /// The blend for a query whose strict lexical pass matched NOTHING and had to fall back to any-term
+    /// (MEMP-196). Semantic evidence leads and lexical follows.
+    /// <para>This is not a hedge, it is what was measured: across all twelve golden-set queries the strict pass
+    /// returned zero every time, so every result was the any-term fallback — ranked by whichever single token
+    /// happened to be shared, usually a loanword or a dedup slug. Treating that as strong evidence is what let
+    /// one incidental match outrank a note that is genuinely about the question. When the engine has already
+    /// told us it found no real lexical match, the honest thing is to let meaning decide.</para>
+    /// </summary>
+    public static readonly RankingWeights SemanticLed = Default with { Lexical = 1.5, Vector = 3.0 };
+
+    /// <summary>
     /// RRF damping constant (k): larger flattens the gap between top ranks. The common default of 60 flattened
     /// this pool to nothing — the top twelve fused scores of a real query spanned 0.005 in total, so no signal
     /// could actually order anything and ties fell through to arbitrary tiebreaks (MEMP-237). At 20 a one-rank
@@ -75,7 +86,8 @@ public sealed record ScoreBreakdown(
 /// </summary>
 /// <param name="Result">The search hit to return (score/snippet/payload already populated).</param>
 /// <param name="Tier">Exact-key tier (0 = dedup_key match, 1 = title match, 2 = neither); kept ahead of the blend.</param>
-/// <param name="Lexical">Lexical goodness (negated BM25; higher = more relevant).</param>
+/// <param name="Lexical">Lexical goodness (negated BM25; higher = more relevant), or null when the note reached
+/// the pool semantically and has no BM25 evidence at all.</param>
 /// <param name="Title">Title goodness (query coverage of the title; higher = the title is more about the query).</param>
 /// <param name="Recency">Recency goodness (Unix ms of the last update; higher = newer).</param>
 /// <param name="Link">Link goodness (link-degree; higher = more connected).</param>
@@ -83,7 +95,7 @@ public sealed record ScoreBreakdown(
 /// <param name="Type">Type goodness (canonical types higher than ephemeral ones).</param>
 /// <param name="Project">Project goodness (1 when the note is in the requested project, else 0; MEMP-209).</param>
 /// <param name="Vector">Cosine of the note's best passage against the query, or null when it has no vector evidence.</param>
-internal readonly record struct RankRow(SearchResult Result, int Tier, double Lexical, double Title, double Recency, double Link, double Importance, double Type, double Project, double? Vector = null);
+internal readonly record struct RankRow(SearchResult Result, int Tier, double? Lexical, double Title, double Recency, double Link, double Importance, double Type, double Project, double? Vector = null);
 
 /// <summary>Reciprocal-rank-fusion re-ranker over a bounded candidate pool (MEMP-174). Pure and deterministic.</summary>
 internal static class HybridRanker
@@ -94,7 +106,8 @@ internal static class HybridRanker
     /// </summary>
     public static List<(SearchResult Result, ScoreBreakdown Breakdown)> Fuse(IReadOnlyList<RankRow> rows, RankingWeights weights)
     {
-        var lexRanks = CompetitionRanks(rows, row => row.Lexical);
+        var lexRanks = SparseRanks(rows, row => row.Lexical);
+        var vecRanks = SparseRanks(rows, row => row.Vector);
         var titleRanks = CompetitionRanks(rows, row => row.Title);
         var recRanks = CompetitionRanks(rows, row => row.Recency);
         var linkRanks = CompetitionRanks(rows, row => row.Link);
@@ -103,15 +116,13 @@ internal static class HybridRanker
         var projRanks = CompetitionRanks(rows, row => row.Project);
 
         var titleScale = TitleScale(rows.Count, weights.Title);
-        var vectorScale = TitleScale(rows.Count, weights.Vector);
-        var (vectorFloor, vectorRange) = VectorSpread(rows);
         var scored = new List<(SearchResult Result, int Tier, double Bm25, ScoreBreakdown Breakdown)>(rows.Count);
         for (var i = 0; i < rows.Count; i++)
         {
             var fused =
-                (weights.Lexical / (RankingWeights.K + lexRanks[i])) +
+                Sparse(weights.Lexical, lexRanks[i]) +
                 ((rows[i].Title / TitleRelevance.MaxGoodness) * titleScale) +
-                VectorContribution(rows[i].Vector, vectorFloor, vectorRange, vectorScale) +
+                Sparse(weights.Vector, vecRanks[i]) +
                 (weights.Recency / (RankingWeights.K + recRanks[i])) +
                 (weights.Link / (RankingWeights.K + linkRanks[i])) +
                 (weights.Importance / (RankingWeights.K + impRanks[i])) +
@@ -162,46 +173,42 @@ internal static class HybridRanker
         weight * ((1d / (RankingWeights.K + 1)) - (1d / (RankingWeights.K + Math.Max(poolSize, 1))));
 
     /// <summary>
-    /// The cosine floor and range across the notes that HAVE vector evidence (MEMP-196).
-    /// <para>Raw cosine is a poor scale to weight directly: with a sentence embedder almost everything scores
-    /// 0.7 upward, so an unrelated note would collect nearly the same bonus as a perfect match and the signal
-    /// would do nothing. Normalising within the pool restores the discrimination that matters — which of THESE
-    /// candidates is most on-topic.</para>
+    /// A signal's contribution when it may be ABSENT for some rows (MEMP-196): rank 0 means "this signal has
+    /// nothing to say about this note", and contributes nothing.
+    /// <para>Abstaining matters in both directions and for the same reason. A note the embedding index has not
+    /// reached yet must not be treated as semantically unrelated, or a partial rebuild would bury everything it
+    /// had not covered. And a note that reached the pool semantically — which BM25 never surfaced, the very case
+    /// the feature exists for — must not be ranked last for having no BM25 score, or it could never win.</para>
     /// </summary>
-    private static (double Floor, double Range) VectorSpread(IReadOnlyList<RankRow> rows)
+    private static double Sparse(double weight, int rank) => rank == 0 ? 0d : weight / (RankingWeights.K + rank);
+
+    /// <summary>
+    /// Competition ranks over only the rows that HAVE the signal; rows without it get rank 0 (see
+    /// <see cref="Sparse"/>). Ranking them together with the rest would force a value onto notes that have none.
+    /// </summary>
+    private static int[] SparseRanks(IReadOnlyList<RankRow> rows, Func<RankRow, double?> goodness)
     {
-        double? low = null;
-        double? high = null;
-        foreach (var row in rows)
+        var ranks = new int[rows.Count];
+        for (var i = 0; i < rows.Count; i++)
         {
-            if (row.Vector is not { } score)
+            if (goodness(rows[i]) is not { } value)
             {
                 continue;
             }
 
-            low = low is null ? score : Math.Min(low.Value, score);
-            high = high is null ? score : Math.Max(high.Value, score);
+            var better = 0;
+            foreach (var other in rows)
+            {
+                if (goodness(other) is { } rival && rival > value)
+                {
+                    better++;
+                }
+            }
+
+            ranks[i] = better + 1;
         }
 
-        return low is null ? (0d, 0d) : (low.Value, high!.Value - low.Value);
-    }
-
-    /// <summary>
-    /// The semantic signal's contribution: a bonus, never a penalty (MEMP-196).
-    /// <para>A note with no vector evidence contributes nothing rather than scoring last, because "not indexed
-    /// yet" and "indexed and unrelated" are different claims — and treating them alike would systematically
-    /// bury everything the index has not reached yet while a rebuild is in progress. Vectors are here to ADD
-    /// paraphrase and cross-language recall on top of BM25, not to re-order what BM25 already gets right.</para>
-    /// </summary>
-    private static double VectorContribution(double? cosine, double floor, double range, double scale)
-    {
-        // A range this small means every candidate is equally (dis)similar; normalising it would amplify noise.
-        if (cosine is not { } score || range <= 1e-6 || scale <= 0d)
-        {
-            return 0d;
-        }
-
-        return (score - floor) / range * scale;
+        return ranks;
     }
 
     // Competition rank ("1224"): rank = 1 + how many pool items are strictly better. Ties share a rank, so a pool

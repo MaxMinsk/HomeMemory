@@ -87,7 +87,7 @@ public sealed partial class NotesReader
         }
 
         var items = hybrid
-            ? HybridPage(connection, query, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload, exactKey, phrase, negTokens, explain, any, boostProject, projectEquals)
+            ? HybridPage(connection, query, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload, exactKey, phrase, negTokens, explain, any, boostProject, projectEquals, relaxed)
             : Page(connection, useFts, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, limit, offset, includePayload, sortBody, exactKey, phrase, negTokens, any, projectEquals);
         if (includeLinks)
         {
@@ -173,7 +173,7 @@ public sealed partial class NotesReader
         string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
         IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, int limit, int offset,
         bool includePayload, string? exactKey, bool phrase, IReadOnlyList<string> negTokens, bool explain, bool matchAny = false,
-        string? boostProject = null, string? projectEquals = null)
+        string? boostProject = null, string? projectEquals = null, bool relaxed = false)
     {
         using var command = connection.CreateCommand();
         var where = ApplyFilters(command, true, tokens, domain, type, tags, status, restrictToDomains, compiledFilter, phrase, negTokens, matchAny, projectEquals);
@@ -187,6 +187,23 @@ public sealed partial class NotesReader
 
         var rows = new List<RankRow>();
         var terms = TitleRelevance.Terms(tokens); // stemmed once for the whole pool, not per row (MEMP-237)
+        ReadPool(command, tokens, terms, includePayload, exactKey, boostProject, rows);
+        AddSemanticCandidates(connection, queryText, tokens, terms, domain, type, tags, status, restrictToDomains,
+            compiledFilter, includePayload, exactKey, boostProject, projectEquals, rows);
+
+        var weights = SelectWeights(boostProject, relaxed);
+        weights = ApplyVectorScores(queryText, rows, weights);
+        var fused = HybridRanker.Fuse(rows, weights);
+        return fused.Skip(offset).Take(limit)
+            .Select(item => explain ? item.Result with { Explain = item.Breakdown } : item.Result)
+            .ToList();
+    }
+
+    // Maps the BM25 candidate rows (and, reused, the semantic ones) into the ranking pool.
+    private void ReadPool(
+        SqliteCommand command, IReadOnlyList<string> tokens, IReadOnlyList<TitleRelevance.QueryTerm> terms,
+        bool includePayload, string? exactKey, string? boostProject, List<RankRow> rows, bool lexical = true)
+    {
         using (var reader = command.ExecuteReader())
         {
             while (reader.Read())
@@ -212,20 +229,50 @@ public sealed partial class NotesReader
                     Staleness: StalenessOf(rowType, payloadJson, updatedUtc));
                 var project = reader.IsDBNull(11) ? null : reader.GetString(11);
                 rows.Add(new RankRow(
-                    result, ExactKeyTier(dedupKey, title, exactKey), -bm25, TitleRelevance.Goodness(title, terms),
+                    result, ExactKeyTier(dedupKey, title, exactKey), lexical ? -bm25 : null, TitleRelevance.Goodness(title, terms),
                     HybridRanker.RecencyGoodness(updatedUtc), degree, HybridRanker.ImportanceGoodness(payloadJson, tagsJson),
                     HybridRanker.TypeGoodness(reader.GetString(2)), HybridRanker.ProjectGoodness(project, boostProject)));
             }
         }
+    }
 
-        // Up-weight the project signal only when a project was requested; otherwise it's a no-op tie (see ProjectGoodness).
-        var weights = boostProject is null ? RankingWeights.Default : RankingWeights.ProjectBoosted;
+    /// <summary>
+    /// Adds notes the embedding index finds semantically close but BM25 never surfaced (MEMP-196).
+    /// <para>Without this the vector layer could only re-order what lexical search already found — and the case
+    /// the whole feature exists for is precisely the one lexical search returns nothing for: an English query
+    /// against a Russian note sharing not a single token. Candidates have to be able to ENTER the pool.</para>
+    /// <para>They are fetched through the same filter builder as everything else, so a semantic hit cannot
+    /// bypass a domain, scope, type, tag or status restriction. Their BM25 score is 0 — genuinely absent from
+    /// the lexical ranking rather than pretended — so they rank last on relevance and rise only on the semantic
+    /// signal, which is exactly the claim being made about them.</para>
+    /// </summary>
+    private void AddSemanticCandidates(
+        SqliteConnection connection, string? queryText, IReadOnlyList<string> tokens, IReadOnlyList<TitleRelevance.QueryTerm> terms,
+        string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
+        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter,
+        bool includePayload, string? exactKey, string? boostProject, string? projectEquals, List<RankRow> rows)
+    {
+        if (_vectors is not { Enabled: true } vectors)
+        {
+            return;
+        }
 
-        weights = ApplyVectorScores(queryText, rows, weights);
-        var fused = HybridRanker.Fuse(rows, weights);
-        return fused.Skip(offset).Take(limit)
-            .Select(item => explain ? item.Result with { Explain = item.Breakdown } : item.Result)
-            .ToList();
+        var known = rows.Select(row => row.Result.Id).ToHashSet(StringComparer.Ordinal);
+        var extra = vectors.Candidates(queryText, RankingWeights.PoolSize).Where(id => !known.Contains(id)).ToList();
+        if (extra.Count == 0)
+        {
+            return;
+        }
+
+        using var command = connection.CreateCommand();
+        var where = ApplyFilters(command, false, tokens, domain, type, tags, status, restrictToDomains,
+            compiledFilter, false, null, false, projectEquals, extra);
+        command.CommandText =
+            "SELECT n.id, n.title, n.type, n.domain, n.body, 0.0 AS score, n.status, n.payload_json, " +
+            "n.tags_json, n.dedup_key, n.updated_utc, n.project, " +
+            "(SELECT count(*) FROM note_links l WHERE l.from_id = n.id OR l.to_id = n.id) AS degree " +
+            $"FROM notes n WHERE {where};";
+        ReadPool(command, tokens, terms, includePayload, exactKey, boostProject, rows, lexical: false);
     }
 
     // Exact-key tier used to keep a searched key/title on top of any ranking (MEMP-159/160).
@@ -366,6 +413,19 @@ public sealed partial class NotesReader
     }
 
     /// <summary>
+    /// Picks the blend (MEMP-196). A query whose strict lexical pass matched nothing and fell back to any-term
+    /// gets the semantic-led weights — but only when the vector layer can actually answer, since without it
+    /// down-weighting lexical would just degrade the only signal there is.
+    /// </summary>
+    private RankingWeights SelectWeights(string? boostProject, bool relaxed)
+    {
+        var baseline = relaxed && _vectors is { Enabled: true }
+            ? RankingWeights.SemanticLed
+            : RankingWeights.Default;
+        return boostProject is null ? baseline : baseline with { Project = 2.0 };
+    }
+
+    /// <summary>
     /// Attaches each candidate's best-passage cosine and turns the vector weight on (MEMP-196).
     /// <para>Scores are looked up ONLY for the notes BM25 already surfaced. Scoring the whole corpus would need
     /// an approximate-nearest-neighbour index this deliberately does not have at a two-thousand-note scale; the
@@ -390,47 +450,59 @@ public sealed partial class NotesReader
             rows[i] = rows[i] with { Vector = scores.TryGetValue(rows[i].Result.Id, out var score) ? score : null };
         }
 
-        return weights with { Vector = vectors.Weight };
+        // A configured weight overrides the blend default; otherwise the blend already carries one.
+        return weights.Vector > 0 ? weights : weights with { Vector = vectors.Weight };
     }
 
     // Binds all filter parameters to the command and returns the shared WHERE clause (reused by Count + Page).
+    // The FTS5 MATCH expression for a query's tokens.
+    private static string MatchExpression(IReadOnlyList<string> tokens, bool phrase, bool matchAny, IReadOnlyList<string>? negTokens)
+    {
+        string match;
+        if (phrase)
+        {
+            // A fully-quoted query is an exact ordered phrase (MEMP-166): no prefix, no stem expansion.
+            match = $"\"{string.Join(' ', tokens)}\"";
+        }
+        else
+        {
+            // Each token a quoted FTS5 prefix phrase, combined across all columns. Default is AND (space);
+            // any-term mode (MEMP-190) joins with OR so partial matches return ranked. Stems part (MEMP-024):
+            // the stemmed tokens against the `stems` sidecar column with the same combiner, so word forms match
+            // (ANRs/ANR, Russian cases). Raw OR stems, so the raw path always still wins; stems only ADD recall.
+            var combiner = matchAny ? " OR " : " ";
+            var raw = string.Join(combiner, tokens.Select(token => $"\"{token}\"*"));
+            var stemmed = SearchStems.StemQueryTokens(tokens);
+            match = stemmed.Count == 0
+                ? raw
+                : $"({raw}) OR (stems : ({string.Join(combiner, stemmed.Select(stem => $"\"{stem}\""))}))";
+        }
+
+        // Exclude notes matching any '-term' (MEMP-169): FTS5 `(match) NOT (a* b* ...)`.
+        return negTokens is { Count: > 0 }
+            ? $"({match}) NOT ({string.Join(' ', negTokens.Select(token => $"\"{token}\"*"))})"
+            : match;
+    }
+
     private static string ApplyFilters(
         SqliteCommand command, bool useFts, IReadOnlyList<string> tokens,
         string? domain, string? type, IReadOnlyCollection<string>? tags, string status,
-        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, bool phrase = false, IReadOnlyList<string>? negTokens = null, bool matchAny = false, string? projectEquals = null)
+        IReadOnlyCollection<string>? restrictToDomains, CompiledFilter? compiledFilter, bool phrase = false, IReadOnlyList<string>? negTokens = null, bool matchAny = false, string? projectEquals = null,
+        IReadOnlyList<string>? idIn = null)
     {
         var filters = new List<string>();
 
+        // Restricting to specific ids (the semantic candidates) goes through the SAME filter builder as every
+        // other query, so a vector hit can never bypass a domain, scope, type or status restriction (MEMP-196).
+        if (idIn is not null)
+        {
+            filters.Add(InClause(command, "n.id", "$vid", idIn));
+        }
+
         if (useFts)
         {
-            string match;
-            if (phrase)
-            {
-                // A fully-quoted query is an exact ordered phrase (MEMP-166): no prefix, no stem expansion.
-                match = $"\"{string.Join(' ', tokens)}\"";
-            }
-            else
-            {
-                // Each token a quoted FTS5 prefix phrase, combined across all columns. Default is AND (space);
-                // any-term mode (MEMP-190) joins with OR so partial matches return ranked. Stems part (MEMP-024):
-                // the stemmed tokens against the `stems` sidecar column with the same combiner, so word forms match
-                // (ANRs/ANR, Russian cases). Raw OR stems, so the raw path always still wins; stems only ADD recall.
-                var combiner = matchAny ? " OR " : " ";
-                var raw = string.Join(combiner, tokens.Select(token => $"\"{token}\"*"));
-                var stemmed = SearchStems.StemQueryTokens(tokens);
-                match = stemmed.Count == 0
-                    ? raw
-                    : $"({raw}) OR (stems : ({string.Join(combiner, stemmed.Select(stem => $"\"{stem}\""))}))";
-            }
-
-            if (negTokens is { Count: > 0 })
-            {
-                // Exclude notes matching any '-term' (MEMP-169): FTS5 `(match) NOT (a* b* ...)`.
-                match = $"({match}) NOT ({string.Join(' ', negTokens.Select(token => $"\"{token}\"*"))})";
-            }
-
             filters.Add("notes_fts MATCH $q");
-            command.Parameters.AddWithValue("$q", match);
+            command.Parameters.AddWithValue("$q", MatchExpression(tokens, phrase, matchAny, negTokens));
         }
 
         filters.Add("n.deleted = 0");

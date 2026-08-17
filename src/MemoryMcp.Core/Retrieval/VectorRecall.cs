@@ -87,6 +87,40 @@ public sealed class VectorRecall(
         return best;
     }
 
+    /// <summary>
+    /// The most semantically similar notes in the whole index, best first — semantic CANDIDATES, not a re-rank.
+    /// <para>This is the difference between a vector layer that works and one that only looks like it does. If
+    /// vectors could merely re-order what BM25 already found, they could never answer the case the feature
+    /// exists for: an English query against a Russian note sharing not one token, which BM25 never surfaces at
+    /// all. Candidates must be able to ENTER the pool.</para>
+    /// <para>A brute-force scan is deliberate at this corpus size — a few thousand passages of 384 floats is a
+    /// handful of milliseconds, and an approximate index would add a dependency, a build step and a staleness
+    /// problem to save time nobody can feel. Revisit when the corpus is an order of magnitude larger.</para>
+    /// </summary>
+    /// <param name="query">The search text.</param>
+    /// <param name="limit">How many candidate notes to return.</param>
+    public IReadOnlyList<string> Candidates(string? query, int limit)
+    {
+        if (!Enabled || string.IsNullOrWhiteSpace(query) || limit <= 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        var queryVector = embedder!.Embed([query!], EmbeddingKind.Query)[0];
+        var mappingHash = _projector.Describe(string.Empty).MappingHash;
+        var best = new Dictionary<string, double>(StringComparer.Ordinal);
+        foreach (var passage in passages!.ForScoring(embedder.ModelId, mappingHash))
+        {
+            var score = Dot(passage.Vector, queryVector);
+            if (!best.TryGetValue(passage.NoteId, out var current) || score > current)
+            {
+                best[passage.NoteId] = score;
+            }
+        }
+
+        return [.. best.OrderByDescending(pair => pair.Value).Take(limit).Select(pair => pair.Key)];
+    }
+
     // Both sides are L2-normalised by the embedder, so the dot product IS the cosine. A length mismatch means
     // two different models' vectors reached the same query, which must never be scored rather than fudged.
     private static double Dot(float[] left, float[] right)

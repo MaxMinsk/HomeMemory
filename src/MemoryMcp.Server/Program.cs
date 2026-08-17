@@ -83,6 +83,12 @@ if (args.Length > 0 && args[0] == "tokens")
     return;
 }
 
+if (args.Length > 0 && args[0] == "index-embeddings")
+{
+    RunIndexEmbeddings(args, dbPath);
+    return;
+}
+
 if (transport == "http")
 {
     // Fail closed: HTTP mode must be authenticated (it sits behind HA/tunnels). Without a bearer, /mcp,
@@ -387,6 +393,56 @@ static void RunMaintenance(string[] args, string dbPath)
     {
         Console.WriteLine($"  WARNING: {backfill.Collisions.Count} note(s) skipped due to dedup collisions: {string.Join(", ", backfill.Collisions)}");
     }
+}
+
+// One-off embedding index build (MEMP-196). A note is embedded when it is written, so this exists for the
+// corpus that already existed when the layer was switched on — and for a reindex after the model or the
+// retrieval mapping changes, both of which make stored vectors incomparable rather than merely old.
+//
+// Single-threaded and unhurried on purpose: on the box this runs on, the CPU is shared with Home Assistant and
+// Frigate, and the initial build is the ONLY moment this feature is heavy. Progress is printed so a long run
+// is legible rather than silent.
+static void RunIndexEmbeddings(string[] args, string dbPath)
+{
+    var options = EmbeddingOptions.FromEnvironment();
+    if (string.IsNullOrWhiteSpace(options.ModelDirectory))
+    {
+        Console.WriteLine("index-embeddings: set MEMORY_EMBEDDING_MODEL_DIR to the model directory first.");
+        return;
+    }
+
+    var factory = new SqliteConnectionFactory(dbPath);
+    new Migrator(factory, SchemaMigrations.All).Migrate();
+    var notes = new NotesReader(factory);
+    var store = new PassageStore(factory);
+    using var embedder = new E5OnnxEmbedder(options.ModelDirectory!);
+    // Forced on regardless of MEMORY_EMBEDDINGS: running this command IS the intent to index.
+    var recall = new VectorRecall(embedder, store, new LegacyRetrievalProjector(), options with { Enabled = true });
+
+    var batch = args.Contains("--all", StringComparer.Ordinal) ? int.MaxValue : 500;
+    var mappingHash = new LegacyRetrievalProjector().Describe(string.Empty).MappingHash;
+    var pending = store.NeedingIndex(embedder.ModelId, mappingHash, Math.Min(batch, 100_000));
+    Console.WriteLine($"index-embeddings: {pending.Count} note(s) to index with {embedder.ModelId}.");
+
+    var started = DateTimeOffset.UtcNow;
+    var done = 0;
+    foreach (var id in pending)
+    {
+        if (notes.Get(id) is { } note)
+        {
+            recall.Index(id, new NoteContent(note.Type, note.Title, note.Body, note.TagsJson, note.PayloadJson),
+                DateTimeOffset.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        if (++done % 50 == 0)
+        {
+            var rate = done / Math.Max(1, (DateTimeOffset.UtcNow - started).TotalSeconds);
+            Console.WriteLine($"  {done}/{pending.Count} ({rate:F1}/s)");
+        }
+    }
+
+    var coverage = store.Coverage(embedder.ModelId, mappingHash);
+    Console.WriteLine($"index-embeddings: done. {coverage.Notes} note(s) indexed, {coverage.Stale} stale passage(s) from an older model or mapping.");
 }
 
 static void RunBacklogCli(string[] args, string dbPath)
