@@ -67,6 +67,11 @@ export MEMORY_EMBEDDINGS="$(bashio::config 'embeddings_enabled')"
 if bashio::config.true 'embeddings_enabled'; then
   export MEMORY_EMBEDDING_MODEL_DIR="$(bashio::config 'embedding_model_dir')"
   export MEMORY_EMBEDDING_WEIGHT="$(bashio::config 'embedding_weight')"
+  # full (default) or quantized: a quarter of the download and about twice the speed, measured to cost one
+  # query of the twelve-query golden set (MEMP-263). Only set it if the size or index-build time is a problem.
+  if bashio::config.has_value 'embedding_variant'; then
+    export MEMORY_EMBEDDING_VARIANT="$(bashio::config 'embedding_variant')"
+  fi
   if [ ! -f "${MEMORY_EMBEDDING_MODEL_DIR}/sentencepiece.bpe.model" ]; then
     bashio::log.info "Semantic recall is on; the model will be downloaded into ${MEMORY_EMBEDDING_MODEL_DIR} in the background. Search stays lexical until it is ready."
   else

@@ -44,6 +44,7 @@ options:
   embeddings_enabled: false
   embedding_model_dir: "/share/memory-mcp/model"
   embedding_weight: 2.0
+  embedding_variant: "full"
 schema:
   db_path: str
   bearer_token: password?
@@ -63,3 +64,4 @@ schema:
   embeddings_enabled: bool
   embedding_model_dir: str?
   embedding_weight: float?
+  embedding_variant: list(full|quantized)?

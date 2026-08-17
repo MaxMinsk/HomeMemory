@@ -37,7 +37,7 @@ public sealed class EmbeddingBootstrapService(
         if (!ModelFetcher.IsPresent(options.ModelDirectory))
         {
             logger.LogInformation("Semantic recall is on but the model is missing; fetching it into {Directory}. Search stays lexical until it lands.", options.ModelDirectory);
-            if (!await ModelFetcher.EnsureAsync(options.ModelDirectory, message => logger.LogInformation("{Message}", message), stoppingToken).ConfigureAwait(false))
+            if (!await ModelFetcher.EnsureAsync(options.ModelDirectory, message => logger.LogInformation("{Message}", message), options.Variant, stoppingToken).ConfigureAwait(false))
             {
                 logger.LogWarning("Could not fetch the embedding model; continuing with lexical search only.");
                 return;

@@ -60,9 +60,15 @@ public interface IEmbedder
 /// How much the vector signal counts in the hybrid blend, relative to the other signals. Query-time, so it can
 /// be retuned without reindexing anything.
 /// </param>
-public sealed record EmbeddingOptions(bool Enabled = false, string? ModelDirectory = null, double Weight = 2.0)
+/// <param name="Variant">
+/// Which model build to fetch: <c>full</c> (default) or <c>quantized</c>. The quantised build is a quarter of
+/// the download and embeds roughly twice as fast, and was measured to cost one query of the twelve-query golden
+/// set (MEMP-263) — so the default stays full precision, and this exists for a box where the size or the
+/// index-build time is a measured problem rather than a suspected one.
+/// </param>
+public sealed record EmbeddingOptions(bool Enabled = false, string? ModelDirectory = null, double Weight = 2.0, string? Variant = null)
 {
-    /// <summary>Reads <c>MEMORY_EMBEDDINGS</c>, <c>MEMORY_EMBEDDING_MODEL_DIR</c> and <c>MEMORY_EMBEDDING_WEIGHT</c>.</summary>
+    /// <summary>Reads <c>MEMORY_EMBEDDINGS</c>, <c>MEMORY_EMBEDDING_MODEL_DIR</c>, <c>MEMORY_EMBEDDING_WEIGHT</c> and <c>MEMORY_EMBEDDING_VARIANT</c>.</summary>
     public static EmbeddingOptions FromEnvironment()
     {
         var raw = Environment.GetEnvironmentVariable("MEMORY_EMBEDDINGS");
@@ -72,6 +78,8 @@ public sealed record EmbeddingOptions(bool Enabled = false, string? ModelDirecto
             NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) && parsed > 0
             ? parsed
             : 2.0;
-        return new EmbeddingOptions(enabled, Environment.GetEnvironmentVariable("MEMORY_EMBEDDING_MODEL_DIR"), weight);
+        return new EmbeddingOptions(
+            enabled, Environment.GetEnvironmentVariable("MEMORY_EMBEDDING_MODEL_DIR"), weight,
+            Environment.GetEnvironmentVariable("MEMORY_EMBEDDING_VARIANT"));
     }
 }

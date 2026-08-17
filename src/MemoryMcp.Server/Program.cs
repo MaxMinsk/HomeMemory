@@ -440,7 +440,7 @@ static void RunMaintenance(string[] args, string dbPath)
 static async Task RunFetchModel()
 {
     var options = EmbeddingOptions.FromEnvironment();
-    var ok = await ModelFetcher.EnsureAsync(options.ModelDirectory, Console.WriteLine);
+    var ok = await ModelFetcher.EnsureAsync(options.ModelDirectory, Console.WriteLine, options.Variant);
     Console.WriteLine(ok
         ? "fetch-model: done. Set embeddings_enabled and restart; the index builds itself."
         : "fetch-model: FAILED. See the messages above.");
