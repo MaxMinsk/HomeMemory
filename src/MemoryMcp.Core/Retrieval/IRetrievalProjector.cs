@@ -12,6 +12,16 @@ namespace MemoryMcp.Core.Retrieval;
 public sealed record NoteContent(string Type, string? Title, string? Body, string? TagsJson, string? PayloadJson);
 
 /// <summary>
+/// A note's text sorted into the lanes the full-text index stores (MEMP-262).
+/// <para>Which lane a field lands in is the TYPE's decision, declared by its schema. What each lane is WORTH is
+/// a query-time decision, set by the ranking profile. Keeping those apart is what lets relevance be retuned
+/// without rebuilding the index — the mistake Elasticsearch spent years undoing with index-time boost.</para>
+/// </summary>
+/// <param name="Primary">Text that says what the note is ABOUT.</param>
+/// <param name="Secondary">Text that makes the note findable without being its subject.</param>
+public sealed record LexicalLanes(string? Primary, string? Secondary);
+
+/// <summary>
 /// The single seam through which indexing code obtains a note's text (MEMP-251).
 /// <para><b>Why this exists.</b> Before it, every indexer walked the payload itself and took every string it
 /// found. That is defensible for full-text search, where an extra token is only noise, and wrong for embeddings,
@@ -48,4 +58,11 @@ public interface IRetrievalProjector
     /// </summary>
     /// <param name="note">The note content.</param>
     IReadOnlyList<RetrievalPassage> Passages(NoteContent note);
+
+    /// <summary>
+    /// The note's body and payload sorted into full-text lanes by their declared lexical role (MEMP-262).
+    /// Title and tags are lanes of their own and are not returned here.
+    /// </summary>
+    /// <param name="note">The note content.</param>
+    LexicalLanes Lanes(NoteContent note);
 }

@@ -29,5 +29,6 @@ public static class SchemaMigrations
         new Migration0016FleetingVowelStems(),
         new Migration0017AgentReads(),
         new Migration0018NotePassages(),
+        new Migrations.Migration0019LexicalLanes(),
     };
 }

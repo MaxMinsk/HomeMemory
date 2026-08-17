@@ -13,5 +13,16 @@ namespace MemoryMcp.Core.Notes;
 internal static class Bm25Weights
 {
     /// <summary>The weighted BM25 score expression (lower = more relevant, as FTS5 defines it).</summary>
-    public const string Expression = "bm25(notes_fts, 5.0, 1.0, 1.0, 1.0, 1.0, 1.0)";
+    public const string Expression = "bm25(notes_fts, " + Identity + ", " + Title + ", " + PrimaryText + ", "
+        + SecondaryText + ", " + Tags + ", " + Stems + ")";
+
+    // Lane weights, in the order the FTS table declares them (MEMP-262). These are the values the old
+    // per-source columns carried, kept deliberately unchanged so introducing lanes could not move any ranking:
+    // the migration and the re-weighting are separate decisions, and only the second one needs measuring.
+    private const string Identity = "1.0";
+    private const string Title = "5.0";
+    private const string PrimaryText = "1.0";
+    private const string SecondaryText = "1.0";
+    private const string Tags = "1.0";
+    private const string Stems = "1.0";
 }

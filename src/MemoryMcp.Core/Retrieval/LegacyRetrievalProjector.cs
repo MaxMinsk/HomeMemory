@@ -42,6 +42,28 @@ public sealed class LegacyRetrievalProjector : IRetrievalProjector
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// A type that declares nothing puts its body in the primary lane and everything else in the secondary one.
+    /// That is not a judgement about the payload — it is the conservative reading of "we were not told", and it
+    /// reproduces today's index exactly while both lanes are weighted the same.
+    /// </remarks>
+    public LexicalLanes Lanes(NoteContent note)
+    {
+        ArgumentNullException.ThrowIfNull(note);
+        var texts = Lexical(note);
+        var secondary = texts
+            .Where(text => text.Path.StartsWith("payload", StringComparison.Ordinal))
+            .Select(text => text.Text);
+        return new LexicalLanes(note.Body, Join(secondary));
+    }
+
+    internal static string? Join(IEnumerable<string> parts)
+    {
+        var joined = string.Join(" ", parts.Where(part => !string.IsNullOrWhiteSpace(part)));
+        return joined.Length == 0 ? null : joined;
+    }
+
+    /// <inheritdoc />
     public IReadOnlyList<RetrievalPassage> Passages(NoteContent note)
     {
         var texts = Lexical(note);

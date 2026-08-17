@@ -95,6 +95,12 @@ if (args.Length > 0 && args[0] == "index-embeddings")
     return;
 }
 
+if (args.Length > 0 && args[0] == "rebuild-lanes")
+{
+    RunRebuildLanes(dbPath);
+    return;
+}
+
 if (transport == "http")
 {
     // Fail closed: HTTP mode must be authenticated (it sits behind HA/tunnels). Without a bearer, /mcp,
@@ -444,6 +450,55 @@ static async Task RunFetchModel()
     Console.WriteLine(ok
         ? "fetch-model: done. Set embeddings_enabled and restart; the index builds itself."
         : "fetch-model: FAILED. See the messages above.");
+}
+
+// Recomputes every note's full-text lanes from its type's CURRENT retrieval mapping (MEMP-262).
+//
+// Needed because migration 0019 backfilled with the coarse legacy split: computing the schema-aware one there
+// would have meant reading the agent-authored schemas out of a table the migration was rebuilding around, and
+// it makes no observable difference while every lane weighs the same. It starts to matter the moment the lane
+// weights diverge — so this is the step to run BEFORE re-weighting, and after editing a type's lexical
+// annotations. It is a plain UPDATE per note; the existing triggers refresh the index, so search stays live
+// throughout and no FTS rebuild is involved.
+static void RunRebuildLanes(string dbPath)
+{
+    var factory = new SqliteConnectionFactory(dbPath);
+    new Migrator(factory, SchemaMigrations.All).Migrate();
+    var registry = SchemaRegistry.FromEmbeddedResources();
+    registry.SyncToDatabase(factory);
+    registry.LoadFromDatabase(factory);   // agent-authored types carry mappings too
+    var projector = new SchemaRetrievalProjector(registry);
+
+    using var connection = factory.Create();
+    var rows = new List<(string Id, string Type, string? Title, string? Body, string? Tags, string? Payload)>();
+    using (var read = connection.CreateCommand())
+    {
+        read.CommandText = "SELECT id, type, title, body, tags_json, payload_json FROM notes WHERE deleted = 0;";
+        using var reader = read.ExecuteReader();
+        while (reader.Read())
+        {
+            rows.Add((reader.GetString(0), reader.GetString(1),
+                reader.IsDBNull(2) ? null : reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3),
+                reader.IsDBNull(4) ? null : reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetString(5)));
+        }
+    }
+
+    Console.WriteLine($"rebuild-lanes: {rows.Count} note(s) to recompute.");
+    var changed = 0;
+    foreach (var row in rows)
+    {
+        var lanes = projector.Lanes(new NoteContent(row.Type, row.Title, row.Body, row.Tags, row.Payload));
+        using var update = connection.CreateCommand();
+        update.CommandText =
+            "UPDATE notes SET lane_primary = $p, lane_secondary = $s WHERE id = $id " +
+            "AND (lane_primary IS NOT $p OR lane_secondary IS NOT $s);";
+        update.Parameters.AddWithValue("$p", (object?)lanes.Primary ?? DBNull.Value);
+        update.Parameters.AddWithValue("$s", (object?)lanes.Secondary ?? DBNull.Value);
+        update.Parameters.AddWithValue("$id", row.Id);
+        changed += update.ExecuteNonQuery();
+    }
+
+    Console.WriteLine($"rebuild-lanes: done. {changed} note(s) re-laned, {rows.Count - changed} already current.");
 }
 
 // One-off embedding index build (MEMP-196). A note is embedded when it is written, so this exists for the

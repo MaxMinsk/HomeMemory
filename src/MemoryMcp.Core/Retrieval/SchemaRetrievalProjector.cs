@@ -81,6 +81,70 @@ public sealed class SchemaRetrievalProjector : IRetrievalProjector
     public IReadOnlyList<RetrievalText> Lexical(NoteContent note) => _legacy.Lexical(note);
 
     /// <inheritdoc />
+    public LexicalLanes Lanes(NoteContent note)
+    {
+        ArgumentNullException.ThrowIfNull(note);
+        var mapping = MappingFor(note.Type);
+        if (mapping is null)
+        {
+            return _legacy.Lanes(note);
+        }
+
+        var primary = new List<string>();
+        var secondary = new List<string>();
+        foreach (var text in _legacy.Lexical(note))
+        {
+            if (!text.Path.StartsWith("payload.", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            // The canonical path an annotation is declared against: array indices collapse to "[]".
+            var canonical = CollapseIndices(text.Path["payload.".Length..]);
+            switch (mapping.ForPath(canonical)?.Lexical)
+            {
+                case LexicalRole.Primary:
+                    primary.Add(text.Text);
+                    break;
+                case LexicalRole.None:
+                    // Declared as noise: an enum token, a timestamp, a bare identifier. Keeping it out of the
+                    // index is the point — searching "ready" should not return every ticket that has a status.
+                    break;
+                default:
+                    // Secondary, and also anything the mapping simply does not mention: findable, not a subject.
+                    secondary.Add(text.Text);
+                    break;
+            }
+        }
+
+        // The body is the note's own prose and always leads, whatever the payload declares.
+        return new LexicalLanes(
+            LegacyRetrievalProjector.Join(primary.Prepend(note.Body ?? string.Empty)),
+            LegacyRetrievalProjector.Join(secondary));
+    }
+
+    private static string CollapseIndices(string path)
+    {
+        var builder = new System.Text.StringBuilder(path.Length);
+        for (var i = 0; i < path.Length; i++)
+        {
+            if (path[i] != '[')
+            {
+                builder.Append(path[i]);
+                continue;
+            }
+
+            builder.Append("[]");
+            while (i < path.Length && path[i] != ']')
+            {
+                i++;
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    /// <inheritdoc />
     public IReadOnlyList<RetrievalPassage> Passages(NoteContent note)
     {
         ArgumentNullException.ThrowIfNull(note);

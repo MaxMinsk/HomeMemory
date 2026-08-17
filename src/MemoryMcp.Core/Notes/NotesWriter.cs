@@ -17,6 +17,7 @@ public sealed class NotesWriter
     private readonly ISqliteConnectionFactory _connectionFactory;
     private readonly SchemaRegistry _registry;
     private readonly SchemaValidator _validator;
+    private readonly Retrieval.IRetrievalProjector _projector;
     private readonly TimeProvider _timeProvider;
     private readonly INoteEventSink _eventSink;
 
@@ -30,6 +31,9 @@ public sealed class NotesWriter
         _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
         _registry = registry ?? throw new ArgumentNullException(nameof(registry));
         _validator = new SchemaValidator(registry);
+        // The lane split is the TYPE's decision, so it is computed here, where the schema is available — the
+        // SQL triggers only copy the stored columns (MEMP-262).
+        _projector = new Retrieval.SchemaRetrievalProjector(registry);
         _timeProvider = timeProvider ?? TimeProvider.System;
         _eventSink = eventSink ?? NullNoteEventSink.Instance;
     }
@@ -161,7 +165,7 @@ public sealed class NotesWriter
     }
 
     // Persists one prepared batch item, tagging any concurrency conflict with its index for a readable error.
-    private static (string Id, bool Created, bool Unchanged, string Revision) PersistBatchItem(
+    private (string Id, bool Created, bool Unchanged, string Revision) PersistBatchItem(
         SqliteConnection connection, SqliteTransaction transaction, PreparedUpsert item, string? sourceAgent, string nowUtc, int index)
     {
         try
@@ -181,7 +185,7 @@ public sealed class NotesWriter
     // transaction (the caller commits). Shared by Upsert and Assemble. When expectedRevision is given it is an
     // optimistic-concurrency guard (MEMP-179); an update whose new content equals the stored content is a no-op
     // (MEMP-183) — no row write, no audit event — and Revision returns the unchanged revision.
-    private static (string Id, bool Created, bool Unchanged, string Revision) PersistNote(
+    private (string Id, bool Created, bool Unchanged, string Revision) PersistNote(
         SqliteConnection connection, SqliteTransaction transaction,
         string domain, string type, string? title, string? body,
         string? payloadJson, string? tagsJson, string? dedupKey, string? sourceAgent, int schemaVer, string nowUtc,
@@ -191,6 +195,7 @@ public sealed class NotesWriter
 
         var contentHash = ContentHash.Compute(type, title, body, payloadJson, tagsJson);
         var searchStems = SearchStems.For(title, body, tagsJson, payloadJson);
+        var lanes = _projector.Lanes(new Retrieval.NoteContent(type, title, body, tagsJson, payloadJson));
 
         if (existing is null)
         {
@@ -200,7 +205,7 @@ public sealed class NotesWriter
             }
 
             var newId = Guid.NewGuid().ToString("N");
-            Insert(connection, transaction, newId, domain, type, title, body, payloadJson, tagsJson, dedupKey, sourceAgent, schemaVer, nowUtc, contentHash, searchStems, project);
+            Insert(connection, transaction, newId, domain, type, title, body, payloadJson, tagsJson, dedupKey, sourceAgent, schemaVer, nowUtc, contentHash, searchStems, lanes, project);
             var createdAfter = NoteAudit.Snapshot(title, body, payloadJson, tagsJson, "active", schemaVer);
             NoteAudit.Append(connection, transaction, newId, "create", sourceAgent, nowUtc, NoteAudit.BuildDiff("create", null, createdAfter));
             return (newId, true, false, nowUtc);
@@ -220,7 +225,7 @@ public sealed class NotesWriter
         }
 
         var before = NoteAudit.Snapshot(existing.Title, existing.Body, existing.PayloadJson, existing.TagsJson, existing.Status, existing.SchemaVer);
-        Update(connection, transaction, existing.Id, title, body, payloadJson, tagsJson, sourceAgent, schemaVer, nowUtc, contentHash, searchStems, project);
+        Update(connection, transaction, existing.Id, title, body, payloadJson, tagsJson, sourceAgent, schemaVer, nowUtc, contentHash, searchStems, lanes, project);
         var after = NoteAudit.Snapshot(title, body, payloadJson, tagsJson, existing.Status, schemaVer);
         NoteAudit.Append(connection, transaction, existing.Id, "update", sourceAgent, nowUtc, NoteAudit.BuildDiff("update", before, after));
         return (existing.Id, false, false, nowUtc);
@@ -450,10 +455,11 @@ public sealed class NotesWriter
 
         var contentHash = ContentHash.Compute("journal", resolvedTitle, text, null, tags);
         var searchStems = SearchStems.For(resolvedTitle, text, tags, null);
+        var lanes = _projector.Lanes(new Retrieval.NoteContent("journal", resolvedTitle, text, tags, null));
 
         using var connection = _connectionFactory.Create();
         using var transaction = connection.BeginTransaction();
-        Insert(connection, transaction, id, domain, "journal", resolvedTitle, text, null, tags, dedupKey, sourceAgent, 0, nowUtc, contentHash, searchStems);
+        Insert(connection, transaction, id, domain, "journal", resolvedTitle, text, null, tags, dedupKey, sourceAgent, 0, nowUtc, contentHash, searchStems, lanes);
         NoteAudit.Append(connection, transaction, id, "create", sourceAgent, nowUtc,
             new JsonObject { ["op"] = "create", ["type"] = "journal" }.ToJsonString());
         transaction.Commit();
@@ -1010,14 +1016,14 @@ public sealed class NotesWriter
     private static void Insert(
         SqliteConnection connection, SqliteTransaction transaction, string id, string domain, string type,
         string? title, string? body, string? payloadJson, string? tagsJson, string? dedupKey, string? sourceAgent,
-        int schemaVer, string nowUtc, string contentHash, string? searchStems, string? project = null)
+        int schemaVer, string nowUtc, string contentHash, string? searchStems, Retrieval.LexicalLanes lanes, string? project = null)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText =
             "INSERT INTO notes (id, domain, project, type, title, body, payload_json, tags_json, dedup_key, status, " +
-            "created_utc, updated_utc, source_agent, schema_ver, deleted, content_hash, search_stems) " +
-            "VALUES ($id, $d, $proj, $ty, $title, $body, $payload, $tags, $dedup, 'active', $now, $now, $agent, $ver, 0, $hash, $stems);";
+            "created_utc, updated_utc, source_agent, schema_ver, deleted, content_hash, search_stems, lane_primary, lane_secondary) " +
+            "VALUES ($id, $d, $proj, $ty, $title, $body, $payload, $tags, $dedup, 'active', $now, $now, $agent, $ver, 0, $hash, $stems, $lanep, $lanes);";
         command.Parameters.AddWithValue("$id", id);
         command.Parameters.AddWithValue("$d", domain);
         AddNullable(command, "$proj", project);
@@ -1032,12 +1038,14 @@ public sealed class NotesWriter
         command.Parameters.AddWithValue("$ver", schemaVer);
         command.Parameters.AddWithValue("$hash", contentHash);
         AddNullable(command, "$stems", searchStems);
+        AddNullable(command, "$lanep", lanes.Primary);
+        AddNullable(command, "$lanes", lanes.Secondary);
         command.ExecuteNonQuery();
     }
 
     private static void Update(
         SqliteConnection connection, SqliteTransaction transaction, string id,
-        string? title, string? body, string? payloadJson, string? tagsJson, string? sourceAgent, int schemaVer, string nowUtc, string contentHash, string? searchStems, string? project = null)
+        string? title, string? body, string? payloadJson, string? tagsJson, string? sourceAgent, int schemaVer, string nowUtc, string contentHash, string? searchStems, Retrieval.LexicalLanes lanes, string? project = null)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
@@ -1045,7 +1053,7 @@ public sealed class NotesWriter
         command.CommandText =
             "UPDATE notes SET title = $title, body = $body, payload_json = $payload, tags_json = $tags, " +
             "source_agent = $agent, schema_ver = $ver, updated_utc = $now, content_hash = $hash, search_stems = $stems, " +
-            "project = COALESCE($proj, project) WHERE id = $id;";
+            "lane_primary = $lanep, lane_secondary = $lanes, project = COALESCE($proj, project) WHERE id = $id;";
         AddNullable(command, "$title", title);
         AddNullable(command, "$body", body);
         AddNullable(command, "$payload", payloadJson);
@@ -1056,6 +1064,8 @@ public sealed class NotesWriter
         command.Parameters.AddWithValue("$now", nowUtc);
         command.Parameters.AddWithValue("$hash", contentHash);
         AddNullable(command, "$stems", searchStems);
+        AddNullable(command, "$lanep", lanes.Primary);
+        AddNullable(command, "$lanes", lanes.Secondary);
         command.Parameters.AddWithValue("$id", id);
         command.ExecuteNonQuery();
     }
