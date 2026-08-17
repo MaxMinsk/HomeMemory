@@ -33,13 +33,14 @@ public sealed class SkillTools
         [Description("Human-readable title")] string? title = null,
         [Description("Note type this skill guides, e.g. recipe (optional)")] string? targetType = null,
         [Description("Version; bump on meaningful change (default 1)")] int version = 1,
-        [Description("One-line description of what the skill teaches")] string? summary = null,
+        [Description("One line in the form 'Does X. Use when Y.' — this is the routing interface: it is the text a caller matches against to decide whether to activate the skill, so it must name both the action and the trigger")] string? summary = null,
         [Description("Who is writing (provenance)")] string? sourceAgent = null,
-        [Description("Project this skill is specific to (overrides the domain-general one of the same key); omit for a general skill")] string? project = null)
+        [Description("Project this skill is specific to (overrides the domain-general one of the same key); omit for a general skill")] string? project = null,
+        [Description("Tags as a JSON array, e.g. [\"intent:release\",\"area:frontend\"], so the skill is findable by the same search as every other note. NOTE this is a full upsert: omitting tags clears any it already had")] string? tags = null)
         => Translate(() =>
         {
             _authz.AuthorizeWrite(domain);
-            return _skills.Upsert(domain, key, title, body, targetType, version, summary, sourceAgent, project);
+            return _skills.Upsert(domain, key, title, body, targetType, version, summary, sourceAgent, project, tags);
         });
 
     /// <summary>Lists skills (metadata only) in a domain, optionally for a specific target type.</summary>

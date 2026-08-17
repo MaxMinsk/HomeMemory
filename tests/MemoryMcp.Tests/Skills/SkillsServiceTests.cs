@@ -135,6 +135,28 @@ public class SkillsServiceTests
         Assert.Null(skills.Get("commons", "no-such-skill"));
     }
 
+    /// <summary>
+    /// MEMP-258: a skill is a note, so it should be findable by the same search as every other note. Until now
+    /// skill authoring hardcoded null tags, which made "which skill covers releases?" answerable only by
+    /// listing the whole catalogue and reading it.
+    /// </summary>
+    [Fact]
+    public void An_authored_skill_carries_its_tags_and_is_findable_by_them()
+    {
+        using var temp = new TempDatabase();
+        var factory = new SqliteConnectionFactory(temp.FilePath);
+        new Migrator(factory, SchemaMigrations.All).Migrate();
+        var notes = new NotesRepository(factory, SchemaRegistry.FromEmbeddedResources());
+        var skills = new SkillsService(notes);
+
+        skills.Upsert("commons", "sprint-release", "Sprint release", "body", null, 1,
+            "Cuts a release. Use when a sprint is finished.", "me", null, """["intent:release","area:ops"]""");
+
+        var byTag = notes.Search(null, domain: "commons", tags: ["intent:release"]).Items;
+        Assert.Single(byTag);
+        Assert.Equal("Sprint release", byTag[0].Title);
+    }
+
     private static SkillsService NewService(TempDatabase temp)
     {
         var factory = new SqliteConnectionFactory(temp.FilePath);

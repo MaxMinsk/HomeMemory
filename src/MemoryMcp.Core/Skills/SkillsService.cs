@@ -22,8 +22,20 @@ public sealed class SkillsService
     /// <summary>Creates or updates a skill (idempotent by key, scoped to <paramref name="project"/> when given).
     /// A project-specific skill (e.g. a project's own backlog conventions) overrides the domain-general one
     /// with the same key; it is stored under a project-qualified dedup key so they coexist.</summary>
+    /// <param name="domain">Domain to author in.</param>
+    /// <param name="key">Stable skill key.</param>
+    /// <param name="title">Human-readable title.</param>
+    /// <param name="body">The guidance itself.</param>
+    /// <param name="targetType">Note type this skill guides, if any.</param>
+    /// <param name="version">Skill version; bump on a meaningful change.</param>
+    /// <param name="summary">One line: what it does and when to reach for it.</param>
+    /// <param name="sourceAgent">Provenance.</param>
+    /// <param name="project">Project this skill overrides for, if any.</param>
+    /// <param name="tagsJson">Tags as a JSON array, so a skill is findable by the same mechanism as every other
+    /// note (MEMP-258). Passing null CLEARS existing tags — this is a full upsert, not a patch.</param>
     public Skill Upsert(string domain, string key, string? title, string body,
-        string? targetType, int version, string? summary, string? sourceAgent, string? project = null)
+        string? targetType, int version, string? summary, string? sourceAgent, string? project = null,
+        string? tagsJson = null)
     {
         var hasProject = !string.IsNullOrWhiteSpace(project);
         var payload = new Dictionary<string, object?> { ["key"] = key, ["version"] = version };
@@ -40,7 +52,7 @@ public sealed class SkillsService
         // Project is encoded in the dedup key (skill@1 payload forbids extra fields), so a project-specific
         // skill and the domain-general one of the same key coexist as distinct notes.
         var dedupKey = hasProject ? Qualify(project!, key) : key;
-        _notes.Upsert(domain, SkillType, title, body, JsonSerializer.Serialize(payload), null, dedupKey, sourceAgent ?? "skill-author", hasProject ? project : null);
+        _notes.Upsert(domain, SkillType, title, body, JsonSerializer.Serialize(payload), tagsJson, dedupKey, sourceAgent ?? "skill-author", hasProject ? project : null);
         return new Skill(key, title, targetType, version, summary, body, hasProject ? project : null);
     }
 
