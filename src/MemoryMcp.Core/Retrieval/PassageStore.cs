@@ -85,15 +85,21 @@ public sealed class PassageStore(ISqliteConnectionFactory connectionFactory)
     /// mapping are excluded rather than converted — a cosine across two vector spaces is noise, not a weak signal.
     /// </summary>
     /// <param name="modelId">Model identity to match.</param>
-    /// <param name="mappingHash">Mapping hash to match.</param>
+    /// <param name="mappingHashes">Mapping hashes that are current for some type; rows outside the set are stale.</param>
     /// <param name="noteIds">Restrict to these notes (the lexical candidate pool); null = all.</param>
-    public IReadOnlyList<StoredPassage> ForScoring(string modelId, string mappingHash, IReadOnlyCollection<string>? noteIds = null)
+    public IReadOnlyList<StoredPassage> ForScoring(
+        string modelId, IReadOnlyCollection<string> mappingHashes, IReadOnlyCollection<string>? noteIds = null)
     {
+        ArgumentNullException.ThrowIfNull(mappingHashes);
+        if (mappingHashes.Count == 0)
+        {
+            return Array.Empty<StoredPassage>();
+        }
+
         using var connection = _connectionFactory.Create();
         using var command = connection.CreateCommand();
-        var filters = new List<string> { "model_id = $model", "mapping_hash = $map" };
+        var filters = new List<string> { "model_id = $model", In(command, "mapping_hash", "m", mappingHashes) };
         command.Parameters.AddWithValue("$model", modelId);
-        command.Parameters.AddWithValue("$map", mappingHash);
         if (noteIds is not null)
         {
             if (noteIds.Count == 0)
@@ -101,16 +107,7 @@ public sealed class PassageStore(ISqliteConnectionFactory connectionFactory)
                 return Array.Empty<StoredPassage>();
             }
 
-            var names = new List<string>(noteIds.Count);
-            var index = 0;
-            foreach (var id in noteIds)
-            {
-                var name = string.Create(CultureInfo.InvariantCulture, $"$n{index++}");
-                names.Add(name);
-                command.Parameters.AddWithValue(name, id);
-            }
-
-            filters.Add($"note_id IN ({string.Join(", ", names)})");
+            filters.Add(In(command, "note_id", "n", noteIds));
         }
 
         command.CommandText =
@@ -133,36 +130,47 @@ public sealed class PassageStore(ISqliteConnectionFactory connectionFactory)
     /// figures <c>memory_capabilities</c> reports so an agent can tell whether vector recall is actually live.
     /// </summary>
     /// <param name="modelId">Current model identity.</param>
-    /// <param name="mappingHash">Current mapping hash.</param>
-    public (long Current, long Stale, long Notes) Coverage(string modelId, string mappingHash)
+    /// <param name="mappingHashes">Mapping hashes that are current for some type.</param>
+    public (long Current, long Stale, long Notes) Coverage(string modelId, IReadOnlyCollection<string> mappingHashes)
     {
+        ArgumentNullException.ThrowIfNull(mappingHashes);
+        if (mappingHashes.Count == 0)
+        {
+            return (0, 0, 0);
+        }
+
         using var connection = _connectionFactory.Create();
         using var command = connection.CreateCommand();
+        var current = In(command, "mapping_hash", "m", mappingHashes);
         command.CommandText =
             "SELECT " +
-            "  (SELECT count(*) FROM note_passages WHERE model_id = $model AND mapping_hash = $map), " +
-            "  (SELECT count(*) FROM note_passages WHERE model_id <> $model OR mapping_hash <> $map), " +
-            "  (SELECT count(DISTINCT note_id) FROM note_passages WHERE model_id = $model AND mapping_hash = $map);";
+            $"  (SELECT count(*) FROM note_passages WHERE model_id = $model AND {current}), " +
+            $"  (SELECT count(*) FROM note_passages WHERE model_id <> $model OR NOT {current}), " +
+            $"  (SELECT count(DISTINCT note_id) FROM note_passages WHERE model_id = $model AND {current});";
         command.Parameters.AddWithValue("$model", modelId);
-        command.Parameters.AddWithValue("$map", mappingHash);
         using var reader = command.ExecuteReader();
         return reader.Read() ? (reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2)) : (0, 0, 0);
     }
 
     /// <summary>Active notes with no passage under the current model and mapping — the index-build work list.</summary>
     /// <param name="modelId">Current model identity.</param>
-    /// <param name="mappingHash">Current mapping hash.</param>
+    /// <param name="mappingHashes">Mapping hashes that are current for some type.</param>
     /// <param name="limit">Maximum ids to return.</param>
-    public IReadOnlyList<string> NeedingIndex(string modelId, string mappingHash, int limit)
+    public IReadOnlyList<string> NeedingIndex(string modelId, IReadOnlyCollection<string> mappingHashes, int limit)
     {
+        ArgumentNullException.ThrowIfNull(mappingHashes);
+        if (mappingHashes.Count == 0)
+        {
+            return Array.Empty<string>();
+        }
+
         using var connection = _connectionFactory.Create();
         using var command = connection.CreateCommand();
         command.CommandText =
             "SELECT n.id FROM notes n WHERE n.deleted = 0 AND n.status = 'active' AND NOT EXISTS (" +
-            "  SELECT 1 FROM note_passages p WHERE p.note_id = n.id AND p.model_id = $model AND p.mapping_hash = $map) " +
+            $"  SELECT 1 FROM note_passages p WHERE p.note_id = n.id AND p.model_id = $model AND {In(command, "p.mapping_hash", "m", mappingHashes)}) " +
             "ORDER BY n.updated_utc DESC LIMIT $limit;";
         command.Parameters.AddWithValue("$model", modelId);
-        command.Parameters.AddWithValue("$map", mappingHash);
         command.Parameters.AddWithValue("$limit", limit);
 
         var ids = new List<string>();
@@ -173,6 +181,22 @@ public sealed class PassageStore(ISqliteConnectionFactory connectionFactory)
         }
 
         return ids;
+    }
+
+    // Builds a parameterised IN clause. Written out rather than interpolated because these values reach SQL on
+    // the read path, and a mapping hash or note id is not something to trust to string concatenation.
+    private static string In(SqliteCommand command, string column, string prefix, IReadOnlyCollection<string> values)
+    {
+        var names = new List<string>(values.Count);
+        var index = 0;
+        foreach (var value in values)
+        {
+            var name = string.Create(CultureInfo.InvariantCulture, $"${prefix}{index++}");
+            names.Add(name);
+            command.Parameters.AddWithValue(name, value);
+        }
+
+        return $"{column} IN ({string.Join(", ", names)})";
     }
 
     private static void DeleteFor(SqliteConnection connection, SqliteTransaction? transaction, string noteId)

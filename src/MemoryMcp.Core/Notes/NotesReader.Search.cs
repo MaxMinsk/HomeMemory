@@ -447,7 +447,7 @@ public sealed partial class NotesReader
 
         for (var i = 0; i < rows.Count; i++)
         {
-            rows[i] = rows[i] with { Vector = scores.TryGetValue(rows[i].Result.Id, out var score) ? score : null };
+            rows[i] = rows[i] with { Vector = scores.GetValueOrDefault(rows[i].Result.Id) };
         }
 
         // A configured weight overrides the blend default; otherwise the blend already carries one.

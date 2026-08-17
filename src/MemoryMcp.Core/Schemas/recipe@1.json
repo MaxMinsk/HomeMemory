@@ -4,10 +4,23 @@
   "type": "object",
   "required": ["format"],
   "additionalProperties": false,
+  "x-retrieval": { "version": "r1", "class": "canonical", "halfLifeDays": 3650 },
   "properties": {
-    "format": { "enum": ["kazan", "grill", "saj", "oven", "stove", "other"], "description": "Cooking format/method." },
-    "occasion": { "type": "string", "description": "When/why to cook it." },
-    "servings": { "type": "string", "description": "Portions, e.g. '5-7'." },
+    "format": {
+      "enum": ["kazan", "grill", "saj", "oven", "stove", "other"],
+      "description": "Cooking format/method.",
+      "x-retrieval": { "lexical": "primary", "semantic": "dish" }
+    },
+    "occasion": {
+      "type": "string",
+      "description": "When/why to cook it.",
+      "x-retrieval": { "lexical": "primary", "semantic": "dish" }
+    },
+    "servings": {
+      "type": "string",
+      "description": "Portions, e.g. '5-7'.",
+      "x-retrieval": { "lexical": "none", "semantic": false }
+    },
     "ingredients": {
       "type": "array",
       "items": {
@@ -15,29 +28,68 @@
         "required": ["name"],
         "additionalProperties": false,
         "properties": {
-          "name": { "type": "string" },
-          "amount": { "type": "string", "description": "Free text incl. ranges, e.g. '2-3' or 'about 2'." },
+          "name": {
+            "type": "string",
+            "x-retrieval": { "lexical": "primary", "semantic": "ingredients" }
+          },
+          "amount": {
+            "type": "string",
+            "description": "Free text incl. ranges, e.g. '2-3' or 'about 2'.",
+            "x-retrieval": { "lexical": "none", "semantic": false }
+          },
           "unit": {
             "enum": ["tsp", "tbsp", "cup", "g", "kg", "ml", "l", "pcs", "head", "clove", "pinch", "to_taste"],
-            "description": "Controlled unit token; the value text itself may be in any language."
+            "description": "Controlled unit token; the value text itself may be in any language.",
+            "x-retrieval": { "lexical": "none", "semantic": false }
           }
         }
       }
     },
-    "equipment": { "type": "array", "items": { "type": "string" } },
-    "preparation": { "type": "array", "items": { "type": "string" }, "description": "Prep steps, one per item." },
-    "cooking": { "type": "array", "items": { "type": "string" }, "description": "Cooking steps, one per item." },
+    "equipment": {
+      "type": "array",
+      "items": { "type": "string" },
+      "x-retrieval": { "lexical": "secondary", "semantic": "dish" }
+    },
+    "preparation": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Prep steps, one per item.",
+      "x-retrieval": { "lexical": "secondary", "semantic": "steps" }
+    },
+    "cooking": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Cooking steps, one per item.",
+      "x-retrieval": { "lexical": "secondary", "semantic": "steps" }
+    },
     "control_points": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "heat": { "type": "string" },
-        "time": { "type": "string" },
-        "watch": { "type": "array", "items": { "type": "string" } }
+        "heat": { "type": "string", "x-retrieval": { "lexical": "secondary", "semantic": "steps" } },
+        "time": { "type": "string", "x-retrieval": { "lexical": "secondary", "semantic": "steps" } },
+        "watch": {
+          "type": "array",
+          "items": { "type": "string" },
+          "x-retrieval": { "lexical": "secondary", "semantic": "steps" }
+        }
       }
     },
-    "serving": { "type": "array", "items": { "type": "string" } },
-    "result": { "type": "string", "description": "Outcome of the last run." },
-    "next_iterations": { "type": "array", "items": { "type": "string" }, "description": "What to change next time." }
+    "serving": {
+      "type": "array",
+      "items": { "type": "string" },
+      "x-retrieval": { "lexical": "secondary", "semantic": "steps" }
+    },
+    "result": {
+      "type": "string",
+      "description": "Outcome of the last run.",
+      "x-retrieval": { "lexical": "secondary", "semantic": "outcome" }
+    },
+    "next_iterations": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "What to change next time.",
+      "x-retrieval": { "lexical": "secondary", "semantic": "outcome" }
+    }
   }
 }

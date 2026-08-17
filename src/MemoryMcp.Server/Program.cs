@@ -246,7 +246,10 @@ static void RegisterRetrieval(IServiceCollection services)
 {
     var options = EmbeddingOptions.FromEnvironment();
     services.AddSingleton(options);
-    services.AddSingleton<IRetrievalProjector>(new LegacyRetrievalProjector());
+    // Schema-driven, with a per-type fallback to legacy (MEMP-252): a type that declares no x-retrieval
+    // annotations still indexes every string, exactly as before, so this can be rolled out one type at a time.
+    services.AddSingleton<IRetrievalProjector>(provider =>
+        new SchemaRetrievalProjector(provider.GetRequiredService<SchemaRegistry>()));
     services.AddSingleton(provider => new PassageStore(provider.GetRequiredService<ISqliteConnectionFactory>()));
     services.AddSingleton(provider => new VectorRecall(
         () => LoadEmbedder(provider, options),
@@ -446,13 +449,18 @@ static void RunIndexEmbeddings(string[] args, string dbPath)
     new Migrator(factory, SchemaMigrations.All).Migrate();
     var notes = new NotesReader(factory);
     var store = new PassageStore(factory);
+    var registry = SchemaRegistry.FromEmbeddedResources();
+    registry.SyncToDatabase(factory);
+    registry.LoadFromDatabase(factory);   // agent-authored types carry mappings too
     using var embedder = new E5OnnxEmbedder(options.ModelDirectory!);
     // Forced on regardless of MEMORY_EMBEDDINGS: running this command IS the intent to index.
-    var recall = new VectorRecall(embedder, store, new LegacyRetrievalProjector(), options with { Enabled = true });
+    // The same projector the server uses, so a CLI rebuild produces passages identical to a write-time index —
+    // otherwise the two would disagree and each would treat the other's rows as stale, forever.
+    var projector = new SchemaRetrievalProjector(registry);
+    var recall = new VectorRecall(embedder, store, projector, options with { Enabled = true });
 
     var batch = args.Contains("--all", StringComparer.Ordinal) ? int.MaxValue : 500;
-    var mappingHash = new LegacyRetrievalProjector().Describe(string.Empty).MappingHash;
-    var pending = store.NeedingIndex(embedder.ModelId, mappingHash, Math.Min(batch, 100_000));
+    var pending = store.NeedingIndex(embedder.ModelId, projector.CurrentMappingHashes, Math.Min(batch, 100_000));
     Console.WriteLine($"index-embeddings: {pending.Count} note(s) to index with {embedder.ModelId}.");
 
     var started = DateTimeOffset.UtcNow;
@@ -472,7 +480,7 @@ static void RunIndexEmbeddings(string[] args, string dbPath)
         }
     }
 
-    var coverage = store.Coverage(embedder.ModelId, mappingHash);
+    var coverage = store.Coverage(embedder.ModelId, projector.CurrentMappingHashes);
     Console.WriteLine($"index-embeddings: done. {coverage.Notes} note(s) indexed, {coverage.Stale} stale passage(s) from an older model or mapping.");
 }
 

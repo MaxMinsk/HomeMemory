@@ -75,9 +75,12 @@ public sealed record RankingWeights(double Lexical = 3.0, double Title = 2.0, do
 /// <param name="VectorScore">Cosine of the note's best passage against the query when the embedding layer is on
 /// (MEMP-196), else null. Null means "no vector evidence" — which is not the same claim as a low score, and the
 /// two are kept distinguishable on purpose so a partially-built index reads honestly.</param>
+/// <param name="VectorPassage">Which passage group earned that cosine, e.g. <c>ingredients</c> (MEMP-252).</param>
+/// <param name="VectorPaths">The JSON paths that passage was built from, so a semantic hit can be checked
+/// against the note rather than taken on faith.</param>
 public sealed record ScoreBreakdown(
     int LexicalRank, int TitleRank, int RecencyRank, int LinkRank, int ImportanceRank, int TypeRank, int ProjectRank,
-    double Fused, double? VectorScore = null);
+    double Fused, double? VectorScore = null, string? VectorPassage = null, IReadOnlyList<string>? VectorPaths = null);
 
 /// <summary>
 /// One candidate in the hybrid re-rank pool: the result to return plus the raw signal values used to rank it.
@@ -94,8 +97,8 @@ public sealed record ScoreBreakdown(
 /// <param name="Importance">Importance goodness (pinned/importance; higher = more important).</param>
 /// <param name="Type">Type goodness (canonical types higher than ephemeral ones).</param>
 /// <param name="Project">Project goodness (1 when the note is in the requested project, else 0; MEMP-209).</param>
-/// <param name="Vector">Cosine of the note's best passage against the query, or null when it has no vector evidence.</param>
-internal readonly record struct RankRow(SearchResult Result, int Tier, double? Lexical, double Title, double Recency, double Link, double Importance, double Type, double Project, double? Vector = null);
+/// <param name="Vector">The note's best-passage match, or null when it has no vector evidence at all.</param>
+internal readonly record struct RankRow(SearchResult Result, int Tier, double? Lexical, double Title, double Recency, double Link, double Importance, double Type, double Project, Retrieval.VectorHit? Vector = null);
 
 /// <summary>Reciprocal-rank-fusion re-ranker over a bounded candidate pool (MEMP-174). Pure and deterministic.</summary>
 internal static class HybridRanker
@@ -107,7 +110,7 @@ internal static class HybridRanker
     public static List<(SearchResult Result, ScoreBreakdown Breakdown)> Fuse(IReadOnlyList<RankRow> rows, RankingWeights weights)
     {
         var lexRanks = SparseRanks(rows, row => row.Lexical);
-        var vecRanks = SparseRanks(rows, row => row.Vector);
+        var vecRanks = SparseRanks(rows, row => row.Vector?.Score);
         var titleRanks = CompetitionRanks(rows, row => row.Title);
         var recRanks = CompetitionRanks(rows, row => row.Recency);
         var linkRanks = CompetitionRanks(rows, row => row.Link);
@@ -129,7 +132,8 @@ internal static class HybridRanker
                 (weights.Type / (RankingWeights.K + typeRanks[i])) +
                 (weights.Project / (RankingWeights.K + projRanks[i]));
             scored.Add((rows[i].Result, rows[i].Tier, rows[i].Result.Score,
-                new ScoreBreakdown(lexRanks[i], titleRanks[i], recRanks[i], linkRanks[i], impRanks[i], typeRanks[i], projRanks[i], fused, rows[i].Vector)));
+                new ScoreBreakdown(lexRanks[i], titleRanks[i], recRanks[i], linkRanks[i], impRanks[i], typeRanks[i], projRanks[i], fused,
+                    rows[i].Vector?.Score, rows[i].Vector?.Passage, rows[i].Vector?.SourcePaths)));
         }
 
         // Exact-key matches stay on top; then strongest fused score; BM25 then id break ties for a stable order.

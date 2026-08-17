@@ -153,6 +153,18 @@ public sealed class SchemaRegistry
             throw new SchemaAuthoringException($"Not a valid JSON Schema: {exception.Message}");
         }
 
+        // Retrieval annotations are validated HERE, where an author can still fix them. The projector's own
+        // fallback (legacy indexing on a parse failure) keeps the server running but is silent — a typo'd
+        // annotation would simply stop taking effect, and nothing would ever say so.
+        try
+        {
+            Retrieval.RetrievalMapping.FromSchema(type, version, json);
+        }
+        catch (ArgumentException exception)
+        {
+            throw new SchemaAuthoringException($"Invalid {Retrieval.RetrievalMapping.Keyword} annotation: {exception.Message}");
+        }
+
         var existing = Get(type, version);
         if (existing is not null && !string.Equals(existing.Json, json, StringComparison.Ordinal) && NotesExist(connectionFactory, type))
         {

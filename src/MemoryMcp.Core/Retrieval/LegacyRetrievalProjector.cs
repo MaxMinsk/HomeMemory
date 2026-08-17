@@ -18,18 +18,14 @@ public sealed class LegacyRetrievalProjector : IRetrievalProjector
     /// <summary>Mapping identity for every type without declared annotations.</summary>
     public const string MappingVersion = "legacy@1";
 
-    /// <summary>Passage window in characters, and its overlap — measured against the golden set (MEMP-242).</summary>
-    private const int PassageChars = 320;
-    private const int PassageOverlap = 80;
-
-    /// <summary>Below this a window carries no usable meaning and is dropped rather than embedded.</summary>
-    private const int MinPassageChars = 40;
-
     private static readonly string LegacyHash = Hash(MappingVersion);
 
     /// <inheritdoc />
     public RetrievalDescriptor Describe(string type) =>
         new(type, SchemaVersion: 0, MappingVersion, LegacyHash, IsLegacy: true);
+
+    /// <inheritdoc />
+    public IReadOnlyCollection<string> CurrentMappingHashes { get; } = [LegacyHash];
 
     /// <inheritdoc />
     public IReadOnlyList<RetrievalText> Lexical(NoteContent note)
@@ -66,42 +62,10 @@ public sealed class LegacyRetrievalProjector : IRetrievalProjector
         var rest = texts.Where(text => text.Path != "title").ToList();
         if (rest.Count > 0)
         {
-            AddWindows(passages, title?.Text, rest);
+            PassageWindows.Add(passages, "text", title?.Text, rest);
         }
 
         return passages;
-    }
-
-    // Overlapping windows over the note's non-title text, each prefixed with the title so a passage keeps its
-    // subject. Paths are carried through so a hit can name the fields it came from.
-    private static void AddWindows(List<RetrievalPassage> passages, string? title, IReadOnlyList<RetrievalText> rest)
-    {
-        var joined = new StringBuilder();
-        var offsets = new List<(int Start, string Path)>();
-        foreach (var text in rest)
-        {
-            offsets.Add((joined.Length, text.Path));
-            joined.Append(text.Text.Replace('\n', ' ')).Append(' ');
-        }
-
-        var all = joined.ToString();
-        var lead = string.IsNullOrWhiteSpace(title) ? string.Empty : title + ". ";
-        var ordinal = 0;
-        for (var start = 0; start < all.Length; start += PassageChars - PassageOverlap)
-        {
-            var window = all.Substring(start, Math.Min(PassageChars, all.Length - start)).Trim();
-            // The length floor exists to drop a meaningless trailing remnant, not to skip short notes: a note
-            // whose whole text is under the floor must still be embedded, or every brief note in the corpus
-            // would be searchable by its title alone.
-            if (window.Length == 0 || (window.Length < MinPassageChars && ordinal > 0))
-            {
-                continue;
-            }
-
-            var end = start + PassageChars;
-            var paths = offsets.Where(offset => offset.Start < end).Select(offset => offset.Path).Distinct(StringComparer.Ordinal).ToList();
-            passages.Add(new RetrievalPassage("text", ordinal++, lead + window, paths));
-        }
     }
 
     private static void Add(List<RetrievalText> texts, string path, string? text)

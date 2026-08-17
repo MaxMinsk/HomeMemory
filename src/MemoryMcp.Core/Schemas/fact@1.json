@@ -4,14 +4,46 @@
   "type": "object",
   "required": ["statement"],
   "additionalProperties": false,
+  "x-retrieval": { "version": "r1", "class": "canonical", "halfLifeDays": 180 },
   "properties": {
-    "statement": { "type": "string", "description": "A verifiable fact, e.g. 'the water pipe on the plot is plastic, 32mm'." },
-    "subject": { "type": "string", "description": "What/who the fact is about." },
-    "source": { "type": "string", "description": "Where the fact came from (a person, a document, an observation)." },
-    "as_of": { "type": "string", "description": "When the fact was established/observed (ISO-8601)." },
-    "confidence": { "enum": ["low", "medium", "high"] },
-    "valid_from": { "type": "string", "description": "Start of validity (ISO-8601), for temporal facts." },
-    "valid_to": { "type": "string", "description": "End of validity (ISO-8601); unset = still valid." },
-    "supersedes": { "type": "string", "description": "dedupKey/id of an earlier fact this replaces (ADD-only: don't overwrite, supersede)." }
+    "statement": {
+      "type": "string",
+      "description": "A verifiable fact, e.g. 'the water pipe on the plot is plastic, 32mm'.",
+      "x-retrieval": { "lexical": "primary", "semantic": "statement" }
+    },
+    "subject": {
+      "type": "string",
+      "description": "What/who the fact is about.",
+      "x-retrieval": { "lexical": "primary", "semantic": "statement" }
+    },
+    "source": {
+      "type": "string",
+      "description": "Where the fact came from (a person, a document, an observation).",
+      "x-retrieval": { "lexical": "secondary", "semantic": false }
+    },
+    "as_of": {
+      "type": "string",
+      "description": "When the fact was established/observed (ISO-8601).",
+      "x-retrieval": { "lexical": "none", "semantic": false, "role": "observed_at" }
+    },
+    "confidence": {
+      "enum": ["low", "medium", "high"],
+      "x-retrieval": { "lexical": "none", "semantic": false }
+    },
+    "valid_from": {
+      "type": "string",
+      "description": "Start of validity (ISO-8601), for temporal facts.",
+      "x-retrieval": { "lexical": "none", "semantic": false }
+    },
+    "valid_to": {
+      "type": "string",
+      "description": "End of validity (ISO-8601); unset = still valid.",
+      "x-retrieval": { "lexical": "none", "semantic": false, "role": "valid_to" }
+    },
+    "supersedes": {
+      "type": "string",
+      "description": "dedupKey/id of an earlier fact this replaces (ADD-only: don't overwrite, supersede).",
+      "x-retrieval": { "lexical": "secondary", "semantic": false }
+    }
   }
 }

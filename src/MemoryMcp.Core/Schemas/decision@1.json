@@ -4,11 +4,31 @@
   "type": "object",
   "required": ["decision"],
   "additionalProperties": false,
+  "x-retrieval": { "version": "r1", "class": "canonical", "halfLifeDays": 180 },
   "properties": {
-    "decision": { "type": "string", "description": "The decision taken, e.g. 'recipe@1 is the source of truth; md/html are derived'." },
-    "rationale": { "type": "string", "description": "Why it was decided." },
-    "date": { "type": "string", "description": "When decided (ISO-8601)." },
-    "status": { "enum": ["active", "superseded"] },
-    "supersedes": { "type": "string", "description": "dedupKey/id of an earlier decision this replaces." }
+    "decision": {
+      "type": "string",
+      "description": "The decision taken, e.g. 'recipe@1 is the source of truth; md/html are derived'.",
+      "x-retrieval": { "lexical": "primary", "semantic": "decision" }
+    },
+    "rationale": {
+      "type": "string",
+      "description": "Why it was decided.",
+      "x-retrieval": { "lexical": "primary", "semantic": "decision" }
+    },
+    "date": {
+      "type": "string",
+      "description": "When decided (ISO-8601).",
+      "x-retrieval": { "lexical": "none", "semantic": false, "role": "observed_at" }
+    },
+    "status": {
+      "enum": ["active", "superseded"],
+      "x-retrieval": { "lexical": "none", "semantic": false }
+    },
+    "supersedes": {
+      "type": "string",
+      "description": "dedupKey/id of an earlier decision this replaces.",
+      "x-retrieval": { "lexical": "secondary", "semantic": false }
+    }
   }
 }

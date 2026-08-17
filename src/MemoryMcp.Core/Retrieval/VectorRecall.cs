@@ -3,6 +3,14 @@ using MemoryMcp.Core.Diagnostics;
 namespace MemoryMcp.Core.Retrieval;
 
 /// <summary>
+/// Why a note matched semantically (MEMP-196, MEMP-252): the cosine, and the passage that earned it.
+/// </summary>
+/// <param name="Score">Cosine of the note's best passage against the query.</param>
+/// <param name="Passage">The passage group that won, e.g. <c>ingredients</c> or <c>title</c>.</param>
+/// <param name="SourcePaths">The JSON paths that passage was built from.</param>
+public sealed record VectorHit(double Score, string Passage, IReadOnlyList<string> SourcePaths);
+
+/// <summary>
 /// The vector half of hybrid recall (MEMP-196): indexes a note's passages on write, and scores candidate notes
 /// against a query on read.
 /// <para>It exists so the reader and writer need to know only "is there a vector signal for these notes?"
@@ -131,23 +139,24 @@ public sealed class VectorRecall
     /// </summary>
     /// <param name="query">The search text.</param>
     /// <param name="noteIds">The candidate pool to score.</param>
-    public IReadOnlyDictionary<string, double> Score(string? query, IReadOnlyCollection<string> noteIds)
+    public IReadOnlyDictionary<string, VectorHit> Score(string? query, IReadOnlyCollection<string> noteIds)
     {
         ArgumentNullException.ThrowIfNull(noteIds);
         if (!Enabled || string.IsNullOrWhiteSpace(query) || noteIds.Count == 0)
         {
-            return new Dictionary<string, double>(StringComparer.Ordinal);
+            return new Dictionary<string, VectorHit>(StringComparer.Ordinal);
         }
 
         var queryVector = Timed("embed_query", [query!], EmbeddingKind.Query)[0];
-        var mappingHash = _projector.Describe(string.Empty).MappingHash;
-        var best = new Dictionary<string, double>(StringComparer.Ordinal);
-        foreach (var passage in _passages!.ForScoring(Embedder!.ModelId, mappingHash, noteIds))
+        var best = new Dictionary<string, VectorHit>(StringComparer.Ordinal);
+        foreach (var passage in _passages!.ForScoring(Embedder!.ModelId, _projector.CurrentMappingHashes, noteIds))
         {
             var score = Dot(passage.Vector, queryVector);
-            if (!best.TryGetValue(passage.NoteId, out var current) || score > current)
+            if (!best.TryGetValue(passage.NoteId, out var current) || score > current.Score)
             {
-                best[passage.NoteId] = score;
+                // The WINNING passage is carried out, not just its number: "this matched on ingredients, from
+                // payload.ingredients[2].name" is an answer a person can check, where a bare 0.83 is not.
+                best[passage.NoteId] = new VectorHit(score, passage.Name, passage.SourcePaths);
             }
         }
 
@@ -174,9 +183,8 @@ public sealed class VectorRecall
         }
 
         var queryVector = Timed("embed_query", [query!], EmbeddingKind.Query)[0];
-        var mappingHash = _projector.Describe(string.Empty).MappingHash;
         var best = new Dictionary<string, double>(StringComparer.Ordinal);
-        foreach (var passage in _passages!.ForScoring(Embedder!.ModelId, mappingHash))
+        foreach (var passage in _passages!.ForScoring(Embedder!.ModelId, _projector.CurrentMappingHashes))
         {
             var score = Dot(passage.Vector, queryVector);
             if (!best.TryGetValue(passage.NoteId, out var current) || score > current)

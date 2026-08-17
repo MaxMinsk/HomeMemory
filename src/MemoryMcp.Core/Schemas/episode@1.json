@@ -4,10 +4,28 @@
   "type": "object",
   "required": ["summary"],
   "additionalProperties": false,
+  "x-retrieval": { "version": "r1", "class": "episodic", "halfLifeDays": 7 },
   "properties": {
-    "summary": { "type": "string", "description": "What happened, e.g. 'sent the easement letter to the neighbour'." },
-    "occurred_utc": { "type": "string", "description": "When it happened (ISO-8601)." },
-    "participants": { "type": "array", "items": { "type": "string" }, "description": "Who/what was involved." },
-    "outcome": { "type": "string", "description": "Result or follow-up, if any." }
+    "summary": {
+      "type": "string",
+      "description": "What happened, e.g. 'sent the easement letter to the neighbour'.",
+      "x-retrieval": { "lexical": "primary", "semantic": "summary" }
+    },
+    "occurred_utc": {
+      "type": "string",
+      "description": "When it happened (ISO-8601).",
+      "x-retrieval": { "lexical": "none", "semantic": false, "role": "observed_at" }
+    },
+    "participants": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Who/what was involved.",
+      "x-retrieval": { "lexical": "primary", "semantic": "summary" }
+    },
+    "outcome": {
+      "type": "string",
+      "description": "Result or follow-up, if any.",
+      "x-retrieval": { "lexical": "primary", "semantic": "summary" }
+    }
   }
 }

@@ -65,8 +65,8 @@ public class VectorRecallTests
 
         recall.Index(id, new NoteContent("fact", "Kazan", "a heavy pot for chili and stews", null, null), "2026-08-17T00:00:00Z");
 
-        Assert.NotEmpty(store.ForScoring("test/marker-v1", MappingHash(), [id]));
-        Assert.True(recall.Score("chili", [id])[id] > 0, "a note mentioning the query term should score above zero");
+        Assert.NotEmpty(store.ForScoring("test/marker-v1", MappingHashes(), [id]));
+        Assert.True(recall.Score("chili", [id])[id].Score > 0, "a note mentioning the query term should score above zero");
     }
 
     /// <summary>
@@ -84,7 +84,7 @@ public class VectorRecallTests
         var id = Seed(notes, "n1", "Notes", body);
         recall.Index(id, new NoteContent("fact", "Notes", body, null, null), "2026-08-17T00:00:00Z");
 
-        var score = recall.Score("sensor", [id])[id];
+        var score = recall.Score("sensor", [id])[id].Score;
 
         Assert.True(score > 0.9, $"the matching window should dominate, not be averaged away (got {score})");
     }
@@ -96,15 +96,15 @@ public class VectorRecallTests
         var (recall, store, notes) = NewRecall(temp, enabled: true);
         var id = Seed(notes, "n1", "About chili", "chili chili");
         recall.Index(id, new NoteContent("fact", "About chili", "chili chili", null, null), "2026-08-17T00:00:00Z");
-        var first = store.ForScoring("test/marker-v1", MappingHash(), [id]).Count;
+        var first = store.ForScoring("test/marker-v1", MappingHashes(), [id]).Count;
 
         recall.Index(id, new NoteContent("fact", "About sensors", "sensor sensor", null, null), "2026-08-17T01:00:00Z");
 
-        Assert.Equal(first, store.ForScoring("test/marker-v1", MappingHash(), [id]).Count);
-        Assert.True(recall.Score("sensor", [id])[id] > 0, "the new content should be searchable");
+        Assert.Equal(first, store.ForScoring("test/marker-v1", MappingHashes(), [id]).Count);
+        Assert.True(recall.Score("sensor", [id])[id].Score > 0, "the new content should be searchable");
         // The note still HAS vector evidence, so it is still scored — the evidence just says "unrelated" now.
         // That is a different claim from having no evidence at all, and the two stay distinguishable.
-        Assert.Equal(0d, recall.Score("chili", [id])[id], 6);
+        Assert.Equal(0d, recall.Score("chili", [id])[id].Score, 6);
     }
 
     /// <summary>
@@ -138,21 +138,26 @@ public class VectorRecallTests
 
         Assert.False(recall.Enabled);
         Assert.Null(recall.ModelId);
-        Assert.Empty(store.ForScoring("test/marker-v1", MappingHash(), [id]));
+        Assert.Empty(store.ForScoring("test/marker-v1", MappingHashes(), [id]));
         Assert.Empty(recall.Score("chili", [id]));
     }
 
-    /// <summary>Vectors from another model must never be scored: a cosine across two spaces is noise.</summary>
+    /// <summary>
+    /// Vectors from another model must never be scored: a cosine across two vector spaces is noise, not a weak
+    /// signal. The same holds for another mapping — the text that produced the vector is no longer the text the
+    /// note would produce today.
+    /// </summary>
     [Fact]
-    public void Passages_from_a_different_model_are_not_scored()
+    public void Passages_from_a_different_model_or_mapping_are_not_scored()
     {
         using var temp = new TempDatabase();
         var (recall, store, notes) = NewRecall(temp, enabled: true);
         var id = Seed(notes, "n1", "Chili", "chili");
         recall.Index(id, new NoteContent("fact", "Chili", "chili", null, null), "2026-08-17T00:00:00Z");
 
-        Assert.Empty(store.ForScoring("some/other-model", MappingHash(), [id]));
-        Assert.NotEmpty(store.ForScoring("test/marker-v1", MappingHash(), [id]));
+        Assert.Empty(store.ForScoring("some/other-model", MappingHashes(), [id]));
+        Assert.Empty(store.ForScoring("test/marker-v1", ["a-different-mapping"], [id]));
+        Assert.NotEmpty(store.ForScoring("test/marker-v1", MappingHashes(), [id]));
     }
 
     [Fact]
@@ -164,7 +169,7 @@ public class VectorRecallTests
         var pending = Seed(notes, "b", "Kazan", "kazan");
         recall.Index(indexed, new NoteContent("fact", "Chili", "chili", null, null), "2026-08-17T00:00:00Z");
 
-        var work = store.NeedingIndex("test/marker-v1", MappingHash(), 10);
+        var work = store.NeedingIndex("test/marker-v1", MappingHashes(), 10);
 
         Assert.Contains(pending, work);
         Assert.DoesNotContain(indexed, work);
@@ -201,10 +206,10 @@ public class VectorRecallTests
         recall.Index(id, new NoteContent("fact", "Chili", "chili", null, null), "2026-08-17T00:00:00Z");
 
         Assert.True(recall.Enabled);
-        Assert.True(recall.Score("chili", [id])[id] > 0, "search should work as soon as the model lands");
+        Assert.True(recall.Score("chili", [id])[id].Score > 0, "search should work as soon as the model lands");
     }
 
-    private static string MappingHash() => new LegacyRetrievalProjector().Describe("fact").MappingHash;
+    private static IReadOnlyCollection<string> MappingHashes() => new LegacyRetrievalProjector().CurrentMappingHashes;
 
     // Passages are foreign-keyed to notes (so a purge cascades), which means a test must index a note that
     // actually exists rather than a bare id.

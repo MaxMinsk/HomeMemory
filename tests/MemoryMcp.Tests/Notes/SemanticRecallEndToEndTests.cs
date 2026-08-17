@@ -44,7 +44,9 @@ public class SemanticRecallEndToEndTests(ITestOutputHelper output)
         new Migrator(factory, SchemaMigrations.All).Migrate();
         var registry = SchemaRegistry.FromEmbeddedResources();
         using var embedder = new E5OnnxEmbedder(directory);
-        var recall = new VectorRecall(embedder, new PassageStore(factory), new LegacyRetrievalProjector(),
+        // The projector the server actually registers, so this exercises the shipping path rather than a
+        // configuration nothing runs (MEMP-252).
+        var recall = new VectorRecall(embedder, new PassageStore(factory), new SchemaRetrievalProjector(registry),
             new EmbeddingOptions(Enabled: true, directory));
 
         // Lexical-only first: the same corpus, the same query, no vector layer.
@@ -68,11 +70,19 @@ public class SemanticRecallEndToEndTests(ITestOutputHelper output)
         output.WriteLine($"relaxed: {page.Relaxed}");
         foreach (var hit in page.Items)
         {
-            output.WriteLine($"  lex {hit.Explain!.LexicalRank,2}  vec {hit.Explain.VectorScore,-8:F4} fused {hit.Explain.Fused:F5}  {hit.Title}");
+            output.WriteLine(
+                $"  lex {hit.Explain!.LexicalRank,2}  vec {hit.Explain.VectorScore,-8:F4} " +
+                $"[{hit.Explain.VectorPassage}] fused {hit.Explain.Fused:F5}  {hit.Title}");
         }
 
         Assert.DoesNotContain(ThreePhaseTitle, withoutVectors);
         Assert.Equal(ThreePhaseTitle, withVectors[0]);
+
+        // A semantic hit shares no words with the query, so "trust me, it is relevant" is all the caller would
+        // otherwise get. It has to be able to see WHICH passage matched and which fields built it (MEMP-252).
+        var winner = page.Items[0].Explain!;
+        Assert.NotNull(winner.VectorPassage);
+        Assert.NotEmpty(winner.VectorPaths!);
     }
 
     // A small corpus with distractors, so ranking first actually means something.

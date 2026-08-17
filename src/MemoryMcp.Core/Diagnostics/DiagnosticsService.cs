@@ -16,8 +16,12 @@ public sealed class DiagnosticsService
     // filter (with `query` now optional) — an agent has to know whether tag-recall is available before using it.
     // 3 (MEMP-236): an unrestricted caller's readable/writable domain lists are populated instead of empty, so
     // "empty" now unambiguously means "no domains" — a caller that special-cased the old empty-means-all must know.
-    private const int ContractVersion = 3;
-    private const string SearchBackendDescription = "fts5-bm25 (lexical; no vectors)";
+    // 4 (MEMP-247/252): `searchBackend` now tells the truth about vectors instead of always claiming "lexical;
+    // no vectors", `memory_load` returns {runtime, embeddings} rather than the runtime figures alone, and
+    // `retrieval.typesWithMapping` is read from the live projector instead of being hardcoded to 0.
+    private const int ContractVersion = 4;
+    private const string LexicalBackendDescription = "fts5-bm25 (lexical; no vectors)";
+    private const string HybridBackendDescription = "fts5-bm25 + dense vectors (hybrid, RRF-fused)";
     private const string SkillsHint =
         "Read the 'commons' domain first (skills: memory-authoring, agent-memory-use, tag-unification) before authoring notes.";
 
@@ -31,6 +35,7 @@ public sealed class DiagnosticsService
     private readonly BlobStore? _blobs;
     private readonly VectorRecall? _vectors;
     private readonly PassageStore? _passages;
+    private readonly IRetrievalProjector _projector;
 
     /// <summary>Creates the service over the database, schema registry and (optionally) the blob store.</summary>
     /// <param name="connectionFactory">Database connection factory.</param>
@@ -38,15 +43,42 @@ public sealed class DiagnosticsService
     /// <param name="blobs">Blob store, for the stored-bytes figure; null reports 0.</param>
     /// <param name="vectors">Semantic recall, to report which model is live; null means the layer is off.</param>
     /// <param name="passages">Embedding index, for the coverage and stale figures.</param>
+    /// <param name="projector">The live projector, so mapping coverage is read from it rather than assumed.</param>
     public DiagnosticsService(ISqliteConnectionFactory connectionFactory, SchemaRegistry registry, BlobStore? blobs = null,
-        VectorRecall? vectors = null, PassageStore? passages = null)
+        VectorRecall? vectors = null, PassageStore? passages = null, IRetrievalProjector? projector = null)
     {
         _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
         _registry = registry ?? throw new ArgumentNullException(nameof(registry));
         _blobs = blobs;
         _vectors = vectors;
         _passages = passages;
+        _projector = projector ?? new LegacyRetrievalProjector();
     }
+
+    /// <summary>
+    /// What the vector layer currently costs and covers (MEMP-247): whether it is live, which model, how many
+    /// notes carry current passages and how many passages are stale.
+    /// <para>Separate from <c>status</c> on purpose: status answers "what is stored", this answers "what is
+    /// running", and the index-build progress is the one genuinely heavy moment this feature has — the moment
+    /// most likely to starve everything else sharing the box.</para>
+    /// </summary>
+    public EmbeddingLoad EmbeddingLoad()
+    {
+        var model = _vectors?.ModelId;
+        if (model is null || _passages is null)
+        {
+            return new EmbeddingLoad(false, null, 0, 0, 0);
+        }
+
+        var (_, stale, indexed) = _passages.Coverage(model, _projector.CurrentMappingHashes);
+        using var connection = _connectionFactory.Create();
+        var total = Convert.ToInt64(Scalar(connection, "SELECT count(*) FROM notes WHERE deleted = 0 AND status = 'active';"));
+        return new EmbeddingLoad(true, model, indexed, total, stale);
+    }
+
+    // Both reports name the backend, and they must not disagree: an agent that reads "no vectors" in `status`
+    // and "hybrid" in `memory_capabilities` cannot tell which one to believe.
+    private string SearchBackend => _vectors?.ModelId is null ? LexicalBackendDescription : HybridBackendDescription;
 
     /// <summary>
     /// Reads a fresh status snapshot (health + a breakdown of what is stored). The NOTE counts
@@ -75,7 +107,7 @@ public sealed class DiagnosticsService
             .ToList();
 
         return new StatusReport(schemaVersion, schemas, noteCount, notesByType, notesByDomain, notesByStatus,
-            attachmentCount, _blobs?.TotalBytes() ?? 0, pending, SearchBackendDescription,
+            attachmentCount, _blobs?.TotalBytes() ?? 0, pending, SearchBackend,
             ServerVersion, _blobs?.QuotaBytes ?? 0, DatabaseSizeBytes(connection));
     }
 
@@ -105,18 +137,24 @@ public sealed class DiagnosticsService
             ?? scope.AllowedDomains.OrderBy(d => d, StringComparer.Ordinal).ToArray();
         var scopeInfo = new ScopeInfo(scope.IsUnrestricted, readable, writable, CommonsReadable: true);
 
-        // Every type is on the legacy projector until MEMP-252 declares mappings; reported rather than assumed,
-        // because "all legacy" is exactly the state in which retrieval behaves as it did before the seam existed.
-        var legacy = new LegacyRetrievalProjector().Describe(string.Empty);
+        // Read from the live projector rather than assumed: how many types carry a declared mapping and how many
+        // still fall back to indexing every string is the single figure that says how far MEMP-252 has got, and
+        // hardcoding it (as this did) meant the answer stayed "none" no matter what shipped.
+        var baseline = _projector.Describe(string.Empty);
+        var (mapped, onLegacy) = _projector is SchemaRetrievalProjector schemaProjector
+            ? schemaProjector.MappingCoverage()
+            : (0, types.Count);
         var model = _vectors?.ModelId;
         var (_, stale, indexed) = model is not null && _passages is not null
-            ? _passages.Coverage(model, legacy.MappingHash)
+            ? _passages.Coverage(model, _projector.CurrentMappingHashes)
             : (0L, 0L, 0L);
         var retrieval = new RetrievalInfo(
-            legacy.MappingVersion, legacy.MappingHash, TypesWithMapping: 0, types.Count, model, indexed, stale);
+            baseline.MappingVersion, baseline.MappingHash, mapped, onLegacy, model, indexed, stale);
 
+        // The backend string used to be a constant claiming "no vectors" even with the layer running, so an agent
+        // deciding how to phrase a query was told the opposite of the truth.
         return new CapabilitiesReport(ServerVersion, schemaVersion, ContractVersion, types, scopeInfo,
-            SearchBackendDescription, _blobs?.QuotaBytes ?? 0, ScopeGuard.CommonsDomain, SkillsHint, retrieval);
+            SearchBackend, _blobs?.QuotaBytes ?? 0, ScopeGuard.CommonsDomain, SkillsHint, retrieval);
     }
 
     // Every domain that currently holds a note, ordered. Reported to an unrestricted caller as its readable and

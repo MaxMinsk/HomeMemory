@@ -377,8 +377,8 @@ public sealed partial class MemoryTools
 
     /// <summary>Reports what the server costs to run right now: per-operation timings plus process figures.</summary>
     [McpServerTool(Name = "memory_load", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]
-    [Description("What this server COSTS to run right now (MEMP-247), as opposed to `status`, which reports what is STORED. Per-operation call counts with p50/p95/max durations in milliseconds (worst p95 first), plus resident memory, managed heap, total CPU seconds and uptime. Use it to answer 'is memory getting slow / is this box coping', and to size heavy work before starting it. In-memory and bounded to the most recent calls per operation; a restart resets it, by design — this is a health signal, not an audit trail (note_events is the audit).")]
-    public LoadReport MemoryLoad() => _metrics.Snapshot();
+    [Description("What this server COSTS to run right now (MEMP-247), as opposed to `status`, which reports what is STORED. `runtime`: per-operation call counts with p50/p95/max durations in milliseconds (worst p95 first), plus resident memory, managed heap, total CPU seconds and uptime — including `embed_query` and `embed_passages` when semantic recall is on. `embeddings`: whether the vector layer is live, which model, and how far the index has got (indexedNotes of activeNotes) — a figure below 100% means semantic recall is answering from part of the corpus, which is worth knowing before trusting a result. Use it to answer 'is memory getting slow / is this box coping', and to size heavy work before starting it. In-memory and bounded to the most recent calls per operation; a restart resets it, by design — this is a health signal, not an audit trail (note_events is the audit).")]
+    public ServerLoad MemoryLoad() => new(_metrics.Snapshot(), _diagnostics.EmbeddingLoad());
 
     /// <summary>Lists domains (namespaces) with their note counts, scope-restricted.</summary>
     [McpServerTool(Name = "domains_list", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]

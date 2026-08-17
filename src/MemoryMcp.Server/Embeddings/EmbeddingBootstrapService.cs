@@ -61,13 +61,13 @@ public sealed class EmbeddingBootstrapService(
     // written later indexes itself on write, and a model or mapping change makes the rest visible here again.
     private async Task BuildIndexAsync(CancellationToken stoppingToken)
     {
-        var mappingHash = projector.Describe(string.Empty).MappingHash;
+        var current = projector.CurrentMappingHashes;
         var model = vectors.ModelId!;
         var done = 0;
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            var pending = passages.NeedingIndex(model, mappingHash, Batch);
+            var pending = passages.NeedingIndex(model, current, Batch);
             if (pending.Count == 0)
             {
                 break;

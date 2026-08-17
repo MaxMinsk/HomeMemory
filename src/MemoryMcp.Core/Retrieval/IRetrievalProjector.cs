@@ -28,6 +28,15 @@ public interface IRetrievalProjector
     RetrievalDescriptor Describe(string type);
 
     /// <summary>
+    /// Every mapping hash that is current for SOME type — the set a stored passage must belong to before it can
+    /// be trusted for scoring.
+    /// <para>A set rather than one value, because once types carry their own mappings (MEMP-252) there is no
+    /// single "current hash": a recipe passage and a fact passage are correctly stamped differently. Matching
+    /// against one hash would silently drop every type but one from semantic recall.</para>
+    /// </summary>
+    IReadOnlyCollection<string> CurrentMappingHashes { get; }
+
+    /// <summary>
     /// The note's full-text sources, in index order, each tagged with its JSON path.
     /// </summary>
     /// <param name="note">The note content.</param>

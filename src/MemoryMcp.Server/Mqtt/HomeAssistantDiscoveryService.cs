@@ -76,6 +76,10 @@ public sealed class HomeAssistantDiscoveryService : BackgroundService
         await PublishConfigAsync("memory_bytes", "Memory Resident Memory", "B", "value_json.memory_bytes", device, cancellationToken).ConfigureAwait(false);
         await PublishConfigAsync("cpu_seconds", "Memory CPU Time", "s", "value_json.cpu_seconds", device, cancellationToken).ConfigureAwait(false);
         await PublishConfigAsync("search_p95_ms", "Memory Search p95", "ms", "value_json.search_p95_ms", device, cancellationToken).ConfigureAwait(false);
+        // Semantic recall's own cost and coverage (MEMP-247). Both read 0 while the layer is off, which is the
+        // honest value — not a missing sensor that looks like a broken one.
+        await PublishConfigAsync("embed_query_p95_ms", "Memory Query Embedding p95", "ms", "value_json.embed_query_p95_ms", device, cancellationToken).ConfigureAwait(false);
+        await PublishConfigAsync("index_coverage_pct", "Memory Embedding Index Coverage", "%", "value_json.index_coverage_pct", device, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task PublishConfigAsync(string key, string name, string unit, string valueTemplate, object device, CancellationToken cancellationToken)
@@ -103,6 +107,8 @@ public sealed class HomeAssistantDiscoveryService : BackgroundService
             var stats = _diagnostics.Snapshot();
             var load = _metrics.Snapshot();
             var search = load.Operations.FirstOrDefault(op => op.Operation == "notes_search");
+            var embedQuery = load.Operations.FirstOrDefault(op => op.Operation == "embed_query");
+            var embeddings = _diagnostics.EmbeddingLoad();
             var state = JsonSerializer.Serialize(
                 new
                 {
@@ -112,6 +118,10 @@ public sealed class HomeAssistantDiscoveryService : BackgroundService
                     memory_bytes = load.WorkingSetBytes,
                     cpu_seconds = load.CpuSeconds,
                     search_p95_ms = search?.P95Ms ?? 0,
+                    embed_query_p95_ms = embedQuery?.P95Ms ?? 0,
+                    index_coverage_pct = embeddings.ActiveNotes == 0
+                        ? 0
+                        : Math.Round(100.0 * embeddings.IndexedNotes / embeddings.ActiveNotes, 1),
                 },
                 JsonOptions);
             await _connection.TryPublishAsync(StateTopic, state, retain: true, cancellationToken).ConfigureAwait(false);
@@ -124,6 +134,11 @@ public sealed class HomeAssistantDiscoveryService : BackgroundService
                     db_size_mb = Math.Round(stats.DbSizeBytes / 1048576.0, 2),
                     uptime_seconds = load.UptimeSeconds,
                     managed_heap_mb = Math.Round(load.ManagedHeapBytes / 1048576.0, 2),
+                    embeddings_enabled = embeddings.Enabled,
+                    embedding_model = embeddings.Model,
+                    embedding_indexed_notes = embeddings.IndexedNotes,
+                    embedding_active_notes = embeddings.ActiveNotes,
+                    embedding_stale_passages = embeddings.StalePassages,
                     // Every measured operation, so a slow one that has no sensor of its own is still visible.
                     operations = load.Operations.ToDictionary(
                         op => op.Operation,
