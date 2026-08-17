@@ -1,3 +1,4 @@
+using MemoryMcp.Core.Notes;
 using MemoryMcp.Core.Retrieval;
 using MemoryMcp.Core.Schemas;
 using MemoryMcp.Core.Storage;
@@ -116,6 +117,74 @@ public class SchemaRetrievalProjectorTests
         Assert.False(projector.Describe("widget").IsLegacy);
         Assert.Equal(3650.0, policy.HalfLifeDays("widget"));
         Assert.Equal(2.0, policy.Goodness("widget"));
+    }
+
+    /// <summary>
+    /// The annotation-only exclusion must compare what a schema MEANS, not the bytes it arrived as.
+    /// <para>Found in production: two schemas refused their annotations with "bump the version", while six
+    /// identical-in-kind ones accepted theirs. The two were the only ones containing <c>\u0027</c> escapes.
+    /// The comparison used each scalar's raw source text, so the same string written by a different serialiser
+    /// read as a contract change — meaning any schema that had ever round-tripped through another JSON writer
+    /// could never be annotated again, and the error said nothing about why.</para>
+    /// </summary>
+    [Fact]
+    public void An_annotation_edit_is_accepted_even_when_the_stored_schema_escapes_its_strings_differently()
+    {
+        using var temp = new TempDatabase();
+        var factory = new SqliteConnectionFactory(temp.FilePath);
+        new Migrator(factory, SchemaMigrations.All).Migrate();
+        var registry = SchemaRegistry.FromEmbeddedResources();
+        var notes = new NotesRepository(factory, registry);
+
+        // Stored with an escaped apostrophe and an integer written as 1.
+        registry.Upsert(factory, """
+            {
+              "$id": "widget@1", "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object",
+              "properties": { "note": { "type": "string", "description": "e.g. \u00272-3\u0027", "minLength": 1 } }
+            }
+            """, "test");
+        notes.Upsert("kitchen", "widget", "A widget", null, """{ "note": "x" }""", null, "w1", "tester");
+
+        // Re-sent with the SAME apostrophe unescaped and the same number as 1.0 — plus annotations. Nothing
+        // about the contract has changed, so this must be accepted despite the notes that already exist.
+        var exception = Record.Exception(() => registry.Upsert(factory, """
+            {
+              "$id": "widget@1", "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object",
+              "x-retrieval": { "version": "r1", "class": "canonical", "halfLifeDays": 3650 },
+              "properties": { "note": { "type": "string", "description": "e.g. '2-3'", "minLength": 1.0,
+                                        "x-retrieval": { "semantic": "text" } } }
+            }
+            """, "test"));
+
+        Assert.Null(exception);
+        Assert.False(new SchemaRetrievalProjector(registry).Describe("widget").IsLegacy);
+    }
+
+    /// <summary>A REAL contract change is still refused once notes exist — the exclusion must not swallow that.</summary>
+    [Fact]
+    public void A_genuine_contract_change_is_still_refused_when_notes_exist()
+    {
+        using var temp = new TempDatabase();
+        var factory = new SqliteConnectionFactory(temp.FilePath);
+        new Migrator(factory, SchemaMigrations.All).Migrate();
+        var registry = SchemaRegistry.FromEmbeddedResources();
+        var notes = new NotesRepository(factory, registry);
+
+        registry.Upsert(factory, """
+            {
+              "$id": "widget@1", "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object",
+              "properties": { "note": { "type": "string" } }
+            }
+            """, "test");
+        notes.Upsert("kitchen", "widget", "A widget", null, """{ "note": "x" }""", null, "w1", "tester");
+
+        Assert.Throws<SchemaAuthoringException>(() => registry.Upsert(factory, """
+            {
+              "$id": "widget@1", "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object",
+              "required": ["note"],
+              "properties": { "note": { "type": "string" } }
+            }
+            """, "test"));
     }
 
     private static SchemaRetrievalProjector Projector() => new(Schemas);

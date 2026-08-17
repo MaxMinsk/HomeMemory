@@ -293,8 +293,15 @@ public sealed class SchemaRegistry
         }
     }
 
-    // A canonical rendering of a schema with retrieval annotations stripped: object keys sorted, so key order
-    // is not mistaken for a contract change either.
+    // A canonical rendering of a schema with retrieval annotations stripped. Object keys are sorted so key
+    // order is not mistaken for a contract change, and SCALARS ARE COMPARED BY VALUE, NOT BY THEIR SOURCE TEXT.
+    //
+    // That last part is not a nicety. An earlier version used the raw text, which preserves whatever escaping
+    // the document happened to arrive with — so a schema stored with "\u0027" compared unequal to the identical
+    // schema written by a serialiser that emits "'", and the annotation-only exclusion silently stopped
+    // applying. The effect was that any schema which had ever round-tripped through a different JSON writer
+    // could never receive an annotation edit again, and the error it produced ("bump the version") pointed
+    // nowhere near the cause. Found when exactly the two richest live schemas refused their annotations.
     private static string WithoutAnnotations(System.Text.Json.JsonElement element)
     {
         switch (element.ValueKind)
@@ -307,6 +314,13 @@ public sealed class SchemaRegistry
                 return "{" + string.Join(",", parts) + "}";
             case System.Text.Json.JsonValueKind.Array:
                 return "[" + string.Join(",", element.EnumerateArray().Select(WithoutAnnotations)) + "]";
+            case System.Text.Json.JsonValueKind.String:
+                return System.Text.Json.JsonSerializer.Serialize(element.GetString());
+            case System.Text.Json.JsonValueKind.Number:
+                // Canonical numeric form, so 1 and 1.0 are the same contract. Integers keep full precision.
+                return element.TryGetInt64(out var whole)
+                    ? whole.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    : element.GetDouble().ToString("R", System.Globalization.CultureInfo.InvariantCulture);
             default:
                 return element.GetRawText();
         }

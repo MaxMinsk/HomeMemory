@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.73.3
+
+Two fixes to schema annotations, both found by annotating the live corpus rather than by reading the code
+(MEMP-266, MEMP-263).
+
+- **Fixed: some types could never be annotated again.** Editing a type's retrieval annotations is allowed
+  without a new version, because it changes how notes are indexed and not what they may contain. But the check
+  compared the two schema documents as TEXT, so a schema stored with an escaped apostrophe read as different
+  from the identical schema written with a plain one — and the edit was refused with "bump the version", which
+  points nowhere near the cause. Six of eight live schemas accepted their annotations and the two richest
+  refused. Schemas are now compared by meaning.
+- **Fixed: an annotation edit needed a restart to take effect.** The mapping and the per-type policy were both
+  cached against the type's version, which an annotation edit deliberately does not change — so the new
+  annotations sat unused until the next restart, defeating the point of allowing the edit at all.
+- **The embedding model can now be the smaller build.** `embedding_variant: quantized` fetches a 113 MB model
+  instead of 453 MB, and embeds about twice as fast. It is NOT the default: measured against the same corpus it
+  answered one golden-set question worse, and the questions it loses are the cross-language ones the feature
+  exists for. Use it if the download or the first index build is a real problem on your hardware.
+- **Model downloads are verified.** Each file is checked against a known hash before use, so a truncated
+  download can no longer load, produce plausible-looking results, and quietly corrupt the whole index.
+
 ## 0.73.2
 
 The MQTT failure that 0.73.1 was supposed to make visible was still invisible (MEMP-267).
