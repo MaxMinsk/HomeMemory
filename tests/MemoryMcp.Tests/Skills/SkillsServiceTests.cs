@@ -95,6 +95,46 @@ public class SkillsServiceTests
         Assert.DoesNotContain(listed, s => s.Key == "release");
     }
 
+    /// <summary>
+    /// MEMP-261: the three scopes resolve in one call, and the result says which one answered.
+    /// <para>The commons rung is the one that was missing. memory_context offers an agent skills drawn from
+    /// project, domain AND commons, so an agent that took one of those keys and asked for it in its own domain
+    /// got null — for a skill the same server had just recommended one call earlier.</para>
+    /// </summary>
+    [Fact]
+    public void Get_resolves_project_then_domain_then_commons_and_reports_which_answered()
+    {
+        using var temp = new TempDatabase();
+        var skills = NewService(temp);
+        skills.Upsert("commons", "memory-authoring", "Shared", "commons body", null, 1, null, "me");
+        skills.Upsert("development", "backlog-management", "General", "general body", null, 1, null, "me");
+        skills.Upsert("development", "backlog-management", "Unity", "unity body", null, 1, null, "me", project: "unity-solitaire");
+
+        var overridden = skills.Get("development", "backlog-management", "unity-solitaire")!;
+        var general = skills.Get("development", "backlog-management")!;
+        var shared = skills.Get("development", "memory-authoring")!;
+
+        Assert.Equal("unity body", overridden.Body);
+        Assert.Equal("project", overridden.ResolvedFrom);
+        Assert.Equal("general body", general.Body);
+        Assert.Equal("domain", general.ResolvedFrom);
+        // The rung that used to return null.
+        Assert.Equal("commons body", shared.Body);
+        Assert.Equal("commons", shared.ResolvedFrom);
+    }
+
+    /// <summary>A key that exists nowhere is still null — the fallback must not invent an answer.</summary>
+    [Fact]
+    public void An_unknown_key_is_still_null_in_every_scope()
+    {
+        using var temp = new TempDatabase();
+        var skills = NewService(temp);
+        skills.Upsert("commons", "memory-authoring", "Shared", "commons body", null, 1, null, "me");
+
+        Assert.Null(skills.Get("development", "no-such-skill"));
+        Assert.Null(skills.Get("commons", "no-such-skill"));
+    }
+
     private static SkillsService NewService(TempDatabase temp)
     {
         var factory = new SqliteConnectionFactory(temp.FilePath);

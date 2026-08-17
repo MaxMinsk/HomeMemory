@@ -56,18 +56,39 @@ public sealed class SkillsService
             .Select(skill => skill with { Body = null })
             .ToList();
 
-    /// <summary>Returns the full skill (including body) for a key, resolving <paramref name="project"/> first then
-    /// the domain-general one. Null if neither exists.</summary>
+    /// <summary>
+    /// Returns the full skill (including body) for a key, resolving project, then the domain-general skill,
+    /// then <c>commons</c>. Null if none of the three has it.
+    /// <para><b>Why commons is part of the chain.</b> <c>memory_context</c> already offers an agent skills drawn
+    /// from all three scopes, so an agent that took one of those keys and asked for it in its own domain used to
+    /// get null — for a skill the same server had just recommended. The resolution rule now matches the one that
+    /// produced the offer, which matters more since <c>skill_get</c> is the explicit activation point.</para>
+    /// <para>The answering scope is reported rather than left to be inferred: "this came from commons" and "this
+    /// is your project's override" lead to different decisions, and a caller cannot tell them apart from the body.</para>
+    /// </summary>
+    /// <param name="domain">Domain to resolve in.</param>
+    /// <param name="key">Skill key.</param>
+    /// <param name="project">Optional project whose override wins.</param>
     public Skill? Get(string domain, string key, string? project = null)
     {
         if (!string.IsNullOrWhiteSpace(project) &&
             _notes.GetByDedupKey(domain, SkillType, Qualify(project!, key)) is { } scoped)
         {
-            return ToSkill(scoped);
+            return ToSkill(scoped) with { ResolvedFrom = "project" };
         }
 
-        var general = _notes.GetByDedupKey(domain, SkillType, key);
-        return general is null ? null : ToSkill(general);
+        if (_notes.GetByDedupKey(domain, SkillType, key) is { } general)
+        {
+            return ToSkill(general) with { ResolvedFrom = "domain" };
+        }
+
+        if (string.Equals(domain, Security.ScopeGuard.CommonsDomain, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var commons = _notes.GetByDedupKey(Security.ScopeGuard.CommonsDomain, SkillType, key);
+        return commons is null ? null : ToSkill(commons) with { ResolvedFrom = "commons" };
     }
 
     /// <summary>
