@@ -5,6 +5,7 @@
   "required": ["decision"],
   "unevaluatedProperties": false,
   "x-retrieval": { "version": "r1", "class": "canonical", "halfLifeDays": 180, "expectsTags": true, "expectsLinks": true, "claimLike": false },
+  "allOf": [{ "$ref": "memory:trait/rankable@1" }],
   "properties": {
     "decision": {
       "type": "string",

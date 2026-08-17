@@ -5,6 +5,7 @@
   "required": ["project", "state"],
   "unevaluatedProperties": false,
   "x-retrieval": { "version": "r1", "class": "canonical", "halfLifeDays": 60, "expectsTags": true, "expectsLinks": true, "claimLike": false },
+  "allOf": [{ "$ref": "memory:trait/rankable@1" }],
   "properties": {
     "project": { "type": "string", "description": "Project/case slug, e.g. memory-mcp." },
     "state": { "type": "string", "description": "Current state summary, e.g. 'v0.17.0 in prod; security hardening done'." },

@@ -5,6 +5,7 @@
   "required": ["target_id", "rationale", "status"],
   "unevaluatedProperties": false,
   "x-retrieval": { "version": "r1", "class": "ordinary", "halfLifeDays": 30, "expectsTags": false, "expectsLinks": false, "claimLike": false },
+  "allOf": [{ "$ref": "memory:trait/rankable@1" }],
   "properties": {
     "target_id": { "type": "string", "description": "Id of the note this suggestion is about." },
     "kind": {

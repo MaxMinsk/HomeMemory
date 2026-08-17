@@ -73,4 +73,33 @@ public class SchemaClosureTests
         Assert.False(badIngredient.IsValid);
         Assert.False(badControlPoint.IsValid);
     }
+
+    /// <summary>
+    /// The payoff of composition (MEMP-268): <c>pinned</c> and <c>importance</c> are signals the ranker already
+    /// reads, but the closed built-in types declared neither — so the payload form of a UNIVERSAL signal was
+    /// unreachable for most types, and only the <c>pinned</c> TAG worked. One trait fixes every type at once,
+    /// which is the clearest argument for having composition at all.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ValidPayloads))]
+    public void Every_type_accepts_the_universal_ranking_signals_it_composes(string type, string payload)
+    {
+        var withSignals = payload.TrimEnd().TrimEnd('}') + """, "pinned": true, "importance": 7 }""";
+
+        var result = Validator.Validate(type, withSignals);
+
+        Assert.True(result.IsValid,
+            $"{type} rejected the rankable trait's own fields: {string.Join("; ", result.Errors)}");
+    }
+
+    /// <summary>
+    /// The trait constrains as well as permits: an importance outside 0-10 is a mistake, and a closed leaf must
+    /// not accept it just because the trait contributed the field.
+    /// </summary>
+    [Fact]
+    public void A_composed_field_is_still_validated_against_the_traits_own_rules()
+    {
+        Assert.False(Validator.Validate("fact", """{ "statement": "x", "importance": 99 }""").IsValid);
+        Assert.False(Validator.Validate("fact", """{ "statement": "x", "pinned": "yes" }""").IsValid);
+    }
 }

@@ -5,6 +5,7 @@
   "required": ["name"],
   "unevaluatedProperties": false,
   "x-retrieval": { "version": "r1", "class": "canonical", "halfLifeDays": 90, "expectsTags": false, "expectsLinks": false, "claimLike": false },
+  "allOf": [{ "$ref": "memory:trait/rankable@1" }],
   "properties": {
     "name": { "type": "string", "description": "Human-readable name of the saved search/view." },
     "query": { "type": "string", "description": "Full-text query to run (optional)." },

@@ -1,0 +1,19 @@
+{
+  "$id": "memory:trait/rankable@1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Rankable",
+  "description": "Universal ranking signals any note type may carry. Composed with allOf; deliberately OPEN (it declares no additionalProperties/unevaluatedProperties of its own) so the leaf type is the one that closes the contract.",
+  "type": "object",
+  "properties": {
+    "pinned": {
+      "type": "boolean",
+      "description": "Pin this note to the top of results in its scope. Dominates every other importance signal."
+    },
+    "importance": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 10,
+      "description": "Relative importance, 0-10. Breaks ties between notes that are equally relevant; unset means neutral."
+    }
+  }
+}

@@ -58,12 +58,14 @@ public sealed class SchemaRegistry
     public static SchemaRegistry FromEmbeddedResources(Assembly? assembly = null)
     {
         assembly ??= typeof(SchemaRegistry).Assembly;
+        RegisterTraits(assembly);
         var definitions = new List<SchemaDefinition>();
 
         foreach (var name in assembly.GetManifestResourceNames())
         {
             if (!name.Contains(".Schemas.", StringComparison.Ordinal) ||
-                !name.EndsWith(".json", StringComparison.Ordinal))
+                !name.EndsWith(".json", StringComparison.Ordinal) ||
+                name.Contains(".Schemas.Traits.", StringComparison.Ordinal))
             {
                 continue;
             }
@@ -78,6 +80,56 @@ public sealed class SchemaRegistry
         }
 
         return new SchemaRegistry(definitions);
+    }
+
+    /// <summary>
+    /// Makes the shared trait schemas resolvable, so a type can compose one with <c>allOf</c> + <c>$ref</c>
+    /// (MEMP-268).
+    /// <para>Traits are schema FRAGMENTS, not note types: they declare a concept several types share — universal
+    /// ranking signals, temporal validity — in one place, so it does not have to be restated (and drift) per
+    /// type. They are registered with the JSON Schema resolver and deliberately NOT added as note types: nobody
+    /// writes a note whose type is "rankable".</para>
+    /// <para>A trait's <c>$id</c> pins its version (<c>rankable@1</c>, never "latest"), because a type that
+    /// composes it has validated its stored notes against exactly that shape. Redefining a published trait
+    /// underneath its users is the one change this layer must never allow.</para>
+    /// </summary>
+    private static void RegisterTraits(Assembly assembly)
+    {
+        // Once per assembly, under a lock. The JSON Schema resolver's registry is process-global and shared
+        // mutable state; registering into it from every registry construction raced as soon as two were built
+        // concurrently, which surfaced as an unrelated test failing intermittently.
+        lock (TraitGate)
+        {
+            if (!TraitAssemblies.Add(assembly.FullName ?? assembly.ToString()))
+            {
+                return;
+            }
+
+            RegisterTraitsCore(assembly);
+        }
+    }
+
+    private static readonly object TraitGate = new();
+    private static readonly HashSet<string> TraitAssemblies = new(StringComparer.Ordinal);
+
+    private static void RegisterTraitsCore(Assembly assembly)
+    {
+        foreach (var name in assembly.GetManifestResourceNames())
+        {
+            if (!name.Contains(".Schemas.Traits.", StringComparison.Ordinal)
+                || !name.EndsWith(".json", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            using var stream = assembly.GetManifestResourceStream(name)
+                ?? throw new InvalidOperationException($"Embedded trait '{name}' could not be opened.");
+            using var reader = new StreamReader(stream);
+            var trait = JsonSchema.FromText(reader.ReadToEnd());
+            // Idempotent: registering the same $id twice is how a second registry instance in the same process
+            // (every test does this) reuses what is already resolvable.
+            Json.Schema.SchemaRegistry.Global.Register(trait);
+        }
     }
 
     /// <summary>Returns the latest registered version for <paramref name="type"/>, or <c>null</c>.</summary>

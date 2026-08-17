@@ -5,6 +5,7 @@
   "required": ["preference"],
   "unevaluatedProperties": false,
   "x-retrieval": { "version": "r1", "class": "canonical", "halfLifeDays": 180, "expectsTags": true, "expectsLinks": false, "claimLike": false },
+  "allOf": [{ "$ref": "memory:trait/rankable@1" }],
   "properties": {
     "preference": { "type": "string", "description": "The durable preference, e.g. 'reply in Russian; keep answers concise'." },
     "subject": { "type": "string", "description": "Who/what the preference is about (default: the user)." },

@@ -5,6 +5,7 @@
   "required": ["format"],
   "unevaluatedProperties": false,
   "x-retrieval": { "version": "r1", "class": "canonical", "halfLifeDays": 3650, "expectsTags": true, "expectsLinks": true, "claimLike": false },
+  "allOf": [{ "$ref": "memory:trait/rankable@1" }],
   "properties": {
     "format": {
       "enum": ["kazan", "grill", "saj", "oven", "stove", "other"],

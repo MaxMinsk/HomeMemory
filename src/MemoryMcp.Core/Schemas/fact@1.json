@@ -5,6 +5,7 @@
   "required": ["statement"],
   "unevaluatedProperties": false,
   "x-retrieval": { "version": "r1", "class": "ordinary", "halfLifeDays": 180, "expectsTags": true, "expectsLinks": true, "claimLike": true },
+  "allOf": [{ "$ref": "memory:trait/rankable@1" }],
   "properties": {
     "statement": {
       "type": "string",

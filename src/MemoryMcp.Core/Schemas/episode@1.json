@@ -5,6 +5,7 @@
   "required": ["summary"],
   "unevaluatedProperties": false,
   "x-retrieval": { "version": "r1", "class": "episodic", "halfLifeDays": 7, "expectsTags": true, "expectsLinks": false, "claimLike": false },
+  "allOf": [{ "$ref": "memory:trait/rankable@1" }],
   "properties": {
     "summary": {
       "type": "string",

@@ -5,6 +5,7 @@
   "required": ["key", "status"],
   "unevaluatedProperties": false,
   "x-retrieval": { "version": "r1", "class": "workflow", "halfLifeDays": 45, "expectsTags": true, "expectsLinks": true, "claimLike": false },
+  "allOf": [{ "$ref": "memory:trait/rankable@1" }],
   "properties": {
     "key": {
       "type": "string",

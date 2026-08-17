@@ -5,6 +5,7 @@
   "required": ["key", "status"],
   "unevaluatedProperties": false,
   "x-retrieval": { "version": "r1", "class": "ordinary", "halfLifeDays": 120, "expectsTags": false, "expectsLinks": false, "claimLike": false },
+  "allOf": [{ "$ref": "memory:trait/rankable@1" }],
   "properties": {
     "key": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
     "project": { "type": "string", "description": "Project slug this sprint belongs to, e.g. memory-mcp." },
