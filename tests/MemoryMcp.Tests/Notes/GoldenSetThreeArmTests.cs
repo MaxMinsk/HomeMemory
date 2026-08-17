@@ -26,32 +26,19 @@ public class GoldenSetThreeArmTests(ITestOutputHelper output)
 {
     private sealed record CorpusNote(string Id, string Title, string Type, string Domain, string? Body, string? TagsJson, string? PayloadJson);
 
-    // Each entry: the query a person would actually type, the domain it belongs to, and a fragment of the
-    // title of the note that ought to come back. The fragments are deliberately long enough to be UNIQUE in the
-    // corpus — a short one such as "Чили" also matches a measurement note and a chilli-pepper reference, and the
-    // measurement would then score whichever happened to rank first rather than the note it means.
-    private static readonly (string Query, string Domain, string Expected)[] Golden =
-    [
-        ("spicy lamb curry cooked in a cauldron", "kitchen", "Do Pyaza"),
-        ("mussels steamed in their shells", "kitchen", "Мидии В Створках"),
-        ("cold summer soup on fermented milk", "kitchen", "Окрошка"),
-        ("clay oven for baking bread", "kitchen", "Тандыр"),
-        ("stone for baking pizza in a grill", "kitchen", "Камень"),
-        ("chili with minced beef", "kitchen", "Чили В Казане С Фаршем"),
-        ("what to cook for guests outdoors in summer", "kitchen", "Летние"),
-        ("which wireless sensors should I buy for the house", "home", "Zigbee-бренды"),
-        ("how much will utilities cost per year", "home", "коммунальн"),
-        ("three phase electricity monitoring device", "home", "Shelly Pro 3EM"),
-        ("почему заметка с нужным словом в заголовке не на первом месте", "development", "Title weighting"),
-        ("остывший суп из кисломолочки", "kitchen", "Окрошка"),
-    ];
+    // The golden set is DATA, and it lives with the corpus it is measured against, in the gitignored
+    // Notes~/embedding-eval/golden.json. Two reasons, and only the first is about this repository being
+    // English-only: these are real queries a person typed against real Russian notes, so half of them cannot be
+    // written here at all. The better reason is that queries and corpus have to move together — a golden set
+    // pinned in source while the corpus is re-exported measures a corpus that no longer exists.
+    private static readonly (string Query, string Domain, string Expected)[] Golden = LoadGolden();
 
     [Fact]
     public void Schema_selected_passages_are_measured_against_legacy_extraction_and_lexical_only()
     {
-        if (ModelDirectory() is not { } directory || LoadCorpus() is not { Count: > 0 } corpus)
+        if (ModelDirectory() is not { } directory || Golden.Length == 0 || LoadCorpus() is not { Count: > 0 } corpus)
         {
-            output.WriteLine("SKIPPED: needs MEMORY_EMBEDDING_MODEL_DIR and Notes~/embedding-eval/corpus_payloads.jsonl.");
+            output.WriteLine("SKIPPED: needs MEMORY_EMBEDDING_MODEL_DIR plus Notes~/embedding-eval/{golden.json,corpus_payloads.jsonl}.");
             return;
         }
 
@@ -259,6 +246,22 @@ public class GoldenSetThreeArmTests(ITestOutputHelper output)
         }
 
         return notes;
+    }
+
+    // Expected-title fragments must be UNIQUE in the corpus: a short one such as "Chili" also matches a
+    // measurement note and a pepper reference, and the measurement would then score whichever ranked first
+    // rather than the note it means.
+    private static (string Query, string Domain, string Expected)[] LoadGolden()
+    {
+        var path = Path.Combine(RepositoryRoot(), "Notes~", "embedding-eval", "golden.json");
+        if (!File.Exists(path))
+        {
+            return [];
+        }
+
+        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        return [.. document.RootElement.EnumerateArray().Select(row =>
+            (Text(row, "query") ?? string.Empty, Text(row, "domain") ?? "kitchen", Text(row, "expected") ?? string.Empty))];
     }
 
     private static IEnumerable<JsonElement> Rows(string path)
