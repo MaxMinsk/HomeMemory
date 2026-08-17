@@ -48,7 +48,11 @@ public sealed class NotesLinter
         _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
         _timeProvider = timeProvider ?? TimeProvider.System;
         _types = types ?? Schemas.TypePolicy.Bridged;
+        _staleness = Notes.StalenessOptions.FromEnvironment() with { TypePolicy = _types };
     }
+
+    // The same configuration the search path uses, so lint and recall cannot disagree about what stale means.
+    private readonly Notes.StalenessOptions _staleness;
 
     // Which types are exempt from the tag and link rules is now the TYPE's own declaration rather than a
     // literal here (MEMP-253): a new agent-authored type gets sensible lint behaviour without a redeploy.
@@ -157,7 +161,13 @@ public sealed class NotesLinter
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
-            if (!IsStale(reader.IsDBNull(4) ? null : reader.GetString(4), reader.GetString(5), now, out var days))
+            // Scored by the SAME helper the search-hit hint uses (MEMP-246). They used to be separate
+            // implementations measuring from different baselines, so a note recently retagged but never
+            // re-verified was stale to the Inbox and fresh to recall — a disagreement a user would read as one
+            // of the two being broken.
+            var payload = reader.IsDBNull(4) ? null : reader.GetString(4);
+            if (Staleness.Evaluate(reader.GetString(3), payload, null, now, _staleness, reader.GetString(5))
+                is not { Reason: "past_window" } hint)
             {
                 continue;
             }
@@ -165,7 +175,7 @@ public sealed class NotesLinter
             findings.Add(new LintFinding(
                 reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1),
                 reader.GetString(2), reader.GetString(3), "stale_unverified", "warn",
-                $"Not verified in over {days} days — re-confirm and bump last_verified_at, or deprecate it."));
+                $"Not verified in over {hint.WindowDays} days ({hint.AgeDays} days old) — re-confirm and bump last_verified_at, or deprecate it."));
         }
 
         return findings;
@@ -205,34 +215,6 @@ public sealed class NotesLinter
         }
 
         return findings;
-    }
-
-    private static bool IsStale(string? payloadJson, string createdUtc, DateTimeOffset now, out int staleAfterDays)
-    {
-        staleAfterDays = 0;
-        if (string.IsNullOrEmpty(payloadJson))
-        {
-            return false;
-        }
-
-        using var document = JsonDocument.Parse(payloadJson);
-        var root = document.RootElement;
-        if (!root.TryGetProperty("stale_after_days", out var sad) || sad.ValueKind != JsonValueKind.Number
-            || !sad.TryGetInt32(out staleAfterDays) || staleAfterDays <= 0)
-        {
-            return false;
-        }
-
-        var baseline = root.TryGetProperty("last_verified_at", out var lv) && lv.ValueKind == JsonValueKind.String
-            ? lv.GetString() : createdUtc;
-        const DateTimeStyles styles = DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal;
-        if (!DateTimeOffset.TryParse(baseline, CultureInfo.InvariantCulture, styles, out var since)
-            && !DateTimeOffset.TryParse(createdUtc, CultureInfo.InvariantCulture, styles, out since))
-        {
-            return false;
-        }
-
-        return (now - since).TotalDays > staleAfterDays;
     }
 
     // Heuristic scan of body + payload for embedded credentials. Reports WHICH note and WHICH heuristic,

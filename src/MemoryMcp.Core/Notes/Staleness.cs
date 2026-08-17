@@ -67,8 +67,15 @@ public static class Staleness
     /// <param name="updatedUtc">The envelope's last-updated timestamp, used when the payload states no date.</param>
     /// <param name="now">The current time.</param>
     /// <param name="options">Staleness configuration; defaults to the fact horizon being off.</param>
+    /// <param name="createdUtc">
+    /// When the note was created. Used as the LAST-RESORT baseline for the re-verification window, ahead of
+    /// <paramref name="updatedUtc"/> (MEMP-246): for a note that has never stated when it was last checked, the
+    /// honest answer to "how long since anyone verified this?" is "since it was written". Measuring from the
+    /// last edit instead would let a retag or a typo fix silently reset the clock on a claim nobody re-read.
+    /// </param>
     public static StalenessHint? Evaluate(
-        string type, string? payloadJson, string? updatedUtc, DateTimeOffset now, StalenessOptions? options = null)
+        string type, string? payloadJson, string? updatedUtc, DateTimeOffset now, StalenessOptions? options = null,
+        string? createdUtc = null)
     {
         // `valid_to` is the name the built-in fact schema already uses; `valid_until` is accepted as an alias,
         // since agent-authored types in the live corpus reach for that spelling instead.
@@ -86,7 +93,7 @@ public static class Staleness
         // The note's own statement of when it was last true beats the envelope timestamp: a retag or a typo fix
         // bumps updated_utc without re-checking anything the note asserts.
         var since = Date(payloadJson, "as_of") ?? Date(payloadJson, "updated") ?? Date(payloadJson, "last_verified_at")
-            ?? Parse(updatedUtc);
+            ?? Parse(createdUtc) ?? Parse(updatedUtc);
         if (since is not { } reference)
         {
             return null;

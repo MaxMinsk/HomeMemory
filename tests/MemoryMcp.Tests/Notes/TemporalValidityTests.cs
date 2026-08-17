@@ -202,4 +202,43 @@ public class TemporalValidityTests
         new Migrator(factory, SchemaMigrations.All).Migrate();
         return new NotesRepository(factory, SchemaRegistry.FromEmbeddedResources(), new FakeTimeProvider(Now));
     }
+
+    /// <summary>
+    /// MEMP-246: the two code paths that answer "has this gone unverified too long" now measure from the same
+    /// point, and that point is CREATION rather than the last edit.
+    /// <para>This is the case where they used to disagree: a note that opted into a re-verification window,
+    /// never recorded a verification, was written long ago and was edited yesterday. Measured from the edit it
+    /// looks fresh; measured from creation it is overdue. Nobody re-read the claim — the note was retagged — so
+    /// overdue is the honest answer, and the search hint used to say otherwise.</para>
+    /// </summary>
+    [Fact]
+    public void A_note_never_verified_ages_from_its_creation_not_from_its_last_edit()
+    {
+        var now = DateTimeOffset.Parse("2026-08-17T00:00:00Z", CultureInfo.InvariantCulture);
+        const string Payload = """{ "statement": "the pipe is 32mm", "stale_after_days": 30 }""";
+
+        var hint = Staleness.Evaluate(
+            "fact", Payload,
+            updatedUtc: "2026-08-16T00:00:00Z",   // edited yesterday
+            now, null,
+            createdUtc: "2026-01-01T00:00:00Z");  // written months ago, never re-verified
+
+        Assert.NotNull(hint);
+        Assert.Equal("past_window", hint!.Reason);
+        Assert.Equal(30, hint.WindowDays);
+        Assert.True(hint.AgeDays > 200, $"age should be measured from creation, got {hint.AgeDays} days");
+    }
+
+    /// <summary>A recorded verification still wins over creation — that is what the field is for.</summary>
+    [Fact]
+    public void A_recorded_verification_date_beats_the_creation_date()
+    {
+        var now = DateTimeOffset.Parse("2026-08-17T00:00:00Z", CultureInfo.InvariantCulture);
+        const string Payload =
+            """{ "statement": "x", "stale_after_days": 30, "last_verified_at": "2026-08-10T00:00:00Z" }""";
+
+        var hint = Staleness.Evaluate("fact", Payload, null, now, null, createdUtc: "2020-01-01T00:00:00Z");
+
+        Assert.Null(hint);
+    }
 }
