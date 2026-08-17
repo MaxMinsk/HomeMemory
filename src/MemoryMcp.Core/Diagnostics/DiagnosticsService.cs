@@ -1,5 +1,6 @@
 using System.Reflection;
 using MemoryMcp.Core.Artifacts;
+using MemoryMcp.Core.Retrieval;
 using MemoryMcp.Core.Schemas;
 using MemoryMcp.Core.Security;
 using MemoryMcp.Core.Storage;
@@ -97,8 +98,13 @@ public sealed class DiagnosticsService
             ?? scope.AllowedDomains.OrderBy(d => d, StringComparer.Ordinal).ToArray();
         var scopeInfo = new ScopeInfo(scope.IsUnrestricted, readable, writable, CommonsReadable: true);
 
+        // Every type is on the legacy projector until MEMP-252 declares mappings; reported rather than assumed,
+        // because "all legacy" is exactly the state in which retrieval behaves as it did before the seam existed.
+        var legacy = new LegacyRetrievalProjector().Describe(string.Empty);
+        var retrieval = new RetrievalInfo(legacy.MappingVersion, legacy.MappingHash, TypesWithMapping: 0, types.Count);
+
         return new CapabilitiesReport(ServerVersion, schemaVersion, ContractVersion, types, scopeInfo,
-            SearchBackendDescription, _blobs?.QuotaBytes ?? 0, ScopeGuard.CommonsDomain, SkillsHint);
+            SearchBackendDescription, _blobs?.QuotaBytes ?? 0, ScopeGuard.CommonsDomain, SkillsHint, retrieval);
     }
 
     // Every domain that currently holds a note, ordered. Reported to an unrestricted caller as its readable and

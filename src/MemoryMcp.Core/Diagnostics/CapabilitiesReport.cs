@@ -12,10 +12,23 @@ namespace MemoryMcp.Core.Diagnostics;
 /// <param name="BlobQuotaBytes">The configured blob-store byte quota (0 = unlimited).</param>
 /// <param name="CommonsDomain">The world-readable shared domain holding core rules/skills.</param>
 /// <param name="SkillsHint">A one-line pointer to the skills an agent should read before authoring.</param>
+/// <param name="Retrieval">How note text is currently turned into indexable content (MEMP-251).</param>
 public sealed record CapabilitiesReport(
     string ServerVersion, int SchemaVersion, int ContractVersion,
     IReadOnlyList<NoteTypeInfo> Types, ScopeInfo Scope, string SearchBackend,
-    long BlobQuotaBytes, string CommonsDomain, string SkillsHint);
+    long BlobQuotaBytes, string CommonsDomain, string SkillsHint, RetrievalInfo Retrieval);
+
+/// <summary>
+/// The state of the retrieval mapping layer (MEMP-251): which mapping is in force, and how much of the type
+/// surface still relies on the legacy "index every string" fallback rather than declaring what matters.
+/// <para>Coverage is reported rather than assumed because it is the honest measure of the migration: a server
+/// where every type is legacy behaves exactly as it did before the seam existed.</para>
+/// </summary>
+/// <param name="MappingVersion">Identity of the mapping in force.</param>
+/// <param name="MappingHash">Stable hash of that mapping; a change means stored passages are stale.</param>
+/// <param name="TypesWithMapping">Types with a declared retrieval mapping.</param>
+/// <param name="TypesOnLegacy">Types still indexing every string because they declare none.</param>
+public sealed record RetrievalInfo(string MappingVersion, string MappingHash, int TypesWithMapping, int TypesOnLegacy);
 
 /// <summary>A note type the server recognizes.</summary>
 /// <param name="Type">The type discriminator (e.g. <c>backlog_item</c>, <c>recipe</c>).</param>

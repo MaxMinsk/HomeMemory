@@ -1,5 +1,5 @@
-using System.Text.Json;
 using System.Text.RegularExpressions;
+using MemoryMcp.Core.Retrieval;
 
 namespace MemoryMcp.Core.Query;
 
@@ -15,6 +15,7 @@ public static class SearchStems
 {
     private const int MinStemLength = 2;
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(250);
+    private static readonly LegacyRetrievalProjector LegacyProjector = new();
 
     // Fenced code, inline code, then any whitespace-run containing '/', '\' or ':' (URLs, paths, key:value, times).
     private static readonly Regex FencedCode = new("```.*?```", RegexOptions.Singleline | RegexOptions.CultureInvariant, RegexTimeout);
@@ -27,22 +28,24 @@ public static class SearchStems
     /// <param name="body">Note body.</param>
     /// <param name="tagsJson">Tags JSON (string values are used).</param>
     /// <param name="payloadJson">Payload JSON (string VALUES are used; keys are skipped).</param>
-    public static string? For(string? title, string? body, string? tagsJson, string? payloadJson)
-    {
-        var sources = new List<string?> { title, body };
-        sources.AddRange(JsonStringValues(tagsJson));
-        sources.AddRange(JsonStringValues(payloadJson));
-        // dedupKey is deliberately NOT a source (it is an identifier; it stays exact-searchable via raw FTS).
+    public static string? For(string? title, string? body, string? tagsJson, string? payloadJson) =>
+        From(LegacyProjector.Lexical(new NoteContent(string.Empty, title, body, tagsJson, payloadJson)));
 
+    /// <summary>
+    /// The stemmed-token text for sources already projected by an <see cref="IRetrievalProjector"/> (MEMP-251).
+    /// This is the real implementation; <see cref="For"/> is the shorthand that projects with the legacy
+    /// mapping. Which text a note contributes is the projector's decision, not this method's — stemming only
+    /// decides which WORDS within that text are natural language.
+    /// </summary>
+    /// <param name="sources">The note's projected text, in index order.</param>
+    public static string? From(IReadOnlyList<RetrievalText> sources)
+    {
+        ArgumentNullException.ThrowIfNull(sources);
+        // dedupKey is deliberately NOT a source (it is an identifier; it stays exact-searchable via raw FTS).
         var stems = new List<string>();
         foreach (var source in sources)
         {
-            if (string.IsNullOrWhiteSpace(source))
-            {
-                continue;
-            }
-
-            foreach (var word in StemmableWords(source))
+            foreach (var word in StemmableWords(source.Text))
             {
                 stems.Add(SearchStemmer.Stem(word));
             }
@@ -93,56 +96,5 @@ public static class SearchStems
         }
 
         return true;
-    }
-
-    // All string VALUES in a JSON document (object values recursively, array elements); keys are never yielded.
-    private static IEnumerable<string> JsonStringValues(string? json)
-    {
-        if (string.IsNullOrWhiteSpace(json))
-        {
-            return Array.Empty<string>();
-        }
-
-        try
-        {
-            using var document = JsonDocument.Parse(json);
-            var values = new List<string>();
-            Collect(document.RootElement, values);
-            return values;
-        }
-        catch (JsonException)
-        {
-            return Array.Empty<string>();
-        }
-    }
-
-    private static void Collect(JsonElement element, List<string> into)
-    {
-        switch (element.ValueKind)
-        {
-            case JsonValueKind.String:
-                if (element.GetString() is { } value)
-                {
-                    into.Add(value);
-                }
-
-                break;
-            case JsonValueKind.Object:
-                foreach (var property in element.EnumerateObject())
-                {
-                    Collect(property.Value, into); // property.Name (the key) is intentionally skipped
-                }
-
-                break;
-            case JsonValueKind.Array:
-                foreach (var item in element.EnumerateArray())
-                {
-                    Collect(item, into);
-                }
-
-                break;
-            default:
-                break;
-        }
     }
 }
