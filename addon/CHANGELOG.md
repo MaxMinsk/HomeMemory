@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.75.0
+
+Sprint 67 finish — the last thing about search that was decided in code now belongs to the note type
+(MEMP-262).
+
+- **A type decides which of its fields are worth searching, and how much.** The full-text index used to have a
+  column per SOURCE — body here, payload there — so every field of every type counted the same, and changing
+  that meant changing the server. It now has lanes named for what text DOES: one for what a note is about, one
+  for what merely makes it findable. Each type's schema says which of its fields go where, so a ticket is found
+  by its acceptance criteria rather than by the word "ready" appearing in its status.
+- **Nothing about your search results changes today.** The lanes ship weighted exactly as the columns they
+  replaced were, so the migration cannot move any ranking by itself. Re-weighting is a separate change that
+  needs no reindex and can be measured and reverted — which is the entire reason the two were kept apart.
+- **Measured before and after on 1515 real notes**: the same 10 of 12 golden questions answered in the top ten,
+  and average position slightly better rather than worse. The stored index also shrank by 21%.
+- **A write that bypasses the server still gets indexed.** Anything writing to the database directly — an
+  import, a migration, an admin tool — keeps the previous coarse indexing rather than silently losing its body
+  and payload from search.
+- **New `rebuild-lanes` maintenance command** recomputes every note from its type's current mapping. Search
+  stays available throughout; it is a row-by-row update, not an index rebuild.
+
 ## 0.74.0
 
 Sprint 67 — types can share a definition instead of repeating it, and memory_context stops handing you a
