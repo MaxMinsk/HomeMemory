@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.73.2
+
+The MQTT failure that 0.73.1 was supposed to make visible was still invisible (MEMP-267).
+
+- **A refused connection is now reported.** 0.73.1 logged connection failures — but only ones that raised an
+  error. A broker that REFUSES a connection does not raise anything: it answers with a refusal code, which the
+  client returns as a result. So the single most likely failure, a rejected login, went to silence: the broker
+  logged "not authorised" and the add-on logged nothing at all.
+- **The log now names the broker's own reason**, alongside the username that was sent and whether a password
+  was sent with it — which is what distinguishes "the broker refused these credentials" from "no credentials
+  ever reached us and we connected anonymously". Those need opposite fixes, and until now looked identical.
+
 ## 0.73.1
 
 Follow-up to 0.73.0, from a broker rejecting the add-on in the field (MEMP-267).

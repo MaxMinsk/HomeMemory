@@ -105,15 +105,26 @@ public sealed class MqttConnection : IAsyncDisposable
                 return false;
             }
 
-            await _client.ConnectAsync(_clientOptions, cancellationToken).ConfigureAwait(false);
+            // The result code is inspected, not just exceptions: a broker that REFUSES a connection answers
+            // with a CONNACK code, and the client reports that as a returned result rather than by throwing.
+            // Watching only the catch block therefore missed the single most common failure — a refusal — and
+            // sent it to silence, which is how "not authorised" appeared in the broker log and nowhere in ours.
+            var result = await _client.ConnectAsync(_clientOptions, cancellationToken).ConfigureAwait(false);
+            if (result?.ResultCode is not MqttClientConnectResultCode.Success || !_client.IsConnected)
+            {
+                _nextAttempt = _clock.GetUtcNow() + RetryDelay;
+                ReportFailure(null, result?.ResultCode.ToString() ?? "no result", result?.ReasonString);
+                return false;
+            }
+
             _nextAttempt = DateTimeOffset.MinValue;
-            if (_client.IsConnected && _reportedFailure)
+            if (_reportedFailure)
             {
                 _reportedFailure = false;
                 _logger.LogInformation("MQTT connected to {Host}:{Port}.", _options.Host, _options.Port);
             }
 
-            return _client.IsConnected;
+            return true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -122,7 +133,7 @@ public sealed class MqttConnection : IAsyncDisposable
             // but no device appeared in Home Assistant" had nothing anywhere to explain it. Only the first is
             // raised, because this is retried on every publish and a warning per attempt would be its own problem.
             _nextAttempt = _clock.GetUtcNow() + RetryDelay;
-            ReportFailure(ex);
+            ReportFailure(ex, ex.GetType().Name, ex.Message);
             return false;
         }
         finally
@@ -133,11 +144,12 @@ public sealed class MqttConnection : IAsyncDisposable
 
     // Named separately so the connect path stays readable: the FIRST failure explains itself in full, the
     // rest are debug, because this is retried indefinitely and a warning per attempt is its own problem.
-    private void ReportFailure(Exception exception)
+    private void ReportFailure(Exception? exception, string reason, string? detail)
     {
         if (_reportedFailure)
         {
-            _logger.LogDebug(exception, "MQTT connect to {Host}:{Port} failed; will retry later.", _options.Host, _options.Port);
+            _logger.LogDebug(exception, "MQTT connect to {Host}:{Port} failed ({Reason}); will retry later.",
+                _options.Host, _options.Port, reason);
             return;
         }
 
@@ -147,11 +159,14 @@ public sealed class MqttConnection : IAsyncDisposable
         // thing whether the wrong credentials were sent or NONE were, and those need opposite fixes — so say
         // which of the two happened rather than leaving it to be guessed.
         _logger.LogWarning(exception,
-            "MQTT connect to {Host}:{Port} failed, so no Home Assistant sensors will appear. Sent username "
-            + "{Username} and {PasswordState}. If the broker log says 'not authorised', the credentials reached "
-            + "it and were refused; if this line says username (none), mqtt_username is not getting through. "
-            + "Retrying at most every {RetrySeconds}s from here on.",
-            _options.Host, _options.Port,
+            "MQTT connect to {Host}:{Port} REFUSED with {Reason}{Detail}, so no Home Assistant sensors will "
+            + "appear. Sent username {Username} and {PasswordState}. A 'NotAuthorized' with a username means the "
+            + "broker got the credentials and refused them — check the login exists on the broker (for the Home "
+            + "Assistant Mosquitto add-on that is a Home Assistant USERNAME, case-sensitive, not a display name). "
+            + "A 'NotAuthorized' with username (none) means mqtt_username never reached us and we connected "
+            + "anonymously. Retrying at most every {RetrySeconds}s from here on.",
+            _options.Host, _options.Port, reason,
+            string.IsNullOrWhiteSpace(detail) ? string.Empty : $" ({detail})",
             _options.Username is null ? "(none)" : $"'{_options.Username}'",
             _options.Password is null ? "no password" : $"a password of {_options.Password.Length} characters",
             RetryDelay.TotalSeconds);
