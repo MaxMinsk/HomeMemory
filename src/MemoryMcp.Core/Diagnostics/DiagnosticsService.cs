@@ -36,6 +36,7 @@ public sealed class DiagnosticsService
     private readonly VectorRecall? _vectors;
     private readonly PassageStore? _passages;
     private readonly IRetrievalProjector _projector;
+    private readonly Schemas.TypePolicy _types;
 
     /// <summary>Creates the service over the database, schema registry and (optionally) the blob store.</summary>
     /// <param name="connectionFactory">Database connection factory.</param>
@@ -53,6 +54,7 @@ public sealed class DiagnosticsService
         _vectors = vectors;
         _passages = passages;
         _projector = projector ?? new LegacyRetrievalProjector();
+        _types = new Schemas.TypePolicy(registry);
     }
 
     /// <summary>
@@ -149,7 +151,8 @@ public sealed class DiagnosticsService
             ? _passages.Coverage(model, _projector.CurrentMappingHashes)
             : (0L, 0L, 0L);
         var retrieval = new RetrievalInfo(
-            baseline.MappingVersion, baseline.MappingHash, mapped, onLegacy, model, indexed, stale);
+            baseline.MappingVersion, baseline.MappingHash, mapped, onLegacy, model, indexed, stale,
+            _types.TypesOnBridge);
 
         // The backend string used to be a constant claiming "no vectors" even with the layer running, so an agent
         // deciding how to phrase a query was told the opposite of the truth.

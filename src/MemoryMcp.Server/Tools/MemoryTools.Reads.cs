@@ -444,7 +444,7 @@ public sealed partial class MemoryTools
         [Description("Only scan these note types (optional)")] string[]? types = null,
         [Description("Only scan these note ids (optional) — e.g. the ids you just authored")] string[]? noteIds = null,
         [Description("Only scan these dedupKeys (optional)")] string[]? dedupKeys = null)
-        => Translate(() => new NotesLinter(_connectionFactory).Lint(domain, _authz.ReadRestriction(domain), limit, project, types, noteIds, dedupKeys));
+        => Translate(() => new NotesLinter(_connectionFactory, null, _types).Lint(domain, _authz.ReadRestriction(domain), limit, project, types, noteIds, dedupKeys));
 
     /// <summary>Lists unresolved destructive-action confirmations.</summary>
     [McpServerTool(Name = "pending_actions_list", ReadOnly = true, OpenWorld = false, UseStructuredContent = true)]

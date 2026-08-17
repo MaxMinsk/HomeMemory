@@ -16,6 +16,7 @@ public sealed class MqttConnection : IAsyncDisposable
     private readonly IMqttClient _client;
     private readonly MqttClientOptions _clientOptions;
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private bool _reportedFailure;
 
     /// <summary>Builds the client and its connection options from <paramref name="options"/>.</summary>
     /// <param name="options">The MQTT configuration.</param>
@@ -87,11 +88,34 @@ public sealed class MqttConnection : IAsyncDisposable
             }
 
             await _client.ConnectAsync(_clientOptions, cancellationToken).ConfigureAwait(false);
+            if (_client.IsConnected && _reportedFailure)
+            {
+                _reportedFailure = false;
+                _logger.LogInformation("MQTT connected to {Host}:{Port}.", _options.Host, _options.Port);
+            }
+
             return _client.IsConnected;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogDebug(ex, "MQTT connect to {Host}:{Port} failed; will retry later.", _options.Host, _options.Port);
+            // The FIRST failure is a warning, the rest are debug. Every failure used to be debug, so a broker
+            // that could not be reached produced complete silence at the default log level — and "MQTT is on
+            // but no device appeared in Home Assistant" had nothing anywhere to explain it. Only the first is
+            // raised, because this is retried on every publish and a warning per attempt would be its own problem.
+            if (!_reportedFailure)
+            {
+                _reportedFailure = true;
+                _logger.LogWarning(ex,
+                    "MQTT connect to {Host}:{Port} failed, so no Home Assistant sensors will appear. Check that "
+                    + "mqtt_host is a bare host or IP (no mqtt:// prefix), that the broker is reachable from the "
+                    + "add-on, and that the credentials are right. Retrying quietly from here on.",
+                    _options.Host, _options.Port);
+            }
+            else
+            {
+                _logger.LogDebug(ex, "MQTT connect to {Host}:{Port} failed; will retry later.", _options.Host, _options.Port);
+            }
+
             return false;
         }
         finally

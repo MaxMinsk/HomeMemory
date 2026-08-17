@@ -33,9 +33,14 @@ public sealed record CapabilitiesReport(
 /// behaves differently on two instances.</param>
 /// <param name="IndexedNotes">Notes with at least one passage under the current model and mapping.</param>
 /// <param name="StalePassages">Passages left over from an older model or mapping, awaiting reindex.</param>
+/// <param name="TypesOnPolicyBridge">Types whose ranking and lint behaviour still comes from a table in the
+/// server rather than from their own schema (MEMP-253). These are agent-authored types, whose schemas live only
+/// in this database, so they can only be annotated through schema_upsert — the list is the MEMP-266 work queue
+/// and is expected to empty.</param>
 public sealed record RetrievalInfo(
     string MappingVersion, string MappingHash, int TypesWithMapping, int TypesOnLegacy,
-    string? VectorModel = null, long IndexedNotes = 0, long StalePassages = 0);
+    string? VectorModel = null, long IndexedNotes = 0, long StalePassages = 0,
+    IReadOnlyList<string>? TypesOnPolicyBridge = null);
 
 /// <summary>A note type the server recognizes.</summary>
 /// <param name="Type">The type discriminator (e.g. <c>backlog_item</c>, <c>recipe</c>).</param>

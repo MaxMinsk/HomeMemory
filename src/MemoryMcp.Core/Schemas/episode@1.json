@@ -4,7 +4,7 @@
   "type": "object",
   "required": ["summary"],
   "additionalProperties": false,
-  "x-retrieval": { "version": "r1", "class": "episodic", "halfLifeDays": 7 },
+  "x-retrieval": { "version": "r1", "class": "episodic", "halfLifeDays": 7, "expectsTags": true, "expectsLinks": false, "claimLike": false },
   "properties": {
     "summary": {
       "type": "string",

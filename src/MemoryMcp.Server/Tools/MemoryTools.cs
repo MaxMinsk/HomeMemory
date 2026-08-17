@@ -29,11 +29,12 @@ public sealed partial class MemoryTools
     private readonly ReadActivityTracker _reads;
     private readonly AdoptionOptions _adoption;
     private readonly OperationMetrics _metrics;
+    private readonly TypePolicy _types;
 
     /// <summary>Creates the tool set over the repository, registry, diagnostics, request authorizer, skills, confirmations, database, read-activity tracker, adoption options and load metrics.</summary>
     public MemoryTools(NotesRepository notes, SchemaRegistry schemas, DiagnosticsService diagnostics, RequestAuthorizer authz,
         SkillsService skills, ConfirmationService confirmations, ISqliteConnectionFactory connectionFactory,
-        ReadActivityTracker reads, AdoptionOptions adoption, OperationMetrics metrics)
+        ReadActivityTracker reads, AdoptionOptions adoption, OperationMetrics metrics, TypePolicy types)
     {
         _notes = notes;
         _schemas = schemas;
@@ -45,6 +46,7 @@ public sealed partial class MemoryTools
         _reads = reads;
         _adoption = adoption;
         _metrics = metrics;
+        _types = types;
     }
 
     // Post-write adoption hints (MEMP-204/205): for a newly created note, suggest a few related notes to link; and

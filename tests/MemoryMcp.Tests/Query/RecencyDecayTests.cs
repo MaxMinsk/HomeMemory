@@ -1,4 +1,5 @@
 using MemoryMcp.Core.Query;
+using MemoryMcp.Core.Schemas;
 using Xunit;
 
 namespace MemoryMcp.Tests.Query;
@@ -18,9 +19,9 @@ public class RecencyDecayTests
     [Fact]
     public void HalfLifeDays_uses_per_type_values_with_a_default()
     {
-        Assert.Equal(7.0, RecencyDecay.HalfLifeDays("episode"));
-        Assert.True(RecencyDecay.HalfLifeDays("recipe") > RecencyDecay.HalfLifeDays("backlog_item")); // durable > ephemeral
-        Assert.Equal(RecencyDecay.DefaultHalfLifeDays, RecencyDecay.HalfLifeDays("unknown_type"));
-        Assert.Equal(RecencyDecay.DefaultHalfLifeDays, RecencyDecay.HalfLifeDays(null));
+        Assert.Equal(7.0, TypePolicy.Bridged.HalfLifeDays("episode"));
+        Assert.True(TypePolicy.Bridged.HalfLifeDays("recipe") > TypePolicy.Bridged.HalfLifeDays("backlog_item")); // durable > ephemeral
+        Assert.Equal(RecencyDecay.DefaultHalfLifeDays, TypePolicy.Bridged.HalfLifeDays("unknown_type"));
+        Assert.Equal(RecencyDecay.DefaultHalfLifeDays, TypePolicy.Bridged.HalfLifeDays(null));
     }
 }

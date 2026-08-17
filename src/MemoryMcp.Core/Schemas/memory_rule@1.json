@@ -4,6 +4,7 @@
   "type": "object",
   "required": ["description"],
   "additionalProperties": false,
+  "x-retrieval": { "version": "r1", "class": "canonical", "halfLifeDays": 3650, "expectsTags": true, "expectsLinks": false, "claimLike": false },
   "properties": {
     "description": { "type": "string", "description": "The rule stated compactly (what is true / must hold). Keep it short; prose detail goes in the note body." },
     "scope": { "type": "string", "description": "Optional sub-scope within the domain (topic/area) this rule applies to." },

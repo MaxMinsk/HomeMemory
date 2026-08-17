@@ -41,6 +41,10 @@ if bashio::config.true 'mqtt_enabled'; then
     export MEMORY_MQTT_PASSWORD="$(bashio::config 'mqtt_password')"
   fi
   bashio::log.info "MQTT publishing enabled (host=${MEMORY_MQTT_HOST}:${MEMORY_MQTT_PORT}, prefix=${MEMORY_MQTT_TOPIC_PREFIX})"
+else
+  # Stated explicitly: with the switch off nothing downstream is even constructed, so silence here would be
+  # indistinguishable from a broker that is merely unreachable.
+  bashio::log.info "MQTT publishing disabled (mqtt_enabled = false); no Home Assistant sensors will be published."
 fi
 
 # Opt-in HTTP webhook for note-change events (MEMP-184). Disabled by default: with no URL nothing is posted.

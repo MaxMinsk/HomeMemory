@@ -320,19 +320,6 @@ internal static class HybridRanker
         return (pinned ? 1_000_000d : 0d) + importance;
     }
 
-    // Canonical, durable knowledge ranks above ephemeral logs at equal relevance (MEMP-193).
-    private static readonly HashSet<string> CanonicalTypes = new(StringComparer.Ordinal)
-    {
-        "memory_rule", "skill", "reference", "recipe", "decision", "project_state", "preference", "saved_search",
-    };
-
-    private static readonly HashSet<string> EphemeralTypes = new(StringComparer.Ordinal) { "journal", "episode" };
-
-    /// <summary>Per-type goodness: canonical knowledge (2) &gt; ordinary notes (1) &gt; ephemeral logs (0).</summary>
-    /// <param name="type">The note type.</param>
-    public static double TypeGoodness(string type) =>
-        CanonicalTypes.Contains(type) ? 2d : EphemeralTypes.Contains(type) ? 0d : 1d;
-
     /// <summary>
     /// Project-match goodness (MEMP-209): 1 when the note's envelope <paramref name="project"/> equals the
     /// requested <paramref name="boostProject"/>, else 0. When no project is requested every note scores 0, so the

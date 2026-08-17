@@ -17,14 +17,18 @@ public sealed record StalenessHint(string Reason, int AgeDays, int? WindowDays);
 /// <summary>
 /// Configuration for how aggressively facts are treated as aging (MEMP-240).
 /// </summary>
+/// <param name="TypePolicy">Supplies which types carry a claim; null uses the bridged default.</param>
 /// <param name="FactHorizonDays">
 /// A default staleness window, in days, for fact-like notes that declare no window of their own. <b>0 disables
 /// it</b>, which is the default: without an opt-in every long-lived reference note in the corpus would be flagged
 /// the moment it passed the horizon, and a hint that fires on almost every hit is one an agent learns to ignore.
 /// Notes that declare <c>valid_until</c> or <c>stale_after_days</c> are evaluated regardless of this setting.
 /// </param>
-public sealed record StalenessOptions(int FactHorizonDays = 0)
+public sealed record StalenessOptions(int FactHorizonDays = 0, Schemas.TypePolicy? TypePolicy = null)
 {
+    /// <summary>Which types carry a claim that can go stale — the type's own declaration (MEMP-253).</summary>
+    public Schemas.TypePolicy Types => TypePolicy ?? Schemas.TypePolicy.Bridged;
+
     /// <summary>Reads <c>MEMORY_STALENESS_FACT_DAYS</c>; disabled unless set to a positive integer.</summary>
     public static StalenessOptions FromEnvironment()
     {
@@ -51,7 +55,7 @@ public static class Staleness
     /// <summary>A project_state has no window of its own, but stale project state is actively misleading.</summary>
     public const int DefaultProjectStateDays = 14;
 
-    private static readonly string[] FactLikeTypes = ["fact", "reference"];
+
 
     private const DateTimeStyles Styles = DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal;
 
@@ -106,7 +110,7 @@ public static class Staleness
             return DefaultProjectStateDays;
         }
 
-        return options.FactHorizonDays > 0 && FactLikeTypes.Contains(type, StringComparer.Ordinal)
+        return options.FactHorizonDays > 0 && options.Types.IsClaimLike(type)
             ? options.FactHorizonDays
             : null;
     }

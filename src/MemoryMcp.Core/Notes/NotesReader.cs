@@ -47,12 +47,19 @@ public sealed partial class NotesReader
     /// <param name="connectionFactory">Database connection factory.</param>
     /// <param name="timeProvider">Clock used to age hits for the staleness hint; defaults to the system clock.</param>
     /// <param name="vectors">Semantic recall (MEMP-196); null or disabled leaves ranking purely lexical.</param>
-    public NotesReader(ISqliteConnectionFactory connectionFactory, TimeProvider? timeProvider = null, VectorRecall? vectors = null)
+    /// <param name="types">Type policy supplying per-type ranking, ageing and staleness behaviour.</param>
+    public NotesReader(ISqliteConnectionFactory connectionFactory, TimeProvider? timeProvider = null,
+        VectorRecall? vectors = null, Schemas.TypePolicy? types = null)
     {
         _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
         _clock = timeProvider ?? TimeProvider.System;
         _vectors = vectors;
+        _types = types ?? Schemas.TypePolicy.Bridged;
+        _staleness = _staleness with { TypePolicy = _types };
     }
+
+    // How each type ranks, ages and lints is read from its schema rather than from a table here (MEMP-253).
+    private readonly Schemas.TypePolicy _types;
 
     // The staleness hint carried by a hit (MEMP-240): computed here, on the row, because a lean recall nulls the
     // payload it is derived from before the caller ever sees it.

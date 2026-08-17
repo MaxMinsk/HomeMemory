@@ -23,11 +23,14 @@ public sealed class NotesRepository
     /// <param name="timeProvider">Clock for timestamps; defaults to the system clock.</param>
     /// <param name="eventSink">Sink for post-commit note-change events; defaults to a no-op sink.</param>
     /// <param name="vectors">Semantic recall (MEMP-196); null or disabled keeps retrieval purely lexical.</param>
-    public NotesRepository(ISqliteConnectionFactory connectionFactory, SchemaRegistry registry, TimeProvider? timeProvider = null, INoteEventSink? eventSink = null, VectorRecall? vectors = null)
+    /// <param name="types">Per-type retrieval behaviour; derived from <paramref name="registry"/> when omitted.</param>
+    public NotesRepository(ISqliteConnectionFactory connectionFactory, SchemaRegistry registry, TimeProvider? timeProvider = null, INoteEventSink? eventSink = null, VectorRecall? vectors = null, Schemas.TypePolicy? types = null)
     {
         _clock = timeProvider ?? TimeProvider.System;
         _vectors = vectors;
-        _reader = new NotesReader(connectionFactory, timeProvider, vectors);
+        // Derived from the registry this repository was given rather than defaulted: a caller holding a registry
+        // with agent-authored types should get their declarations without having to know this layer exists.
+        _reader = new NotesReader(connectionFactory, timeProvider, vectors, types ?? new Schemas.TypePolicy(registry));
         _writer = new NotesWriter(connectionFactory, registry, timeProvider, eventSink);
     }
 

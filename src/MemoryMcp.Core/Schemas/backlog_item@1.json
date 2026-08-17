@@ -4,7 +4,7 @@
   "type": "object",
   "required": ["key", "status"],
   "additionalProperties": false,
-  "x-retrieval": { "version": "r1", "class": "workflow", "halfLifeDays": 45 },
+  "x-retrieval": { "version": "r1", "class": "workflow", "halfLifeDays": 45, "expectsTags": true, "expectsLinks": true, "claimLike": false },
   "properties": {
     "key": {
       "type": "string",

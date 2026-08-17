@@ -4,6 +4,7 @@
   "type": "object",
   "required": ["key", "version"],
   "additionalProperties": false,
+  "x-retrieval": { "version": "r1", "class": "canonical", "halfLifeDays": 3650, "expectsTags": false, "expectsLinks": false, "claimLike": false },
   "properties": {
     "key": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
     "target_type": { "type": "string", "description": "Note type this skill teaches how to author (e.g. recipe, backlog_item). Unset = general guidance." },

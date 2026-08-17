@@ -22,14 +22,6 @@ public sealed class NotesLinter
     private const int OrphanMinAgeDays = 30;
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(250);
 
-    // Types for which a tag facet is not expected (found by key/list, not by tag): the no_tags rule skips them so
-    // real problems aren't buried under alarm fatigue (MEMP-202). SQL literals — kept ASCII and code-controlled.
-    private const string NoTagsExemptTypes = "'journal','sprint','skill','saved_search','memory_evolution_suggestion'";
-    // Types not expected to sit in the link graph (ephemeral logs, standalone guidance, infra): orphan_note skips
-    // them so the connectivity rule surfaces only knowledge notes that benefit from being linked (MEMP-200).
-    private const string OrphanExemptTypes =
-        "'journal','episode','sprint','skill','saved_search','memory_evolution_suggestion','memory_rule','preference'";
-
     // Heuristics for embedded credentials. Order is irrelevant; the first match names the finding.
     private static readonly (string Name, Regex Pattern)[] SecretHeuristics =
     {
@@ -49,11 +41,18 @@ public sealed class NotesLinter
     /// <summary>Creates the linter over the given database.</summary>
     /// <param name="connectionFactory">Database connection factory.</param>
     /// <param name="timeProvider">Clock for the staleness cutoff; defaults to the system clock.</param>
-    public NotesLinter(ISqliteConnectionFactory connectionFactory, TimeProvider? timeProvider = null)
+    /// <param name="types">Type policy deciding which types the tag and link rules skip.</param>
+    public NotesLinter(ISqliteConnectionFactory connectionFactory, TimeProvider? timeProvider = null,
+        Schemas.TypePolicy? types = null)
     {
         _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _types = types ?? Schemas.TypePolicy.Bridged;
     }
+
+    // Which types are exempt from the tag and link rules is now the TYPE's own declaration rather than a
+    // literal here (MEMP-253): a new agent-authored type gets sensible lint behaviour without a redeploy.
+    private readonly Schemas.TypePolicy _types;
 
     /// <summary>
     /// Runs all rules and returns up to <paramref name="limit"/> findings. Scope filters (MEMP-221) narrow WHICH
@@ -72,7 +71,9 @@ public sealed class NotesLinter
 
         var findings = new List<LintFinding>();
         findings.AddRange(NoteRule(connection, scope,
-            $"(tags_json IS NULL OR json_array_length(tags_json) = 0) AND type NOT IN ({NoTagsExemptTypes})",
+            _types.TypesNotExpectingTags() is { } untagged
+                ? $"(tags_json IS NULL OR json_array_length(tags_json) = 0) AND type NOT IN ({untagged})"
+                : "(tags_json IS NULL OR json_array_length(tags_json) = 0)",
             "no_tags", "warn", "Note has no tags — hard to find by facet."));
         findings.AddRange(NoteRule(connection, scope,
             "dedup_key IS NULL AND type <> 'journal'",
@@ -310,7 +311,9 @@ public sealed class NotesLinter
         using var command = connection.CreateCommand();
         var filters = new List<string>
         {
-            "deleted = 0", "status = 'active'", $"type NOT IN ({OrphanExemptTypes})", "updated_utc < $cutoff",
+            "deleted = 0", "status = 'active'",
+            _types.TypesNotExpectingLinks() is { } unlinked ? $"type NOT IN ({unlinked})" : "1 = 1",
+            "updated_utc < $cutoff",
             "NOT EXISTS (SELECT 1 FROM note_links l WHERE l.from_id = notes.id OR l.to_id = notes.id)",
         };
         command.Parameters.AddWithValue("$cutoff", cutoff);

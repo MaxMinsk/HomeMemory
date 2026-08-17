@@ -51,14 +51,13 @@ public sealed class RetrievalMapping
     private readonly Dictionary<string, FieldRetrieval> _byPath;
 
     private RetrievalMapping(
-        string type, int schemaVersion, string version, string? typeClass, double? halfLifeDays,
+        string type, int schemaVersion, string version, Schemas.TypeTraits? traits,
         IReadOnlyList<FieldRetrieval> fields, IReadOnlyList<string> groupOrder)
     {
         Type = type;
         SchemaVersion = schemaVersion;
         Version = version;
-        TypeClass = typeClass;
-        HalfLifeDays = halfLifeDays;
+        Traits = traits;
         Fields = fields;
         GroupOrder = groupOrder;
         _byPath = fields.ToDictionary(field => field.Path, StringComparer.Ordinal);
@@ -74,11 +73,17 @@ public sealed class RetrievalMapping
     /// <summary>Mapping identity, e.g. <c>fact@1/r1</c>.</summary>
     public string Version { get; }
 
-    /// <summary>Type class prior (canonical, episodic, ...), consumed by ranking in MEMP-253.</summary>
-    public string? TypeClass { get; }
+    /// <summary>
+    /// The type's declared behaviour in ranking, ageing and lint (MEMP-253), or null when it declares none —
+    /// which is the signal to fall back to the bridge rather than to silently apply the defaults.
+    /// </summary>
+    public Schemas.TypeTraits? Traits { get; }
 
-    /// <summary>Recency half-life prior in days, already clamped. Consumed by ranking in MEMP-253.</summary>
-    public double? HalfLifeDays { get; }
+    /// <summary>Type class prior (canonical, episodic, ...), consumed by ranking.</summary>
+    public string? TypeClass => Traits?.Class;
+
+    /// <summary>Recency half-life prior in days, already validated. Consumed by ranking.</summary>
+    public double? HalfLifeDays => Traits?.HalfLifeDays;
 
     /// <summary>Every annotated field.</summary>
     public IReadOnlyList<FieldRetrieval> Fields { get; }
@@ -152,48 +157,76 @@ public sealed class RetrievalMapping
                 return null;
             }
 
-            var (version, typeClass, halfLife) = ReadTypeLevel(type, hasTypeLevel ? typeLevel : default, hasTypeLevel);
-            return new RetrievalMapping(type, schemaVersion, version, typeClass, halfLife, fields, groups);
+            var (version, traits) = ReadTypeLevel(type, hasTypeLevel ? typeLevel : default, hasTypeLevel);
+            return new RetrievalMapping(type, schemaVersion, version, traits, fields, groups);
         }
     }
 
     // Type-level priors are validated and clamped here rather than trusted, because they arrive from
     // schema_upsert — an agent-writable surface. An out-of-range half-life is a mistake worth naming, not
     // silently honouring: a 0-day half-life would erase every note from ranking the moment it was written.
-    private static (string Version, string? TypeClass, double? HalfLifeDays) ReadTypeLevel(
+    private static (string Version, Schemas.TypeTraits? Traits) ReadTypeLevel(
         string type, JsonElement element, bool present)
     {
         var version = "r1";
-        string? typeClass = null;
-        double? halfLife = null;
-
-        if (present && element.ValueKind == JsonValueKind.Object)
+        if (!present || element.ValueKind != JsonValueKind.Object)
         {
-            if (element.TryGetProperty("version", out var declared) && declared.ValueKind == JsonValueKind.String)
-            {
-                version = declared.GetString() ?? version;
-            }
-
-            if (element.TryGetProperty("class", out var declaredClass) && declaredClass.ValueKind == JsonValueKind.String)
-            {
-                typeClass = declaredClass.GetString();
-            }
-
-            if (element.TryGetProperty("halfLifeDays", out var days) && days.ValueKind == JsonValueKind.Number)
-            {
-                var value = days.GetDouble();
-                if (value < MinHalfLifeDays || value > MaxHalfLifeDays)
-                {
-                    throw new ArgumentException(
-                        $"{type}: x-retrieval.halfLifeDays must be between {MinHalfLifeDays} and {MaxHalfLifeDays}, got {value}.",
-                        nameof(type));
-                }
-
-                halfLife = value;
-            }
+            return (version, null);
         }
 
-        return ($"{type}@_v/{version}".Replace("@_v", string.Empty, StringComparison.Ordinal), typeClass, halfLife);
+        if (element.TryGetProperty("version", out var declared) && declared.ValueKind == JsonValueKind.String)
+        {
+            version = declared.GetString() ?? version;
+        }
+
+        var defaults = Schemas.TypeTraits.Default;
+        var traits = new Schemas.TypeTraits(
+            Class: Text(element, "class") ?? defaults.Class,
+            HalfLifeDays: HalfLife(type, element) ?? defaults.HalfLifeDays,
+            ExpectsTags: Flag(element, "expectsTags") ?? defaults.ExpectsTags,
+            ExpectsLinks: Flag(element, "expectsLinks") ?? defaults.ExpectsLinks,
+            ClaimLike: Flag(element, "claimLike") ?? defaults.ClaimLike);
+
+        if (!KnownClasses.Contains(traits.Class, StringComparer.Ordinal))
+        {
+            throw new ArgumentException(
+                $"{type}: {Keyword}.class must be one of {string.Join(", ", KnownClasses)}, got '{traits.Class}'.",
+                nameof(type));
+        }
+
+        return (version, traits);
+    }
+
+    /// <summary>The ranking classes a type may declare; anything else is a typo, not a new policy.</summary>
+    private static readonly string[] KnownClasses = ["canonical", "workflow", "episodic", "ordinary"];
+
+    private static string? Text(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
+    private static bool? Flag(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? value.GetBoolean()
+            : null;
+
+    // Validated and REJECTED rather than clamped: these arrive through schema_upsert, an agent-writable
+    // surface, and a half-life of zero would erase every note of the type from ranking the instant it was
+    // written. A silent clamp would hide the mistake; the author is the one who can fix it.
+    private static double? HalfLife(string type, JsonElement element)
+    {
+        if (!element.TryGetProperty("halfLifeDays", out var days) || days.ValueKind != JsonValueKind.Number)
+        {
+            return null;
+        }
+
+        var value = days.GetDouble();
+        if (value < MinHalfLifeDays || value > MaxHalfLifeDays)
+        {
+            throw new ArgumentException(
+                $"{type}: {Keyword}.halfLifeDays must be between {MinHalfLifeDays} and {MaxHalfLifeDays}, got {value}.",
+                nameof(type));
+        }
+
+        return value;
     }
 
     /// <summary>
@@ -343,8 +376,7 @@ public sealed class RetrievalMapping
         var builder = new StringBuilder()
             .Append(mapping.Type).Append('|')
             .Append(mapping.Version).Append('|')
-            .Append(mapping.TypeClass).Append('|')
-            .Append(mapping.HalfLifeDays?.ToString("R", System.Globalization.CultureInfo.InvariantCulture)).Append('|');
+            .Append(mapping.Traits).Append('|');
         foreach (var field in mapping.Fields.OrderBy(field => field.Path, StringComparer.Ordinal))
         {
             builder.Append(field.Path).Append(':')

@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.73.0
+
+Sprint 66 — a note type's ranking and lint behaviour now comes from its own schema, and MQTT stops failing in
+silence (MEMP-253, MEMP-267).
+
+- **Fixed: MQTT could be misconfigured with no way to find out.** Switching MQTT on and getting no device in
+  Home Assistant produced **no log line at all, even at trace level** — because when the settings are
+  incomplete the whole MQTT stack is skipped, leaving nothing behind that could report it. The add-on now
+  always states at startup whether publishing is on and where it is pointed, so the answer is in the log
+  before you go looking.
+- **The host field now accepts what people actually type.** `mqtt://192.168.0.131` was passed straight to the
+  name resolver and failed as an unknown host, with the broker sitting right there at that address. A
+  `mqtt://`, `mqtts://`, `tcp://`, `ssl://`, `ws://` or `wss://` prefix is now stripped, a trailing slash is
+  ignored, and a `host:port` form is understood.
+- **A broker that cannot be reached now says so once.** Connection failures were logged at debug only, so an
+  unreachable or wrongly-credentialled broker was invisible at normal log levels. The first failure is now a
+  warning naming the likely causes, and a later reconnection is reported too.
+- **A type's ranking, ageing and lint behaviour is declared by the type.** Which types count as durable
+  knowledge, how fast each kind of note goes stale, and which are exempt from the "no tags" and "not linked"
+  checks were four separate lists inside the server — so a note type added by an agent could never get sensible
+  treatment without a new release. Each type now declares its own, and behaviour is unchanged: every value was
+  carried over from the lists it replaced and is pinned by test.
+- **What has not moved yet is now visible.** `memory_capabilities` reports which types still fall back to the
+  server's built-in table instead of declaring for themselves — a list that should shrink to nothing.
+
 ## 0.72.0
 
 Sprint 65 — a note's TYPE now decides how it is indexed, instead of every string being swept into the vector

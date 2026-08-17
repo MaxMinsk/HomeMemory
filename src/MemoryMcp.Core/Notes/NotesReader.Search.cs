@@ -252,7 +252,7 @@ public sealed partial class NotesReader
                 rows.Add(new RankRow(
                     result, ExactKeyTier(dedupKey, title, exactKey), lexical ? -bm25 : null, TitleRelevance.Goodness(title, terms),
                     HybridRanker.RecencyGoodness(updatedUtc), degree, HybridRanker.ImportanceGoodness(payloadJson, tagsJson),
-                    HybridRanker.TypeGoodness(reader.GetString(2)), HybridRanker.ProjectGoodness(project, boostProject)));
+                    _types.Goodness(reader.GetString(2)), HybridRanker.ProjectGoodness(project, boostProject)));
             }
         }
     }

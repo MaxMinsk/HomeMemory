@@ -11,7 +11,8 @@ public static class SortOrder
     /// <summary>Compiles the spec to an ORDER BY body (without the keywords), or null when no sort is given.
     /// Throws <see cref="FilterException"/> for an unsortable field.</summary>
     /// <param name="sort">e.g. <c>payload.spice_level desc</c>, <c>updated_utc asc</c>, <c>title</c>.</param>
-    public static string? Compile(string? sort)
+    /// <param name="types">Type policy supplying each type's half-life for the <c>recency</c> sort.</param>
+    public static string? Compile(string? sort, Schemas.TypePolicy? types = null)
     {
         if (string.IsNullOrWhiteSpace(sort))
         {
@@ -20,7 +21,7 @@ public static class SortOrder
 
         if (sort.Trim().Equals("recency", StringComparison.OrdinalIgnoreCase))
         {
-            return RecencyDecay.OrderByClause(); // type-aware recency decay (MEMP-037)
+            return (types ?? Schemas.TypePolicy.Bridged).RecencyOrderByClause(); // type-aware decay (MEMP-037)
         }
 
         var parts = sort.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);

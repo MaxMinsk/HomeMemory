@@ -4,6 +4,7 @@
   "type": "object",
   "required": ["target_id", "rationale", "status"],
   "additionalProperties": false,
+  "x-retrieval": { "version": "r1", "class": "ordinary", "halfLifeDays": 30, "expectsTags": false, "expectsLinks": false, "claimLike": false },
   "properties": {
     "target_id": { "type": "string", "description": "Id of the note this suggestion is about." },
     "kind": {

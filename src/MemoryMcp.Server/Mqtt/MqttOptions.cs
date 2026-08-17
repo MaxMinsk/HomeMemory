@@ -18,10 +18,10 @@ public sealed record MqttOptions(
     {
         var enabled = string.Equals(
             Environment.GetEnvironmentVariable("MEMORY_MQTT_ENABLED"), "true", StringComparison.OrdinalIgnoreCase);
-        var host = Environment.GetEnvironmentVariable("MEMORY_MQTT_HOST") ?? string.Empty;
+        var (host, hostPort) = Core.Configuration.HostSpec.Parse(Environment.GetEnvironmentVariable("MEMORY_MQTT_HOST"));
         var port = int.TryParse(Environment.GetEnvironmentVariable("MEMORY_MQTT_PORT"), out var parsed) && parsed > 0
             ? parsed
-            : 1883;
+            : hostPort ?? 1883;
         var username = NullIfBlank(Environment.GetEnvironmentVariable("MEMORY_MQTT_USERNAME"));
         var password = NullIfBlank(Environment.GetEnvironmentVariable("MEMORY_MQTT_PASSWORD"));
         var prefix = NullIfBlank(Environment.GetEnvironmentVariable("MEMORY_MQTT_TOPIC_PREFIX")) ?? "memory";

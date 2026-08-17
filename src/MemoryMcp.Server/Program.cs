@@ -291,6 +291,9 @@ static void RegisterServices(IServiceCollection services, string dbPath)
     services.AddSingleton(TimeProvider.System);
     services.AddSingleton<ISqliteConnectionFactory>(new SqliteConnectionFactory(dbPath));
     services.AddSingleton(SchemaRegistry.FromEmbeddedResources());
+    // Per-type ranking, ageing and lint behaviour, read from the types' own schemas (MEMP-253). Built over the
+    // LIVE registry, so an agent-authored type's annotations count as much as a built-in's.
+    services.AddSingleton(provider => new TypePolicy(provider.GetRequiredService<SchemaRegistry>()));
     RegisterEventSinks(services);
     RegisterRetrieval(services);
     services.AddSingleton(provider => new NotesRepository(
@@ -342,6 +345,20 @@ static void RegisterEventSinks(IServiceCollection services)
         services.AddSingleton<MqttNoteEventSink>();
         services.AddHostedService<HomeAssistantDiscoveryService>();
     }
+
+    // Whatever was decided, SAY so. A skipped registration leaves nothing behind that could report itself, so
+    // without this the two ways of getting it wrong — the switch left off, and the switch on with no host —
+    // are indistinguishable from a working setup that simply has not published yet.
+    var (report, problem) = (mqtt.Enabled, string.IsNullOrWhiteSpace(mqtt.Host)) switch
+    {
+        (true, true) => ("MQTT is enabled but mqtt_host is empty, so nothing will be published and no Home "
+            + "Assistant sensors will appear. Set the broker host (a bare host or IP, e.g. core-mosquitto).", true),
+        (true, false) => ($"MQTT publishing on: broker {mqtt.Host}:{mqtt.Port}, topic prefix '{mqtt.TopicPrefix}'. "
+            + "Home Assistant sensors are announced by discovery within a minute of a successful connection.", false),
+        _ => ("MQTT publishing is off (mqtt_enabled = false); no Home Assistant sensors will be published.", false),
+    };
+    services.AddSingleton<IHostedService>(provider => new EventSinkReport(
+        report, problem, provider.GetRequiredService<ILoggerFactory>().CreateLogger<EventSinkReport>()));
 
     var webhook = WebhookOptions.FromEnvironment();
     if (webhook.Enabled)

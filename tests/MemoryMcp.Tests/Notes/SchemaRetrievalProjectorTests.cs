@@ -175,13 +175,15 @@ public class SchemaRetrievalProjectorTests
     [Fact]
     public void An_unannotated_type_is_projected_identically_to_before()
     {
-        var note = new NoteContent("preference", "Tea", "prefers loose leaf", """["kitchen"]""", """{ "statement": "x" }""");
+        // A type this build ships no schema for at all — every BUILT-IN type now declares annotations, so the
+        // fallback has to be proven on something genuinely undeclared.
+        var note = new NoteContent("journal", "Tea", "prefers loose leaf", """["kitchen"]""", """{ "statement": "x" }""");
 
         var schema = Projector().Passages(note);
         var legacy = new LegacyRetrievalProjector().Passages(note);
 
         Assert.Equal(legacy.Select(p => (p.Name, p.Ordinal, p.Text)), schema.Select(p => (p.Name, p.Ordinal, p.Text)));
-        Assert.True(Projector().Describe("preference").IsLegacy);
+        Assert.True(Projector().Describe("journal").IsLegacy);
         Assert.False(Projector().Describe("recipe").IsLegacy);
     }
 
@@ -253,7 +255,11 @@ public class SchemaRetrievalProjectorTests
         Assert.Contains("halfLifeDays", error.Message, StringComparison.Ordinal);
     }
 
-    /// <summary>The shipped priors must match the table ranking uses today, so MEMP-253 can retire it as a pure refactor.</summary>
+    /// <summary>
+    /// The half-life a type declares is the one ranking uses (MEMP-253). These values came from the table that
+    /// used to live in C#, and the point of pinning them is that retiring it stayed a refactor: a note ages at
+    /// exactly the rate it did before, now because its own schema says so.
+    /// </summary>
     [Theory]
     [InlineData("episode", 7.0)]
     [InlineData("backlog_item", 45.0)]
@@ -266,7 +272,7 @@ public class SchemaRetrievalProjectorTests
         var mapping = RetrievalMapping.FromSchema(type, schema.Version, schema.Json)!;
 
         Assert.Equal(expected, mapping.HalfLifeDays);
-        Assert.Equal(expected, MemoryMcp.Core.Query.RecencyDecay.HalfLifeDays(type));
+        Assert.Equal(expected, TypePolicy.Bridged.HalfLifeDays(type));
     }
 
     /// <summary>A malformed annotation must not disable indexing for the type; it falls back to legacy.</summary>
