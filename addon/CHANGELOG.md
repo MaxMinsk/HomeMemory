@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.74.0
+
+Sprint 67 — types can share a definition instead of repeating it, and memory_context stops handing you a
+catalogue you did not ask for (MEMP-268, MEMP-257).
+
+- **You can now pin a note or set its importance on any type.** Both are signals the ranker already used, but
+  the strict built-in types declared neither, so the only way to pin something was a tag. A single shared
+  definition — a "trait" — fixed all twelve types at once, which is the point of letting types compose.
+- **Shared definitions.** A concept several types have in common is declared once and referenced, rather than
+  restated per type and left to drift. References pin the version they were written against, so a published
+  definition cannot change underneath the types already validated against it.
+- **A broken reference is caught when the schema is written**, not later when some unrelated note fails to
+  save. The error names what could not be resolved and what a valid reference looks like.
+- **memory_context now picks the skills your task needs.** It used to return every skill in scope with every
+  instruction body empty — so you paid for a list of everything that exists, learned nothing you could act on,
+  and still had to make a second call. It now offers a handful of matching candidates, and delivers the
+  instructions for the one or two that clearly apply, each saying why it was chosen. A plain lookup gets no
+  skills at all.
+- **Instructions and remembered facts arrive in separate sections.** An activated skill is something to follow;
+  a note from recall is something to know. They used to look alike in the response, and now cannot.
+
 ## 0.73.3
 
 Two fixes to schema annotations, both found by annotating the live corpus rather than by reading the code
