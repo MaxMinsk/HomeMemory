@@ -170,6 +170,40 @@ public class VectorRecallTests
         Assert.DoesNotContain(indexed, work);
     }
 
+    /// <summary>
+    /// The model is downloaded on demand, so at startup it usually is not there yet. Binding to it eagerly would
+    /// leave semantic recall dead until someone restarted the server after the download — the hidden second step
+    /// this whole feature exists to remove. The layer must come alive on <see cref="VectorRecall.Reload"/>.
+    /// </summary>
+    [Fact]
+    public void The_layer_comes_alive_when_the_model_arrives_without_a_restart()
+    {
+        using var temp = new TempDatabase();
+        var factory = new SqliteConnectionFactory(temp.FilePath);
+        new Migrator(factory, SchemaMigrations.All).Migrate();
+        var notes = new NotesRepository(factory, SchemaRegistry.FromEmbeddedResources());
+        var downloaded = false;
+        var loads = 0;
+        var recall = new VectorRecall(
+            () => { loads++; return downloaded ? new MarkerEmbedder() : null; },
+            new PassageStore(factory), new LegacyRetrievalProjector(), new EmbeddingOptions(true, "unused-in-tests"));
+
+        var id = Seed(notes, "n1", "Chili", "chili");
+        Assert.False(recall.Enabled);
+        Assert.Empty(recall.Score("chili", [id]));
+
+        // A missing model must not mean re-attempting a load on every single search.
+        Assert.Empty(recall.Score("chili", [id]));
+        Assert.Equal(1, loads);
+
+        downloaded = true;
+        recall.Reload();
+        recall.Index(id, new NoteContent("fact", "Chili", "chili", null, null), "2026-08-17T00:00:00Z");
+
+        Assert.True(recall.Enabled);
+        Assert.True(recall.Score("chili", [id])[id] > 0, "search should work as soon as the model lands");
+    }
+
     private static string MappingHash() => new LegacyRetrievalProjector().Describe("fact").MappingHash;
 
     // Passages are foreign-keyed to notes (so a purge cascades), which means a test must index a note that

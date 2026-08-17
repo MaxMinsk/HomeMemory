@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.71.1
+
+Semantic recall now sets itself up. Switching `embeddings_enabled` on is the entire procedure (MEMP-196).
+
+- **No terminal, no second step.** 0.71.0 shipped the feature with two undocumented prerequisites that could
+  only be met from a shell inside the container — fetch the model, then build the index. Turning the option on
+  therefore produced a warning and lexical results, which is indistinguishable from a broken feature. The
+  server now downloads the model and builds the index itself.
+- **Both happen in the background, after the server is already answering.** The download is hundreds of
+  megabytes and the first index pass walks the whole corpus; doing either before the port opens would leave the
+  add-on looking hung and invite the watchdog to restart it mid-download, forever. Search answers lexically
+  throughout, and turns semantic the moment the model lands — no restart needed.
+- **Progress is in the log**, batch by batch, so a long first index is visibly working rather than silent.
+- **A failed download is not a failure to start.** No network, no disk, a blocked host: each is logged and the
+  server keeps serving lexical search. The next start tries again.
+- `fetch-model` is still there for a box with no outbound access at the moment the feature is enabled, but it
+  is no longer part of the normal path.
+
 ## 0.71.0
 
 Sprint 64 — semantic recall arrives, opt-in and off by default, behind a seam that stops the next retrieval

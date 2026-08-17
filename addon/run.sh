@@ -56,13 +56,15 @@ fi
 export MEMORY_ADOPTION_HINTS="$(bashio::config 'adoption_hints')"
 
 # Opt-in semantic recall (MEMP-196). Off by default: with it off no model is loaded and search stays lexical.
-# The model is NOT in the image; fetch it once with `MemoryMcp.Server fetch-model` into embedding_model_dir.
+# The model is NOT in the image (it dwarfs the runtime and most users never switch this on), so the server
+# downloads it in the background on first start and builds the index itself. Turning the option on is the whole
+# procedure — search answers lexically in the meantime and turns semantic once the model lands.
 export MEMORY_EMBEDDINGS="$(bashio::config 'embeddings_enabled')"
 if bashio::config.true 'embeddings_enabled'; then
   export MEMORY_EMBEDDING_MODEL_DIR="$(bashio::config 'embedding_model_dir')"
   export MEMORY_EMBEDDING_WEIGHT="$(bashio::config 'embedding_weight')"
   if [ ! -f "${MEMORY_EMBEDDING_MODEL_DIR}/sentencepiece.bpe.model" ]; then
-    bashio::log.warning "Semantic recall is on but no model in ${MEMORY_EMBEDDING_MODEL_DIR}; run fetch-model. Falling back to lexical search."
+    bashio::log.info "Semantic recall is on; the model will be downloaded into ${MEMORY_EMBEDDING_MODEL_DIR} in the background. Search stays lexical until it is ready."
   else
     bashio::log.info "Semantic recall enabled (model=${MEMORY_EMBEDDING_MODEL_DIR}, weight=${MEMORY_EMBEDDING_WEIGHT})"
   fi

@@ -248,26 +248,39 @@ static void RegisterRetrieval(IServiceCollection services)
     services.AddSingleton(options);
     services.AddSingleton<IRetrievalProjector>(new LegacyRetrievalProjector());
     services.AddSingleton(provider => new PassageStore(provider.GetRequiredService<ISqliteConnectionFactory>()));
-    services.AddSingleton(provider =>
-    {
-        IEmbedder? embedder = null;
-        if (options.Enabled && !string.IsNullOrWhiteSpace(options.ModelDirectory))
-        {
-            try
-            {
-                embedder = new E5OnnxEmbedder(options.ModelDirectory!);
-            }
-            catch (Exception exception) when (exception is IOException or InvalidOperationException or DllNotFoundException)
-            {
-                provider.GetRequiredService<ILoggerFactory>().CreateLogger("Embeddings")
-                    .LogError(exception, "Embedding model could not be loaded from {Directory}; continuing without vector recall.", options.ModelDirectory);
-            }
-        }
+    services.AddSingleton(provider => new VectorRecall(
+        () => LoadEmbedder(provider, options),
+        provider.GetRequiredService<PassageStore>(),
+        provider.GetRequiredService<IRetrievalProjector>(), options,
+        provider.GetRequiredService<OperationMetrics>()));
+    // Fetches the model and backfills the index in the background, so switching the option on is the only
+    // step a user has to take (MEMP-196).
+    services.AddHostedService(provider => new MemoryMcp.Server.Embeddings.EmbeddingBootstrapService(
+        options, provider.GetRequiredService<VectorRecall>(), provider.GetRequiredService<PassageStore>(),
+        new NotesReader(provider.GetRequiredService<ISqliteConnectionFactory>()),
+        provider.GetRequiredService<IRetrievalProjector>(),
+        provider.GetRequiredService<ILoggerFactory>().CreateLogger<MemoryMcp.Server.Embeddings.EmbeddingBootstrapService>()));
+}
 
-        return new VectorRecall(embedder, provider.GetRequiredService<PassageStore>(),
-            provider.GetRequiredService<IRetrievalProjector>(), options,
-            provider.GetRequiredService<OperationMetrics>());
-    });
+// Loads the model if it is there. A missing model is NOT an error worth a stack trace: it is the normal state
+// between switching the feature on and the download finishing, and the server keeps working lexically.
+static IEmbedder? LoadEmbedder(IServiceProvider provider, EmbeddingOptions options)
+{
+    if (!options.Enabled || !ModelFetcher.IsPresent(options.ModelDirectory))
+    {
+        return null;
+    }
+
+    try
+    {
+        return new E5OnnxEmbedder(options.ModelDirectory!);
+    }
+    catch (Exception exception) when (exception is IOException or InvalidOperationException or DllNotFoundException)
+    {
+        provider.GetRequiredService<ILoggerFactory>().CreateLogger("Embeddings")
+            .LogError(exception, "Embedding model could not be loaded from {Directory}; continuing without vector recall.", options.ModelDirectory);
+        return null;
+    }
 }
 
 static void RegisterServices(IServiceCollection services, string dbPath)
@@ -402,47 +415,15 @@ static void RunMaintenance(string[] args, string dbPath)
     }
 }
 
-// Fetches the embedding model into the configured directory (MEMP-196), so the add-on image stays lean: the
-// ~25MB runtime ships with the binary, but the model is far larger and only matters to someone who turns the
-// layer on. One command instead of "copy two files off a website", and it is idempotent — an existing file of
-// the right size is left alone, so re-running after a partial download resumes rather than restarts.
+// Manual model fetch (MEMP-196). Normally unnecessary — the server fetches it in the background when the
+// feature is switched on — but kept for a box with no outbound access at the moment it is enabled.
 static async Task RunFetchModel()
 {
     var options = EmbeddingOptions.FromEnvironment();
-    var directory = options.ModelDirectory;
-    if (string.IsNullOrWhiteSpace(directory))
-    {
-        Console.WriteLine("fetch-model: set MEMORY_EMBEDDING_MODEL_DIR (add-on option embedding_model_dir) first.");
-        return;
-    }
-
-    const string BaseUrl = "https://huggingface.co/intfloat/multilingual-e5-small/resolve/main/";
-    Directory.CreateDirectory(directory!);
-    using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
-
-    foreach (var (remote, local) in new[] { ("onnx/model.onnx", "model.onnx"), ("sentencepiece.bpe.model", "sentencepiece.bpe.model") })
-    {
-        var target = Path.Combine(directory!, local);
-        Console.WriteLine($"fetch-model: {remote} -> {target}");
-        using var response = await http.GetAsync(BaseUrl + remote, HttpCompletionOption.ResponseHeadersRead);
-        if (!response.IsSuccessStatusCode)
-        {
-            Console.WriteLine($"  FAILED: {(int)response.StatusCode} {response.ReasonPhrase}. The host may be unreachable from this network.");
-            return;
-        }
-
-        // Write to a temporary name first so an interrupted download can never be mistaken for a valid model.
-        var partial = target + ".partial";
-        await using (var file = File.Create(partial))
-        {
-            await response.Content.CopyToAsync(file);
-        }
-
-        File.Move(partial, target, overwrite: true);
-        Console.WriteLine($"  {new FileInfo(target).Length / 1048576.0:F1} MB");
-    }
-
-    Console.WriteLine("fetch-model: done. Set embeddings_enabled, restart, then run index-embeddings once.");
+    var ok = await ModelFetcher.EnsureAsync(options.ModelDirectory, Console.WriteLine);
+    Console.WriteLine(ok
+        ? "fetch-model: done. Set embeddings_enabled and restart; the index builds itself."
+        : "fetch-model: FAILED. See the messages above.");
 }
 
 // One-off embedding index build (MEMP-196). A note is embedded when it is written, so this exists for the
