@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1.7
 
-ARG BUILD_FROM=ghcr.io/home-assistant/base:3.23
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-debian:bookworm
 
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:8.0-alpine AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 
 ARG BUILD_ARCH=amd64
 ARG BUILD_VERSION=0.1.0
@@ -12,12 +12,13 @@ WORKDIR /src
 # Restore layer: copy only the project graph + central config first for caching.
 COPY global.json Directory.Build.props Directory.Packages.props ./
 COPY src/MemoryMcp.Core/MemoryMcp.Core.csproj ./src/MemoryMcp.Core/
+COPY src/MemoryMcp.Embeddings/MemoryMcp.Embeddings.csproj ./src/MemoryMcp.Embeddings/
 COPY src/MemoryMcp.Server/MemoryMcp.Server.csproj ./src/MemoryMcp.Server/
 
 RUN \
     case "${BUILD_ARCH}" in \
-      amd64) dotnet_rid="linux-musl-x64" ;; \
-      aarch64) dotnet_rid="linux-musl-arm64" ;; \
+      amd64) dotnet_rid="linux-x64" ;; \
+      aarch64) dotnet_rid="linux-arm64" ;; \
       *) echo "Unsupported BUILD_ARCH: ${BUILD_ARCH}" && exit 1 ;; \
     esac \
     && dotnet restore ./src/MemoryMcp.Server/MemoryMcp.Server.csproj --runtime "${dotnet_rid}"
@@ -29,8 +30,8 @@ COPY integrations ./integrations
 
 RUN \
     case "${BUILD_ARCH}" in \
-      amd64) dotnet_rid="linux-musl-x64" ;; \
-      aarch64) dotnet_rid="linux-musl-arm64" ;; \
+      amd64) dotnet_rid="linux-x64" ;; \
+      aarch64) dotnet_rid="linux-arm64" ;; \
       *) echo "Unsupported BUILD_ARCH: ${BUILD_ARCH}" && exit 1 ;; \
     esac \
     && dotnet publish ./src/MemoryMcp.Server/MemoryMcp.Server.csproj \
@@ -40,7 +41,7 @@ RUN \
       --no-restore \
       --output /app/publish \
       -p:Version="${BUILD_VERSION}" \
-      -p:PublishSingleFile=true \
+      -p:PublishSingleFile=false \
       -p:PublishTrimmed=false \
       -p:InvariantGlobalization=true
 
