@@ -3,7 +3,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "required": ["format"],
-  "additionalProperties": false,
+  "unevaluatedProperties": false,
   "x-retrieval": { "version": "r1", "class": "canonical", "halfLifeDays": 3650, "expectsTags": true, "expectsLinks": true, "claimLike": false },
   "properties": {
     "format": {
@@ -26,7 +26,7 @@
       "items": {
         "type": "object",
         "required": ["name"],
-        "additionalProperties": false,
+        "unevaluatedProperties": false,
         "properties": {
           "name": {
             "type": "string",
@@ -64,7 +64,7 @@
     },
     "control_points": {
       "type": "object",
-      "additionalProperties": false,
+      "unevaluatedProperties": false,
       "properties": {
         "heat": { "type": "string", "x-retrieval": { "lexical": "secondary", "semantic": "steps" } },
         "time": { "type": "string", "x-retrieval": { "lexical": "secondary", "semantic": "steps" } },

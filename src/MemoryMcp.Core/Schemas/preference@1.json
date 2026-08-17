@@ -3,7 +3,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "required": ["preference"],
-  "additionalProperties": false,
+  "unevaluatedProperties": false,
   "x-retrieval": { "version": "r1", "class": "canonical", "halfLifeDays": 180, "expectsTags": true, "expectsLinks": false, "claimLike": false },
   "properties": {
     "preference": { "type": "string", "description": "The durable preference, e.g. 'reply in Russian; keep answers concise'." },

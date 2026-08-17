@@ -3,7 +3,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "required": ["target_id", "rationale", "status"],
-  "additionalProperties": false,
+  "unevaluatedProperties": false,
   "x-retrieval": { "version": "r1", "class": "ordinary", "halfLifeDays": 30, "expectsTags": false, "expectsLinks": false, "claimLike": false },
   "properties": {
     "target_id": { "type": "string", "description": "Id of the note this suggestion is about." },
@@ -21,7 +21,7 @@
       "items": {
         "type": "object",
         "required": ["to_id", "rel"],
-        "additionalProperties": false,
+        "unevaluatedProperties": false,
         "properties": {
           "to_id": { "type": "string" },
           "rel": { "type": "string", "description": "Active-voice lower_snake_case relation, e.g. relates_to, supersedes." }

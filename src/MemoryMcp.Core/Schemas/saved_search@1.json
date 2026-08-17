@@ -3,7 +3,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "required": ["name"],
-  "additionalProperties": false,
+  "unevaluatedProperties": false,
   "x-retrieval": { "version": "r1", "class": "canonical", "halfLifeDays": 90, "expectsTags": false, "expectsLinks": false, "claimLike": false },
   "properties": {
     "name": { "type": "string", "description": "Human-readable name of the saved search/view." },

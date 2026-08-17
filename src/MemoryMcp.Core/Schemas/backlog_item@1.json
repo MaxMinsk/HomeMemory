@@ -3,7 +3,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "required": ["key", "status"],
-  "additionalProperties": false,
+  "unevaluatedProperties": false,
   "x-retrieval": { "version": "r1", "class": "workflow", "halfLifeDays": 45, "expectsTags": true, "expectsLinks": true, "claimLike": false },
   "properties": {
     "key": {

@@ -3,7 +3,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "required": ["project", "state"],
-  "additionalProperties": false,
+  "unevaluatedProperties": false,
   "x-retrieval": { "version": "r1", "class": "canonical", "halfLifeDays": 60, "expectsTags": true, "expectsLinks": true, "claimLike": false },
   "properties": {
     "project": { "type": "string", "description": "Project/case slug, e.g. memory-mcp." },

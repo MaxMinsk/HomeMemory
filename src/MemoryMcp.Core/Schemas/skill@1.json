@@ -3,7 +3,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "required": ["key", "version"],
-  "additionalProperties": false,
+  "unevaluatedProperties": false,
   "x-retrieval": { "version": "r1", "class": "canonical", "halfLifeDays": 3650, "expectsTags": false, "expectsLinks": false, "claimLike": false },
   "properties": {
     "key": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },

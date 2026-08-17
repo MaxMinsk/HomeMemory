@@ -3,7 +3,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "required": ["description"],
-  "additionalProperties": false,
+  "unevaluatedProperties": false,
   "x-retrieval": { "version": "r1", "class": "canonical", "halfLifeDays": 3650, "expectsTags": true, "expectsLinks": false, "claimLike": false },
   "properties": {
     "description": { "type": "string", "description": "The rule stated compactly (what is true / must hold). Keep it short; prose detail goes in the note body." },
