@@ -72,7 +72,37 @@ public sealed class ContextAssembler
 
         var recall = _notes.Recall(query, domain, limit, guard.RestrictionForSearch(domain), includeLinks, 1, effectiveBudget, false, project, projectOnly,
             includePayload: includePayload, maxNeighbors: opts.MaxNeighbors, types: opts.Types, noRelax: opts.NoRelax, tags: opts.Tags);
-        return new ContextBlock(domain, ranked, skills, recall, AdvisoryPolicy, warnings);
+        var (candidates, activated) = SelectSkills(skills, query, project, warnings);
+        return new ContextBlock(domain, ranked, candidates, recall, AdvisoryPolicy, warnings, activated);
+    }
+
+    // Narrows the catalogue to the few skills this task plausibly needs, and delivers the instructions for the
+    // one or two that clearly apply (MEMP-257). Before this, every skill in scope was returned with a null body:
+    // the caller paid for a catalogue it did not ask for and still had to make a second call to get anything
+    // actionable. A failure here must degrade the skills section, never the whole block — recall and rules are
+    // what the caller came for.
+    private (IReadOnlyList<Skill> Candidates, IReadOnlyList<SelectedSkill> Activated) SelectSkills(
+        IReadOnlyList<Skill> available, string? query, string? project, List<string> warnings)
+    {
+        try
+        {
+            var (candidates, activated) = SkillSelector.Select(
+                available, query, project,
+                skill => _skills.Get(skill.Domain ?? ScopeGuard.CommonsDomain, skill.Key, skill.Project) ?? skill);
+            if (available.Count > candidates.Count && candidates.Count > 0)
+            {
+                warnings.Add(
+                    $"Showing {candidates.Count} of {available.Count} skills, matched against the task; "
+                    + "call skill_get for any other key.");
+            }
+
+            return (candidates, activated);
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or ArgumentException or JsonException)
+        {
+            warnings.Add("Skill selection failed; the skills section is empty for this call.");
+            return (Array.Empty<Skill>(), Array.Empty<SelectedSkill>());
+        }
     }
 
     // Gathers the rules in force (domain + commons, project-scoped) and the guiding skills, honoring the
@@ -157,7 +187,8 @@ public sealed class ContextAssembler
 
         var recall = _notes.Recall(query, null, limit, restrict, includeLinks, 1, budgetChars, false, project, projectOnly, diverseByDomain: true,
             includePayload: includePayload, maxNeighbors: opts.MaxNeighbors, types: opts.Types, noRelax: opts.NoRelax, tags: opts.Tags);
-        return new ContextBlock(AllDomains, LeanRules(ranked), skills, recall, AdvisoryPolicy, warnings);
+        var (candidates, activated) = SelectSkills(skills, query, null, warnings);
+        return new ContextBlock(AllDomains, LeanRules(ranked), candidates, recall, AdvisoryPolicy, warnings, activated);
     }
 
     // MEMP-212: a caller that passed a project name where a domain is expected (e.g. domain='unity-solitaire')

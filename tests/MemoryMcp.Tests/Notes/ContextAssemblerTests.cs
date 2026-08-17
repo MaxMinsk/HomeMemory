@@ -20,14 +20,18 @@ public class ContextAssemblerTests
         repo.Upsert("kitchen", "memory_rule", "High", null, """{ "description": "hi", "priority": 9 }""", null, "rule-high", "me");
         repo.Upsert("kitchen", "memory_rule", "Gone", null, """{ "description": "old", "status": "deprecated" }""", null, "rule-dep", "me");
         repo.Upsert("kitchen", "fact", "Borscht", "beetroot soup", """{ "statement": "borscht is beetroot soup" }""", null, "borscht", "me");
-        skills.Upsert("kitchen", "recipe-authoring", "Recipe authoring", "write recipes consistently", "recipe", 1, null, "me");
+        skills.Upsert("kitchen", "recipe-authoring", "Recipe authoring",
+            "Writes recipes consistently. Use when authoring or editing a recipe.", "recipe", 1, null, "me");
 
-        var block = new ContextAssembler(repo, skills).Assemble("borscht", "kitchen", 10, includeLinks: true, RequestScope.Unrestricted);
+        var block = new ContextAssembler(repo, skills).Assemble(
+            "authoring a borscht recipe", "kitchen", 10, includeLinks: true, RequestScope.Unrestricted);
 
         Assert.NotNull(block);
         Assert.Equal("kitchen", block!.Domain);
         Assert.Equal(2, block.Rules.Count);              // deprecated rule excluded
         Assert.Equal("Baseline", block.Rules[0].Title);  // always_apply ranks above higher priority
+        // Skills are now SELECTED against the task rather than listed (MEMP-257), so this asserts the layer is
+        // present for a query that genuinely calls for it.
         Assert.Contains(block.Skills, s => s.Key == "recipe-authoring");
         Assert.Contains(block.Recall.Hits, h => h.Title == "Borscht");
         Assert.False(string.IsNullOrEmpty(block.Policy));
@@ -281,5 +285,28 @@ public class ContextAssemblerTests
         new Migrator(factory, SchemaMigrations.All).Migrate();
         var repo = new NotesRepository(factory, SchemaRegistry.FromEmbeddedResources());
         return (repo, new SkillsService(repo));
+    }
+
+    /// <summary>
+    /// MEMP-257: a plain recall does NOT drag the catalogue along. Looking something up is not a request to be
+    /// instructed, and every skill returned with a null body was the cost the caller could not opt out of.
+    /// </summary>
+    [Fact]
+    public void A_plain_recall_query_is_offered_no_skills()
+    {
+        using var temp = new TempDatabase();
+        var (repo, skills) = New(temp);
+        repo.Upsert("kitchen", "fact", "Borscht", "beetroot soup", """{ "statement": "borscht is beetroot soup" }""", null, "borscht", "me");
+        skills.Upsert("kitchen", "recipe-authoring", "Recipe authoring",
+            "Writes recipes consistently. Use when authoring or editing a recipe.", "recipe", 1, null, "me");
+
+        var block = new ContextAssembler(repo, skills).Assemble(
+            "borscht", "kitchen", 10, includeLinks: false, RequestScope.Unrestricted);
+
+        Assert.NotNull(block);
+        Assert.Empty(block!.Skills);
+        Assert.Empty(block.ActivatedSkills ?? []);
+        // The recall the caller actually asked for is untouched.
+        Assert.Contains(block.Recall.Hits, hit => hit.Title == "Borscht");
     }
 }

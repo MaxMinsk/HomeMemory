@@ -183,6 +183,6 @@ public sealed class SkillsService
         var project = separator >= 0 ? dedup[..separator] : null;
         var logicalKey = Text("key") ?? (separator >= 0 ? dedup[(separator + 2)..] : dedup);
 
-        return new Skill(logicalKey, note.Title, Text("target_type"), version, Text("summary"), note.Body, project);
+        return new Skill(logicalKey, note.Title, Text("target_type"), version, Text("summary"), note.Body, project, TagsJson: note.TagsJson, Domain: note.Domain);
     }
 }

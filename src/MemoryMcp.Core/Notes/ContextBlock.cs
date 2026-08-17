@@ -7,9 +7,13 @@ namespace MemoryMcp.Core.Notes;
 /// in one call instead of several search/recall/skill_list round-trips.</summary>
 /// <param name="Domain">The domain the block was assembled for.</param>
 /// <param name="Rules">Active <c>memory_rule</c> notes (domain + commons), most important first (always_apply, then priority).</param>
-/// <param name="Skills">Skills guiding the domain (and commons), metadata only.</param>
+/// <param name="Skills">CANDIDATE skills for this task: the few whose descriptors match the query, metadata
+/// only, no bodies. Not the whole catalogue — an agent cannot act on a list of everything that exists.</param>
 /// <param name="Recall">FTS hits for the query plus their one-hop linked neighbors.</param>
 /// <param name="Policy">A reminder that memory is advisory — the live user/data wins over stored notes.</param>
+/// <param name="ActivatedSkills">Skills whose INSTRUCTIONS are delivered, each with the reason it was chosen.
+/// Kept in its own section, never mixed into <c>Recall</c>: an instruction and a remembered fact must not arrive
+/// looking alike, or an agent cannot tell what it is being told to do from what it is being told about.</param>
 /// <param name="Warnings">Assembly notes, e.g. truncation of the rule set.</param>
 public sealed record ContextBlock(
     string Domain,
@@ -17,7 +21,8 @@ public sealed record ContextBlock(
     IReadOnlyList<Skill> Skills,
     RecallResult Recall,
     string Policy,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    IReadOnlyList<SelectedSkill>? ActivatedSkills = null);
 
 /// <summary>Optional retrieval knobs for <see cref="ContextAssembler.Assemble"/> (MEMP-223): narrow or trim what
 /// the block returns without changing the common-case defaults.</summary>

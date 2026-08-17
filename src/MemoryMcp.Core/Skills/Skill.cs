@@ -10,7 +10,12 @@ namespace MemoryMcp.Core.Skills;
 /// <param name="Summary">One-line description of what the skill teaches.</param>
 /// <param name="Body">The skill content (markdown); null in list results.</param>
 /// <param name="Project">Project this skill is specific to (overrides the domain-general one with the same key); null = general.</param>
+/// <param name="Domain">The domain the skill was found in. Carried because a skill's DOMAIN and its PROJECT are
+/// different axes, and fetching its body needs the domain — inferring one from the other silently looks in the
+/// wrong place.</param>
+/// <param name="TagsJson">The skill's tags as a JSON array (MEMP-258). Carried because tags are the curated
+/// statement of what a skill is FOR, and so the strongest signal available when selecting one for a task.</param>
 /// <param name="ResolvedFrom">Which scope answered: <c>project</c>, <c>domain</c> or <c>commons</c>. Null when
 /// the skill was listed rather than resolved. Reported because an override and a shared default lead to
 /// different decisions, and the body alone does not reveal which one arrived.</param>
-public sealed record Skill(string Key, string? Title, string? TargetType, int Version, string? Summary, string? Body, string? Project = null, string? ResolvedFrom = null);
+public sealed record Skill(string Key, string? Title, string? TargetType, int Version, string? Summary, string? Body, string? Project = null, string? ResolvedFrom = null, string? TagsJson = null, string? Domain = null);
