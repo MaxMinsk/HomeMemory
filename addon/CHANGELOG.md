@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.75.1
+
+- **Nothing to run after 0.75.0.** That release added a `rebuild-lanes` maintenance command and left it to be
+  run from a shell inside the container — the same trap semantic recall fell into before it learned to fetch
+  its own model. The server now notices by itself when a note type's search configuration has changed and
+  brings that type's stored text up to date in the background, a few notes at a time. The command is still
+  there for doing it deliberately.
+- Only the types that actually changed are touched, and a rebuild that would change nothing writes nothing —
+  so on a normal start this costs two small queries and no work at all.
+
 ## 0.75.0
 
 Sprint 67 finish — the last thing about search that was decided in code now belongs to the note type

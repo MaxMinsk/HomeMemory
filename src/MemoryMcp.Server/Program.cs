@@ -300,6 +300,14 @@ static void RegisterServices(IServiceCollection services, string dbPath)
     // Per-type ranking, ageing and lint behaviour, read from the types' own schemas (MEMP-253). Built over the
     // LIVE registry, so an agent-authored type's annotations count as much as a built-in's.
     services.AddSingleton(provider => new TypePolicy(provider.GetRequiredService<SchemaRegistry>()));
+    // Keeps the stored search text in step with each type's mapping, so editing annotations is the whole
+    // procedure and there is no command anyone has to remember (MEMP-262).
+    services.AddSingleton(provider => new LaneRebuilder(
+        provider.GetRequiredService<ISqliteConnectionFactory>(),
+        provider.GetRequiredService<IRetrievalProjector>()));
+    services.AddHostedService(provider => new MemoryMcp.Server.Embeddings.LaneRebuildService(
+        provider.GetRequiredService<LaneRebuilder>(), provider.GetRequiredService<TimeProvider>(),
+        provider.GetRequiredService<ILoggerFactory>().CreateLogger<MemoryMcp.Server.Embeddings.LaneRebuildService>()));
     RegisterEventSinks(services);
     RegisterRetrieval(services);
     services.AddSingleton(provider => new NotesRepository(
@@ -467,38 +475,26 @@ static void RunRebuildLanes(string dbPath)
     var registry = SchemaRegistry.FromEmbeddedResources();
     registry.SyncToDatabase(factory);
     registry.LoadFromDatabase(factory);   // agent-authored types carry mappings too
-    var projector = new SchemaRetrievalProjector(registry);
 
-    using var connection = factory.Create();
-    var rows = new List<(string Id, string Type, string? Title, string? Body, string? Tags, string? Payload)>();
-    using (var read = connection.CreateCommand())
+    var rebuilder = new LaneRebuilder(factory, new SchemaRetrievalProjector(registry));
+    var stale = rebuilder.TypesNeedingRebuild();
+    if (stale.Count == 0)
     {
-        read.CommandText = "SELECT id, type, title, body, tags_json, payload_json FROM notes WHERE deleted = 0;";
-        using var reader = read.ExecuteReader();
-        while (reader.Read())
-        {
-            rows.Add((reader.GetString(0), reader.GetString(1),
-                reader.IsDBNull(2) ? null : reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3),
-                reader.IsDBNull(4) ? null : reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetString(5)));
-        }
+        Console.WriteLine("rebuild-lanes: every type's search text already matches its mapping. Nothing to do.");
+        return;
     }
 
-    Console.WriteLine($"rebuild-lanes: {rows.Count} note(s) to recompute.");
-    var changed = 0;
-    foreach (var row in rows)
+    Console.WriteLine($"rebuild-lanes: {stale.Count} type(s) to recompute: {string.Join(", ", stale)}.");
+    var total = 0;
+    foreach (var type in stale)
     {
-        var lanes = projector.Lanes(new NoteContent(row.Type, row.Title, row.Body, row.Tags, row.Payload));
-        using var update = connection.CreateCommand();
-        update.CommandText =
-            "UPDATE notes SET lane_primary = $p, lane_secondary = $s WHERE id = $id " +
-            "AND (lane_primary IS NOT $p OR lane_secondary IS NOT $s);";
-        update.Parameters.AddWithValue("$p", (object?)lanes.Primary ?? DBNull.Value);
-        update.Parameters.AddWithValue("$s", (object?)lanes.Secondary ?? DBNull.Value);
-        update.Parameters.AddWithValue("$id", row.Id);
-        changed += update.ExecuteNonQuery();
+        var changed = rebuilder.Rebuild(type, DateTimeOffset.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
+        total += changed;
+        Console.WriteLine($"  {type}: {changed} note(s) updated.");
     }
 
-    Console.WriteLine($"rebuild-lanes: done. {changed} note(s) re-laned, {rows.Count - changed} already current.");
+    Console.WriteLine($"rebuild-lanes: done, {total} note(s) updated. The server does this by itself at start-up; "
+        + "this command exists for doing it deliberately instead.");
 }
 
 // One-off embedding index build (MEMP-196). A note is embedded when it is written, so this exists for the
